@@ -1,4 +1,4 @@
-﻿# MarketLens 配置文件 — 顺序决定优先级（从上到下递减）
+# MarketLens 配置文件 — 顺序决定优先级（从上到下递减）
 # config.yaml 只管"声明"（有哪些源、优先级、参数），具体获取逻辑由 Provider 类实现
 
 # ============================================================
@@ -21,15 +21,25 @@ data_sources:
       params:
         quote_url: "https://hq.sinajs.cn/list={codes}"
 
+    - name: neodata
+      provider: NeoDataProvider
+      enabled: true
+      optional: true
+      timeout: 30
+      params:
+        endpoint: "https://copilot.tencent.com/agenttool/v1/neodata"
+        token: ""
+
   # 新闻/公告/研报源
   news:
     - name: neodata
       provider: NeoDataProvider
       enabled: true
       optional: true
-      timeout: 20
+      timeout: 30
       params:
-        endpoint: "https://..."
+        endpoint: "https://copilot.tencent.com/agenttool/v1/neodata"
+        token: ""
 
     - name: sina_rss
       provider: RSSProvider
@@ -64,6 +74,21 @@ markets:
 database:
   path: data/marketlens.db
   echo: false
+
+# Evidence builder configuration
+# ============================================================
+evidence:
+  kline_limit: 60
+  fund_flow_limit: 5
+  finance_limit: 2
+  news_days: 7
+
+# Security configuration
+# ============================================================
+security:
+  cors_origins:
+    - "*"
+
 
 # ============================================================
 # 调度

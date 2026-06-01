@@ -43,11 +43,7 @@ def _format_technical(row: dict) -> dict:
 
 
 @router.get("/quotes/{symbol}")
-def get_quote(symbol: str, force: bool = False) -> dict:
-    if force:
-        result = _service.collect_quote_single(symbol)
-        if result is not None:
-            return result
+def get_quote(symbol: str) -> dict:
     quote = _service.get_quote(symbol)
     if quote is None:
         raise HTTPException(
@@ -55,6 +51,17 @@ def get_quote(symbol: str, force: bool = False) -> dict:
             detail={"error": "SYMBOL_NOT_FOUND", "detail": f"标的 '{symbol}' 无行情数据"},
         )
     return quote
+
+
+@router.post("/quotes/{symbol}/refresh")
+def refresh_quote(symbol: str) -> dict:
+    result = _service.collect_quote_single(symbol)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "REFRESH_FAILED", "detail": f"标的 '{symbol}' 数据刷新失败"},
+        )
+    return result
 
 
 @router.get("/quotes/{symbol}/history")

@@ -106,15 +106,15 @@ def update_account(account_id: int, req: UpdateAccountRequest) -> dict:
     return result
 
 
-@router.delete("/accounts/{account_id}")
-def delete_account(account_id: int) -> dict:
+@router.delete("/accounts/{account_id}", status_code=204)
+def delete_account(account_id: int) -> None:
     success: bool = _service.delete_account(account_id)
     if not success:
         raise HTTPException(
             status_code=404,
             detail={"error": "ACCOUNT_NOT_FOUND", "detail": f"账户 {account_id} 不存在"},
         )
-    return {"message": "账户已删除"}
+    return None
 
 
 @router.post("/transactions", status_code=201)
@@ -208,8 +208,8 @@ def update_transaction(transaction_id: int, req: UpdateTransactionRequest) -> di
     return result
 
 
-@router.delete("/transactions/{transaction_id}")
-def delete_transaction(transaction_id: int) -> dict:
+@router.delete("/transactions/{transaction_id}", status_code=204)
+def delete_transaction(transaction_id: int) -> None:
     try:
         success: bool = _service.delete_transaction(transaction_id)
     except ValueError as e:
@@ -222,7 +222,7 @@ def delete_transaction(transaction_id: int) -> dict:
             status_code=404,
             detail={"error": "TRANSACTION_NOT_FOUND", "detail": f"交易 {transaction_id} 不存在"},
         )
-    return {"message": "交易已删除"}
+    return None
 
 
 @router.get("/positions")

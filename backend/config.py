@@ -15,7 +15,6 @@ def _ensure_data_dir() -> None:
 
 @lru_cache(maxsize=1)
 def get_config() -> dict:
-    _ensure_data_dir()
     if not _CONFIG_PATH.exists():
         logger.error("配置文件不存在: {}", _CONFIG_PATH)
         raise FileNotFoundError(f"配置文件不存在: {_CONFIG_PATH}")

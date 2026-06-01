@@ -1,4 +1,5 @@
 import re
+import sqlite3
 from typing import Any
 
 from loguru import logger
@@ -6,12 +7,9 @@ from loguru import logger
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
 from backend.storage.database import get_db
+from backend.utils import escape_like
 
 SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut)(\w+)$")
-
-
-def _escape_like(value: str, escape_char: str = "\\") -> str:
-    return value.replace(escape_char, escape_char * 2).replace("%", f"{escape_char}%").replace("_", f"{escape_char}_")
 
 
 class AssetService:
@@ -80,6 +78,14 @@ class AssetService:
         if market is None:
             raise ValueError(f"无法识别代码 '{symbol}'")
 
+        name = data.get("name", "").strip() or None
+        if not name:
+            name = self._try_search_name(symbol)
+
+        asset_type = data.get("asset_type", "stock") or "stock"
+        tags = self._tags_to_str(data.get("tags"))
+        notes = data.get("notes")
+
         with get_db() as conn:
             existing = conn.execute(
                 "SELECT id, symbol FROM tracked_assets WHERE symbol = ?",
@@ -90,20 +96,17 @@ class AssetService:
                     f"标的 '{symbol}' 已在追踪列表中（ID: {existing['id']}）"
                 )
 
-        name = data.get("name", "").strip() or None
-        if not name:
-            name = self._try_search_name(symbol)
+            try:
+                cursor = conn.execute(
+                    """INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled, tags, notes)
+                       VALUES (?, ?, ?, ?, 1, ?, ?)""",
+                    (symbol, name, market, asset_type, tags, notes),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError(
+                    f"标的 '{symbol}' 已在追踪列表中"
+                )
 
-        asset_type = data.get("asset_type", "stock") or "stock"
-        tags = self._tags_to_str(data.get("tags"))
-        notes = data.get("notes")
-
-        with get_db() as conn:
-            cursor = conn.execute(
-                """INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled, tags, notes)
-                   VALUES (?, ?, ?, ?, 1, ?, ?)""",
-                (symbol, name, market, asset_type, tags, notes),
-            )
             asset_id = cursor.lastrowid
             row = conn.execute(
                 "SELECT * FROM tracked_assets WHERE id = ?", (asset_id,)
@@ -152,7 +155,7 @@ class AssetService:
 
         if "tag" in effective_filters:
             conditions.append("ta.tags LIKE ? ESCAPE '\\'")
-            params.append(f"%{_escape_like(effective_filters['tag'])}%")
+            params.append(f"%{escape_like(effective_filters['tag'])}%")
 
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         offset = (page - 1) * page_size

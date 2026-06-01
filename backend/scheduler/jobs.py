@@ -127,11 +127,16 @@ class SchedulerManager:
         if "cron" in cfg:
             parts = cfg["cron"].split()
             if len(parts) == 5:
+                minute = parts[0]
                 hour = parts[1]
                 day_of_week = parts[4]
+                if minute == "0":
+                    time_str = f"{hour}:00"
+                else:
+                    time_str = f"{hour}:{minute.zfill(2)}"
                 if day_of_week == "1-5":
-                    return f"交易日 {hour}:00"
-                return f"每日 {hour}:00"
+                    return f"交易日 {time_str}"
+                return f"每日 {time_str}"
             return f"CRON: {cfg['cron']}"
         return TASK_SCHEDULE_DESCRIPTIONS.get(task_name, "")
 
@@ -215,3 +220,52 @@ class SchedulerManager:
                     }
                 )
         return result
+
+    def get_task_logs(
+        self,
+        task_name: str | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        conditions: list[str] = []
+        params: list[str | int] = []
+        if task_name is not None:
+            conditions.append("task_name = ?")
+            params.append(task_name)
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status)
+
+        where_clause: str = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        with get_db() as conn:
+            count_row = conn.execute(
+                f"SELECT COUNT(*) as cnt FROM run_logs {where_clause}",
+                params,
+            ).fetchone()
+            total: int = count_row["cnt"] if count_row else 0
+
+            offset: int = (page - 1) * page_size
+            rows = conn.execute(
+                f"""SELECT id, task_name, status, started_at, finished_at,
+                           error_message, affected_assets
+                    FROM run_logs
+                    {where_clause}
+                    ORDER BY started_at DESC
+                    LIMIT ? OFFSET ?""",
+                params + [page_size, offset],
+            ).fetchall()
+
+        items: list[dict] = [dict(row) for row in rows]
+        return {
+            "items": items,
+            "page_info": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
+            },
+        }

@@ -1,9 +1,12 @@
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from loguru import logger
 
+from backend.config import get_config
 from backend.storage.database import get_db
+from backend.utils import escape_like
 
 
 class EvidenceBuilder:
@@ -11,15 +14,17 @@ class EvidenceBuilder:
 
     @staticmethod
     def build(symbol: str) -> dict:
-        quote = EvidenceBuilder._build_quote(symbol)
-        kline = EvidenceBuilder._build_kline(symbol)
-        fund_flows = EvidenceBuilder._build_fund_flows(symbol)
-        finance = EvidenceBuilder._build_finance(symbol)
-        news = EvidenceBuilder._build_news(symbol)
-        technical = EvidenceBuilder._build_technical(symbol)
+        with get_db() as conn:
+            quote = EvidenceBuilder._build_quote(conn, symbol)
+            kline = EvidenceBuilder._build_kline(conn, symbol)
+            fund_flows = EvidenceBuilder._build_fund_flows(conn, symbol)
+            finance = EvidenceBuilder._build_finance(conn, symbol)
+            news = EvidenceBuilder._build_news(conn, symbol)
+            technical = EvidenceBuilder._build_technical(conn, symbol)
         data_sources = EvidenceBuilder._collect_data_sources(
             symbol, quote, kline, fund_flows, finance, news, technical
         )
+        EvidenceBuilder._strip_internal_fields(quote, kline, finance, news, technical)
         evidence = {
             "symbol": symbol,
             "quote": quote,
@@ -34,13 +39,41 @@ class EvidenceBuilder:
         return evidence
 
     @staticmethod
-    def _build_quote(symbol: str) -> dict | None:
-        with get_db() as conn:
-            row = conn.execute(
+    def _strip_internal_fields(
+        quote: dict | None,
+        kline: list[dict],
+        finance: dict | None,
+        news: dict | None,
+        technical: dict | None,
+    ) -> None:
+        if quote is not None:
+            quote.pop("_source", None)
+            quote.pop("_collected_at", None)
+        if kline:
+            kline[-1].pop("_source", None)
+            kline[-1].pop("_collected_at", None)
+        if finance is not None:
+            finance.pop("_source", None)
+            finance.pop("_collected_at", None)
+        if news is not None:
+            news.pop("_source", None)
+            news.pop("_collected_at", None)
+        if technical is not None:
+            technical.pop("_source", None)
+            technical.pop("_collected_at", None)
+
+    @staticmethod
+    def _get_config_limit(key: str, default: int) -> int:
+        config = get_config()
+        return int(config.get("evidence", {}).get(key, default))
+
+    @staticmethod
+    def _build_quote(conn: sqlite3.Connection, symbol: str) -> dict | None:
+        row = conn.execute(
                 """SELECT price, change, change_pct, volume, source, collected_at
                    FROM market_quotes WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT 1""",
-                (symbol,),
+                   ORDER BY collected_at DESC LIMIT ?""",
+                (symbol, EvidenceBuilder._get_config_limit("finance_limit", 2)),
             ).fetchone()
         if row is None:
             return None
@@ -50,13 +83,12 @@ class EvidenceBuilder:
         return result
 
     @staticmethod
-    def _build_kline(symbol: str) -> list[dict]:
-        with get_db() as conn:
-            rows = conn.execute(
+    def _build_kline(conn: sqlite3.Connection, symbol: str) -> list[dict]:
+        rows = conn.execute(
                 """SELECT date, open, high, low, close, volume, source, collected_at
                    FROM kline_daily WHERE symbol = ?
-                   ORDER BY date DESC LIMIT 60""",
-                (symbol,),
+                   ORDER BY date DESC LIMIT ?""",
+                (symbol, EvidenceBuilder._get_config_limit("kline_limit", 60)),
             ).fetchall()
         if not rows:
             return []
@@ -83,28 +115,26 @@ class EvidenceBuilder:
         return result
 
     @staticmethod
-    def _build_fund_flows(symbol: str) -> list[dict]:
-        with get_db() as conn:
-            rows = conn.execute(
+    def _build_fund_flows(conn: sqlite3.Connection, symbol: str) -> list[dict]:
+        rows = conn.execute(
                 """SELECT date, main_net_inflow, net_inflow_ratio, source, collected_at
                    FROM fund_flows WHERE symbol = ?
-                   ORDER BY date DESC LIMIT 5""",
-                (symbol,),
+                   ORDER BY date DESC LIMIT ?""",
+                (symbol, EvidenceBuilder._get_config_limit("fund_flow_limit", 5)),
             ).fetchall()
         if not rows:
             return []
         return [dict(r) for r in rows]
 
     @staticmethod
-    def _build_finance(symbol: str) -> dict | None:
-        with get_db() as conn:
-            row = conn.execute(
+    def _build_finance(conn: sqlite3.Connection, symbol: str) -> dict | None:
+        row = conn.execute(
                 """SELECT report_period, revenue, revenue_yoy, net_profit,
                           net_profit_yoy, eps, roe, debt_ratio, gross_margin, net_margin,
                           source, collected_at
                    FROM financial_reports WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT 1""",
-                (symbol,),
+                   ORDER BY collected_at DESC LIMIT ?""",
+                (symbol, EvidenceBuilder._get_config_limit("finance_limit", 2)),
             ).fetchone()
         if row is None:
             return None
@@ -114,15 +144,16 @@ class EvidenceBuilder:
         return result
 
     @staticmethod
-    def _build_news(symbol: str) -> dict | None:
-        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        with get_db() as conn:
-            rows = conn.execute(
+    def _build_news(conn: sqlite3.Connection, symbol: str) -> dict | None:
+        config = get_config()
+        news_days = config.get("evidence", {}).get("news_days", 7)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=news_days)).isoformat()
+        rows = conn.execute(
                 """SELECT title, sentiment, published_at, source, collected_at
                    FROM news_items
-                   WHERE related_symbols LIKE ? AND published_at >= ?
+                   WHERE related_symbols LIKE ? ESCAPE '\\' AND published_at >= ?
                    ORDER BY published_at DESC""",
-                (f"%{symbol}%", seven_days_ago),
+                (f'%"{escape_like(symbol)}"%', cutoff),
             ).fetchall()
         if not rows:
             return None
@@ -142,9 +173,8 @@ class EvidenceBuilder:
         }
 
     @staticmethod
-    def _build_technical(symbol: str) -> dict | None:
-        with get_db() as conn:
-            rows = conn.execute(
+    def _build_technical(conn: sqlite3.Connection, symbol: str) -> dict | None:
+        rows = conn.execute(
                 """SELECT symbol, date, ma5, ma10, ma20, ma60,
                           macd_dif, macd_dea, macd_histogram,
                           rsi6, rsi14,
@@ -204,8 +234,8 @@ class EvidenceBuilder:
                 sources.append({"source": src, "type": "kline_daily", "collected_at": cat})
         if fund_flows:
             first = fund_flows[0]
-            src = first.get("source")
-            cat = first.get("collected_at")
+            src = first.get("_source") or first.get("source")
+            cat = first.get("_collected_at") or first.get("collected_at")
             if src is not None:
                 sources.append({"source": src, "type": "fund_flows", "collected_at": cat})
         if finance is not None:

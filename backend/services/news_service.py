@@ -1,3 +1,4 @@
+import sqlite3
 import json
 import re
 from datetime import datetime, timezone
@@ -8,10 +9,7 @@ from loguru import logger
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
 from backend.storage.database import get_db
-
-
-def _escape_like(value: str, escape_char: str = "\\") -> str:
-    return value.replace(escape_char, escape_char * 2).replace("%", f"{escape_char}%").replace("_", f"{escape_char}_")
+from backend.utils import escape_like
 
 
 class NewsService:
@@ -45,6 +43,12 @@ class NewsService:
                 continue
 
         with get_db() as conn:
+            tracked_assets_rows = conn.execute(
+                "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
+            ).fetchall()
+
+            affected_symbols_set: set[str] = set()
+
             for item in all_items:
                 url = item.get("url", "")
                 if url:
@@ -60,7 +64,10 @@ class NewsService:
                     conn,
                     item.get("title", ""),
                     item.get("content"),
+                    tracked_assets_rows,
                 )
+                for s in related_symbols:
+                    affected_symbols_set.add(s)
                 related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
 
                 now = datetime.now(timezone.utc).isoformat()
@@ -78,6 +85,7 @@ class NewsService:
                 }
 
                 try:
+                    conn.execute("SAVEPOINT news_item")
                     conn.execute(
                         """INSERT INTO news_items
                            (title, source, url, content, summary, published_at,
@@ -105,7 +113,9 @@ class NewsService:
                                VALUES (?, ?, ?, ?, ?)""",
                             ("news", news_data["source"], "news", raw_json, now),
                         )
+                    conn.execute("RELEASE news_item")
                 except Exception:
+                    conn.execute("ROLLBACK TO news_item")
                     logger.exception("新闻入库失败: title={}", news_data["title"])
                     skipped += 1
 
@@ -119,7 +129,7 @@ class NewsService:
                 conn.execute(
                     """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    ("news", status, started_at, finished_at, error_message, collected + skipped),
+                    ("news", status, started_at, finished_at, error_message, len(affected_symbols_set)),
                 )
             except Exception:
                 logger.exception("写入 run_logs 失败")
@@ -127,10 +137,12 @@ class NewsService:
         logger.info("新闻采集完成: collected={}, skipped={}", collected, skipped)
         return {"collected": collected, "skipped": skipped}
 
-    def _match_symbols_with_conn(self, conn: Any, title: str, content: str | None = None) -> list[str]:
-        rows = conn.execute(
-            "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
-        ).fetchall()
+    def _match_symbols_with_conn(self, conn: sqlite3.Connection, title: str, content: str | None = None, tracked_assets_rows: list | None = None) -> list[str]:
+        if tracked_assets_rows is None:
+            tracked_assets_rows = conn.execute(
+                "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
+            ).fetchall()
+        rows = tracked_assets_rows
 
         matched: list[str] = []
         text = title
@@ -142,10 +154,8 @@ class NewsService:
             name: str = row["name"] or ""
             tags_str: str | None = row["tags"]
 
-            _symbol_pattern = re.compile(
-                r'(?<![a-zA-Z0-9])' + re.escape(symbol) + r'(?![a-zA-Z0-9])'
-            )
-            if _symbol_pattern.search(text):
+            pattern = self._get_symbol_pattern(symbol)
+            if pattern.search(text):
                 matched.append(symbol)
                 continue
 
@@ -161,6 +171,17 @@ class NewsService:
                         break
 
         return matched
+
+    def _get_symbol_pattern(self, symbol: str) -> re.Pattern:
+        if not hasattr(self, "_symbol_patterns"):
+            self._symbol_patterns: dict[str, re.Pattern] = {}
+        pattern = self._symbol_patterns.get(symbol)
+        if pattern is None:
+            pattern = re.compile(
+                r'(?<![a-zA-Z0-9])' + re.escape(symbol) + r'(?![a-zA-Z0-9])'
+            )
+            self._symbol_patterns[symbol] = pattern
+        return pattern
 
     def _match_symbols(self, title: str, content: str | None = None) -> list[str]:
         with get_db() as conn:
@@ -179,7 +200,7 @@ class NewsService:
 
         if "symbol" in effective_filters:
             conditions.append("related_symbols LIKE ? ESCAPE '\\'")
-            params.append(f'%{_escape_like(effective_filters["symbol"])}%')
+            params.append(f'%"%{escape_like(effective_filters["symbol"])}%"%')
 
         if "days" in effective_filters:
             conditions.append("published_at >= datetime('now', ?)")

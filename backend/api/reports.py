@@ -13,7 +13,7 @@ class GenerateRequest(BaseModel):
     force: bool = False
 
 
-@router.post("/generate", status_code=202)
+@router.post("/generate", status_code=200)
 def generate_reports(body: GenerateRequest) -> dict:
     symbols = body.symbols
     force = body.force
@@ -24,9 +24,9 @@ def generate_reports(body: GenerateRequest) -> dict:
         targets = len(active)
     result = _service.generate_reports(symbols=symbols, force=force)
     return {
-        "status": "accepted",
-        "targets": targets,
-        "estimated_seconds": max(targets * 2, 5),
+        "status": "completed",
+        "generated": result["generated"],
+        "skipped": result["skipped"],
     }
 
 

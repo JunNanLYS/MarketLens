@@ -1,3 +1,4 @@
+import sqlite3
 import json
 from datetime import datetime, timezone
 
@@ -25,13 +26,14 @@ class ReportService:
 
         for symbol in symbols:
             try:
-                if not force and ReportService._has_today_report(symbol):
-                    skipped += 1
-                    continue
-                evidence = EvidenceBuilder.build(symbol)
-                result = AIAnalyzer.analyze(evidence)
-                ReportService._save_report(symbol, result, force)
-                generated += 1
+                with get_db() as conn:
+                    if not force and ReportService._has_today_report(conn, symbol):
+                        skipped += 1
+                        continue
+                    evidence = EvidenceBuilder.build(symbol)
+                    result = AIAnalyzer.analyze(evidence)
+                    ReportService._save_report(conn, symbol, result, force)
+                    generated += 1
             except Exception as e:
                 logger.exception("生成报告失败: {}", symbol)
                 errors.append(f"{symbol}: {e}")
@@ -43,7 +45,7 @@ class ReportService:
             conn.execute(
                 """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                ("ai_report", status, started_at, finished_at, error_message, generated),
+                ("ai_report", status, started_at, finished_at, error_message, generated + skipped),
             )
 
         return {"generated": generated, "skipped": skipped}
@@ -148,45 +150,43 @@ class ReportService:
         return [r["symbol"] for r in rows]
 
     @staticmethod
-    def _has_today_report(symbol: str) -> bool:
+    def _has_today_report(conn: sqlite3.Connection, symbol: str) -> bool:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        with get_db() as conn:
-            row = conn.execute(
-                """SELECT id FROM ai_reports
-                   WHERE symbol = ? AND date(generated_at) = ?
-                   LIMIT 1""",
-                (symbol, today),
-            ).fetchone()
+        row = conn.execute(
+            """SELECT id FROM ai_reports
+               WHERE symbol = ? AND date(generated_at) = ?
+               LIMIT 1""",
+            (symbol, today),
+        ).fetchone()
         return row is not None
 
     @staticmethod
-    def _save_report(symbol: str, result: dict, force: bool) -> None:
+    def _save_report(conn: sqlite3.Connection, symbol: str, result: dict, force: bool) -> None:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        with get_db() as conn:
-            if force:
-                conn.execute(
-                    """DELETE FROM ai_reports
-                       WHERE symbol = ? AND date(generated_at) = ?""",
-                    (symbol, today),
-                )
+        if force:
             conn.execute(
-                """INSERT INTO ai_reports
-                   (symbol, action, confidence, risk_level, summary,
-                    bullish_reasons, bearish_reasons, key_risks, data_used, generated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    symbol,
-                    result["action"],
-                    result["confidence"],
-                    result["risk_level"],
-                    result["summary"],
-                    json.dumps(result["bullish_reasons"], ensure_ascii=False),
-                    json.dumps(result["bearish_reasons"], ensure_ascii=False),
-                    json.dumps(result["key_risks"], ensure_ascii=False),
-                    json.dumps(result["data_used"], ensure_ascii=False),
-                    result["generated_at"],
-                ),
+                """DELETE FROM ai_reports
+                   WHERE symbol = ? AND date(generated_at) = ?""",
+                (symbol, today),
             )
+        conn.execute(
+            """INSERT INTO ai_reports
+               (symbol, action, confidence, risk_level, summary,
+                bullish_reasons, bearish_reasons, key_risks, data_used, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol,
+                result["action"],
+                result["confidence"],
+                result["risk_level"],
+                result["summary"],
+                json.dumps(result["bullish_reasons"], ensure_ascii=False),
+                json.dumps(result["bearish_reasons"], ensure_ascii=False),
+                json.dumps(result["key_risks"], ensure_ascii=False),
+                json.dumps(result["data_used"], ensure_ascii=False),
+                result["generated_at"],
+            ),
+        )
 
     @staticmethod
     def _parse_report_row(row: dict) -> dict:

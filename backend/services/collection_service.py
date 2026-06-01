@@ -1,3 +1,4 @@
+import sqlite3
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -30,7 +31,7 @@ class CollectionService:
 
     @staticmethod
     def _save_raw_data(
-        conn: Any,
+        conn: sqlite3.Connection,
         symbol: str,
         source: str,
         data_type: str,
@@ -45,7 +46,7 @@ class CollectionService:
 
     @staticmethod
     def _write_run_log(
-        conn: Any,
+        conn: sqlite3.Connection,
         task_name: str,
         status: str,
         started_at: str,
@@ -59,7 +60,7 @@ class CollectionService:
             (task_name, status, started_at, finished_at, error_message, affected_assets),
         )
 
-    def _collect_quote_for_symbol(self, conn: Any, symbol: str) -> dict | None:
+    def _collect_quote_for_symbol(self, conn: sqlite3.Connection, symbol: str) -> dict | None:
         for provider in self._get_structured_providers():
             try:
                 results = provider.quote([symbol])
@@ -74,7 +75,7 @@ class CollectionService:
                 source = item.get("source", provider.name)
                 self._save_raw_data(conn, symbol, source, "quote", raw_json, collected_at)
                 conn.execute(
-                    """INSERT OR REPLACE INTO market_quotes
+                    """INSERT OR IGNORE INTO market_quotes
                        (symbol, price, change, change_pct, open, high, low, prev_close,
                         volume, amount, amplitude, turnover_rate, high_52w, low_52w, source, collected_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -173,7 +174,7 @@ class CollectionService:
 
         return summary
 
-    def _collect_kline(self, conn: Any, symbol: str) -> dict:
+    def _collect_kline(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
@@ -211,7 +212,7 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed}
 
-    def _collect_finance(self, conn: Any, symbol: str) -> dict:
+    def _collect_finance(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
@@ -253,7 +254,7 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed}
 
-    def _collect_fund_flow(self, conn: Any, symbol: str) -> dict:
+    def _collect_fund_flow(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
@@ -268,7 +269,7 @@ class CollectionService:
                 items = data if isinstance(data, list) else [data]
                 for item in items:
                     conn.execute(
-                        """INSERT OR REPLACE INTO fund_flows
+                        """INSERT OR IGNORE INTO fund_flows
                            (symbol, date, main_net_inflow, super_large_net_inflow, large_net_inflow,
                             medium_net_inflow, small_net_inflow, net_inflow_ratio, source, collected_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -293,7 +294,7 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed}
 
-    def _collect_technical(self, conn: Any, symbol: str) -> dict:
+    def _collect_technical(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
@@ -306,7 +307,7 @@ class CollectionService:
                 raw_json = json.dumps(data, ensure_ascii=False, default=str)
                 self._save_raw_data(conn, symbol, source, "technical", raw_json, collected_at)
                 conn.execute(
-                    """INSERT OR REPLACE INTO technical_indicators
+                    """INSERT OR IGNORE INTO technical_indicators
                        (symbol, date, ma5, ma10, ma20, ma60,
                         macd_dif, macd_dea, macd_histogram,
                         rsi6, rsi14, boll_upper, boll_middle, boll_lower,

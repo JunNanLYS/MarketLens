@@ -25,7 +25,7 @@ def get_connection(db_path: str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
-    logger.info("数据库连接已建立: {}", db_path)
+    logger.debug("数据库连接已建立: {}", db_path)
     return conn
 
 
@@ -41,4 +41,4 @@ def get_db(db_path: str | None = None) -> Generator[sqlite3.Connection, None, No
         raise
     finally:
         conn.close()
-        logger.info("数据库连接已关闭")
+        logger.debug("数据库连接已关闭")

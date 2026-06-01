@@ -200,6 +200,34 @@ INDEX_DDLS: list[str] = [
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_reports_symbol_date
     ON ai_reports(symbol, date(generated_at))
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_raw_data_symbol_type
+    ON raw_data(symbol, data_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_logs_task_name
+    ON run_logs(task_name, started_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_news_items_published_at
+    ON news_items(published_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_market_quotes_symbol_collected
+    ON market_quotes(symbol, collected_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_fund_flows_symbol_date
+    ON fund_flows(symbol, date)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_financial_reports_symbol
+    ON financial_reports(symbol, collected_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_transactions_account_symbol
+    ON transactions(account_id, symbol, trade_date, created_at)
+    """,
 ]
 
 

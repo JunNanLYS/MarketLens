@@ -377,7 +377,7 @@ def test_collect_news_run_logs() -> None:
     assert row is not None
     assert row["task_name"] == "news"
     assert row["status"] == "success"
-    assert row["affected_assets"] == 1
+    assert row["affected_assets"] == 0  # N-13: unique symbols affected, not news count
     assert row["started_at"] is not None
     assert row["finished_at"] is not None
 

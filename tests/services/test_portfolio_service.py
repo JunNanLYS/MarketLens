@@ -31,9 +31,19 @@ def sample_account(svc: PortfolioService) -> dict:
 
 @pytest.fixture
 def sample_asset() -> None:
-    from backend.storage.repository import insert
+    from backend.storage.database import get_db
 
-    insert(
+def __insert(table: str, data: dict) -> int:
+    with get_db() as conn:
+        keys = list(data.keys())
+        cols = ', '.join(keys)
+        placeholders = ', '.join(['?'] * len(keys))
+        sql = f'INSERT INTO {table} ({cols}) VALUES ({placeholders})'
+        cursor = conn.execute(sql, list(data.values()))
+        return cursor.lastrowid
+
+
+    _insert(
         "tracked_assets",
         {"symbol": "hk00700", "name": "腾讯控股", "market": "hk"},
     )
@@ -323,9 +333,19 @@ def test_positions_unrealized_pnl(
             "trade_date": "2026-05-01",
         }
     )
-    from backend.storage.repository import insert
+    from backend.storage.database import get_db
 
-    insert(
+def __insert(table: str, data: dict) -> int:
+    with get_db() as conn:
+        keys = list(data.keys())
+        cols = ', '.join(keys)
+        placeholders = ', '.join(['?'] * len(keys))
+        sql = f'INSERT INTO {table} ({cols}) VALUES ({placeholders})'
+        cursor = conn.execute(sql, list(data.values()))
+        return cursor.lastrowid
+
+
+    _insert(
         "market_quotes",
         {
             "symbol": "hk00700",

@@ -8,11 +8,13 @@ from loguru import logger
 
 from backend.api.assets import router as assets_router
 from backend.api.data import router as data_router
+from backend.api.neodata import router as neodata_router
 from backend.api.news import router as news_router
 from backend.api.portfolio import router as portfolio_router
 from backend.api.reports import router as reports_router
 from backend.api.tasks import router as tasks_router
 from backend.api.tasks import set_scheduler
+from backend.config import get_config
 from backend.scheduler.jobs import SchedulerManager
 from backend.storage.schema import init_db
 
@@ -41,15 +43,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+config = get_config()
+cors_origins = config.get("security", {}).get("cors_origins", ["*"])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(assets_router)
 app.include_router(data_router)
+app.include_router(neodata_router)
 app.include_router(news_router)
 app.include_router(reports_router)
 app.include_router(portfolio_router)

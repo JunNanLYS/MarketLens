@@ -21,11 +21,11 @@ class WeStockProvider(BaseProvider):
         self.command: str = self.params.get("command", "npx -y westock-data-clawhub@1.0.4")
 
     def _run_cli(self, args: str) -> list[dict] | dict | None:
-        cmd = f"{self.command} {args}"
+        cmd_parts = self.command.split() + args.split()
         try:
             result = subprocess.run(
-                cmd,
-                shell=True,
+                cmd_parts,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
@@ -34,16 +34,16 @@ class WeStockProvider(BaseProvider):
             data: list[dict] | dict = json.loads(result.stdout)
             return data
         except subprocess.TimeoutExpired:
-            logger.warning("WeStock CLI 超时: cmd={}, timeout={}s", cmd, self.timeout)
+            logger.warning("WeStock CLI 超时: cmd={}, timeout={}s", cmd_parts, self.timeout)
             return None
         except subprocess.CalledProcessError as e:
-            logger.error("WeStock CLI 执行失败: cmd={}, rc={}, stderr={}", cmd, e.returncode, e.stderr)
+            logger.error("WeStock CLI 执行失败: cmd={}, rc={}, stderr={}", cmd_parts, e.returncode, e.stderr)
             return None
         except json.JSONDecodeError as e:
-            logger.error("WeStock CLI 返回非 JSON: cmd={}, error={}", cmd, e)
+            logger.error("WeStock CLI 返回非 JSON: cmd={}, error={}", cmd_parts, e)
             return None
         except Exception as e:
-            logger.error("WeStock CLI 未知异常: cmd={}, error={}", cmd, e)
+            logger.error("WeStock CLI 未知异常: cmd={}, error={}", cmd_parts, e)
             return None
 
     @staticmethod

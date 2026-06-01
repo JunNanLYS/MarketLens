@@ -23,11 +23,6 @@ class AssetUpdateRequest(BaseModel):
     notes: str | None = None
 
 
-class AssetSearchRequest(BaseModel):
-    keyword: str = Field(..., min_length=1)
-    market: str | None = None
-
-
 @router.post("", status_code=201)
 def create_asset(body: AssetCreateRequest) -> dict:
     try:
@@ -105,7 +100,10 @@ def delete_asset(asset_id: int, soft: bool = Query(default=True)) -> None:
         )
 
 
-@router.post("/search")
-def search_assets(body: AssetSearchRequest) -> dict:
-    items = _service.search_assets(keyword=body.keyword, market=body.market)
+@router.get("/search")
+def search_assets(
+    keyword: str = Query(..., min_length=1),
+    market: str | None = Query(default=None),
+) -> dict:
+    items = _service.search_assets(keyword=keyword, market=market)
     return {"items": items, "total": len(items)}
