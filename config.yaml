@@ -1,0 +1,94 @@
+﻿# MarketLens 配置文件 — 顺序决定优先级（从上到下递减）
+# config.yaml 只管"声明"（有哪些源、优先级、参数），具体获取逻辑由 Provider 类实现
+
+# ============================================================
+# 数据源
+# ============================================================
+data_sources:
+  # 结构化数据源（行情/K线/财报/资金流/技术指标）
+  structured:
+    - name: westock
+      provider: WeStockProvider
+      enabled: true
+      timeout: 30
+      params:
+        command: "npx -y westock-data-clawhub@1.0.4"
+
+    - name: sina
+      provider: SinaProvider
+      enabled: true
+      timeout: 15
+      params:
+        quote_url: "https://hq.sinajs.cn/list={codes}"
+
+  # 新闻/公告/研报源
+  news:
+    - name: neodata
+      provider: NeoDataProvider
+      enabled: true
+      optional: true
+      timeout: 20
+      params:
+        endpoint: "https://..."
+
+    - name: sina_rss
+      provider: RSSProvider
+      enabled: true
+      timeout: 15
+      params:
+        url: "https://rss.sina.com.cn/finance"
+
+# ============================================================
+# 市场与资产类型
+# ============================================================
+markets:
+  sh:        # 上海 A 股
+    prefix: sh
+    asset_types: [stock, etf, index]
+  sz:        # 深圳 A 股
+    prefix: sz
+    asset_types: [stock, etf, index]
+  hk:        # 港股
+    prefix: hk
+    asset_types: [stock, etf, index]
+  us:        # 美股
+    prefix: us
+    asset_types: [stock, etf, index]
+  fut:       # 国内期货（上期所/大商所/郑商所/中金所/上能源）
+    prefix: fut
+    asset_types: [future]
+    note: "期货代码不含市场前缀，如 rb2501、IF2506、sc2401"
+
+# 数据库
+# ============================================================
+database:
+  path: data/marketlens.db
+  echo: false
+
+# ============================================================
+# 调度
+# ============================================================
+scheduler:
+  timezone: Asia/Shanghai
+  tasks:
+    quote:
+      interval: 15
+    daily_close:
+      cron: "0 16 * * 1-5"
+    news:
+      interval: 60
+    ai_report:
+      cron: "0 20 * * *"
+
+# ============================================================
+# AI
+# ============================================================
+ai:
+  default_action: watch
+  confidence_threshold: 0.5
+
+
+
+
+
+
