@@ -41,6 +41,14 @@ data_sources:
         endpoint: "https://copilot.tencent.com/agenttool/v1/neodata"
         token: ""
 
+    - name: westock_hot
+      provider: WeStockProvider
+      enabled: true
+      optional: true
+      timeout: 30
+      params:
+        command: "npx -y westock-data-clawhub@1.0.4"
+
     - name: sina_rss
       provider: RSSProvider
       enabled: true
