@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -12,22 +10,22 @@ _service = AssetService()
 
 class AssetCreateRequest(BaseModel):
     symbol: str = Field(..., min_length=1)
-    name: Optional[str] = None
-    market: Optional[str] = None
+    name: str | None = None
+    market: str | None = None
     asset_type: str = Field(default="stock")
-    tags: Optional[list[str]] = None
-    notes: Optional[str] = None
+    tags: list[str] | None = None
+    notes: str | None = None
 
 
 class AssetUpdateRequest(BaseModel):
-    enabled: Optional[bool] = None
-    tags: Optional[list[str]] = None
-    notes: Optional[str] = None
+    enabled: bool | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
 
 
 class AssetSearchRequest(BaseModel):
     keyword: str = Field(..., min_length=1)
-    market: Optional[str] = None
+    market: str | None = None
 
 
 @router.post("", status_code=201)
@@ -55,10 +53,10 @@ def create_asset(body: AssetCreateRequest) -> dict:
 
 @router.get("")
 def list_assets(
-    enabled: Optional[bool] = Query(default=None),
-    market: Optional[str] = Query(default=None),
-    asset_type: Optional[str] = Query(default=None),
-    tag: Optional[str] = Query(default=None),
+    enabled: bool | None = Query(default=None),
+    market: str | None = Query(default=None),
+    asset_type: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:

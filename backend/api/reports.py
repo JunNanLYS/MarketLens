@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -11,7 +9,7 @@ _service = ReportService()
 
 
 class GenerateRequest(BaseModel):
-    symbols: Optional[list[str]] = None
+    symbols: list[str] | None = None
     force: bool = False
 
 
@@ -34,9 +32,9 @@ def generate_reports(body: GenerateRequest) -> dict:
 
 @router.get("")
 def list_reports(
-    action: Optional[str] = Query(default=None),
-    risk_level: Optional[str] = Query(default=None),
-    date: Optional[str] = Query(default=None),
+    action: str | None = Query(default=None),
+    risk_level: str | None = Query(default=None),
+    date: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
@@ -65,8 +63,8 @@ def get_latest_report(symbol: str) -> dict:
 def get_report_history(
     symbol: str,
     limit: int = Query(default=30, ge=1, le=90),
-    from_: Optional[str] = Query(default=None, alias="from"),
-    to: Optional[str] = Query(default=None, alias="to"),
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None, alias="to"),
 ) -> dict:
     items = _service.get_report_history(
         symbol=symbol, limit=limit, from_date=from_, to_date=to

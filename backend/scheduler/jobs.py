@@ -120,6 +120,21 @@ class SchedulerManager:
 
         logger.info("已注册 {} 个定时任务", len(VALID_TASK_NAMES))
 
+    def _get_schedule_description(self, task_name: str) -> str:
+        cfg = self._tasks_cfg.get(task_name, {})
+        if "interval" in cfg:
+            return f"每 {cfg['interval']} 分钟"
+        if "cron" in cfg:
+            parts = cfg["cron"].split()
+            if len(parts) == 5:
+                hour = parts[1]
+                day_of_week = parts[4]
+                if day_of_week == "1-5":
+                    return f"交易日 {hour}:00"
+                return f"每日 {hour}:00"
+            return f"CRON: {cfg['cron']}"
+        return TASK_SCHEDULE_DESCRIPTIONS.get(task_name, "")
+
     def start(self) -> None:
         self.register_jobs()
         self._scheduler.start()
@@ -190,7 +205,7 @@ class SchedulerManager:
                     {
                         "task_name": task_name,
                         "description": TASK_DESCRIPTIONS[task_name],
-                        "schedule": TASK_SCHEDULE_DESCRIPTIONS[task_name],
+                        "schedule": self._get_schedule_description(task_name),
                         "last_run_at": last_run_at,
                         "last_status": last_status,
                         "last_duration_ms": last_duration_ms,

@@ -164,14 +164,15 @@ class AIAnalyzer:
         for item in fund_flows:
             inflow = item.get("main_net_inflow")
             if inflow is not None and inflow > 0:
+                if consecutive_outflow > 0:
+                    break
                 consecutive_inflow += 1
-                consecutive_outflow = 0
             elif inflow is not None and inflow < 0:
+                if consecutive_inflow > 0:
+                    break
                 consecutive_outflow += 1
-                consecutive_inflow = 0
             else:
-                consecutive_inflow = 0
-                consecutive_outflow = 0
+                break
 
         if consecutive_inflow >= 3:
             bullish += 0.15

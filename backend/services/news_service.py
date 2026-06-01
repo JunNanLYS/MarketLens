@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -7,6 +8,10 @@ from loguru import logger
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
 from backend.storage.database import get_db
+
+
+def _escape_like(value: str, escape_char: str = "\\") -> str:
+    return value.replace(escape_char, escape_char * 2).replace("%", f"{escape_char}%").replace("_", f"{escape_char}_")
 
 
 class NewsService:
@@ -39,10 +44,10 @@ class NewsService:
                     logger.warning("可选数据源 {} 不可用，静默跳过", provider.name)
                 continue
 
-        for item in all_items:
-            url = item.get("url", "")
-            if url:
-                with get_db() as conn:
+        with get_db() as conn:
+            for item in all_items:
+                url = item.get("url", "")
+                if url:
                     existing = conn.execute(
                         "SELECT id FROM news_items WHERE url = ?",
                         (url,),
@@ -51,28 +56,28 @@ class NewsService:
                         skipped += 1
                         continue
 
-            related_symbols = self._match_symbols(
-                item.get("title", ""),
-                item.get("content"),
-            )
-            related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
+                related_symbols = self._match_symbols_with_conn(
+                    conn,
+                    item.get("title", ""),
+                    item.get("content"),
+                )
+                related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
 
-            now = datetime.now(timezone.utc).isoformat()
-            news_data = {
-                "title": item.get("title", ""),
-                "source": item.get("source", ""),
-                "url": url or None,
-                "content": item.get("content"),
-                "summary": item.get("summary"),
-                "published_at": item.get("published_at"),
-                "sentiment": item.get("sentiment", "neutral"),
-                "importance": item.get("importance", "normal"),
-                "related_symbols": related_symbols_json,
-                "collected_at": item.get("collected_at", now),
-            }
+                now = datetime.now(timezone.utc).isoformat()
+                news_data = {
+                    "title": item.get("title", ""),
+                    "source": item.get("source", ""),
+                    "url": url or None,
+                    "content": item.get("content"),
+                    "summary": item.get("summary"),
+                    "published_at": item.get("published_at"),
+                    "sentiment": item.get("sentiment", "neutral"),
+                    "importance": item.get("importance", "normal"),
+                    "related_symbols": related_symbols_json,
+                    "collected_at": item.get("collected_at", now),
+                }
 
-            try:
-                with get_db() as conn:
+                try:
                     conn.execute(
                         """INSERT INTO news_items
                            (title, source, url, content, summary, published_at,
@@ -91,44 +96,41 @@ class NewsService:
                             news_data["collected_at"],
                         ),
                     )
-                collected += 1
+                    collected += 1
 
-                if url:
-                    raw_json = json.dumps(item, ensure_ascii=False, default=str)
-                    with get_db() as conn:
+                    if url:
+                        raw_json = json.dumps(item, ensure_ascii=False, default=str)
                         conn.execute(
                             """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
                                VALUES (?, ?, ?, ?, ?)""",
                             ("news", news_data["source"], "news", raw_json, now),
                         )
-            except Exception:
-                logger.exception("新闻入库失败: title={}", news_data["title"])
-                skipped += 1
+                except Exception:
+                    logger.exception("新闻入库失败: title={}", news_data["title"])
+                    skipped += 1
 
-        finished_at = datetime.now(timezone.utc).isoformat()
-        status = "success" if collected > 0 or skipped == 0 else "failure"
-        error_message = None
-        if collected == 0 and skipped > 0:
-            error_message = "所有新闻均被跳过，无新增"
+            finished_at = datetime.now(timezone.utc).isoformat()
+            status = "success" if collected > 0 or skipped == 0 else "failure"
+            error_message = None
+            if collected == 0 and skipped > 0:
+                error_message = "所有新闻均被跳过，无新增"
 
-        try:
-            with get_db() as conn:
+            try:
                 conn.execute(
                     """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    ("news", status, started_at, finished_at, error_message, collected),
+                    ("news", status, started_at, finished_at, error_message, collected + skipped),
                 )
-        except Exception:
-            logger.exception("写入 run_logs 失败")
+            except Exception:
+                logger.exception("写入 run_logs 失败")
 
         logger.info("新闻采集完成: collected={}, skipped={}", collected, skipped)
         return {"collected": collected, "skipped": skipped}
 
-    def _match_symbols(self, title: str, content: str | None = None) -> list[str]:
-        with get_db() as conn:
-            rows = conn.execute(
-                "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
-            ).fetchall()
+    def _match_symbols_with_conn(self, conn: Any, title: str, content: str | None = None) -> list[str]:
+        rows = conn.execute(
+            "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
+        ).fetchall()
 
         matched: list[str] = []
         text = title
@@ -140,7 +142,10 @@ class NewsService:
             name: str = row["name"] or ""
             tags_str: str | None = row["tags"]
 
-            if symbol in text:
+            _symbol_pattern = re.compile(
+                r'(?<![a-zA-Z0-9])' + re.escape(symbol) + r'(?![a-zA-Z0-9])'
+            )
+            if _symbol_pattern.search(text):
                 matched.append(symbol)
                 continue
 
@@ -157,6 +162,10 @@ class NewsService:
 
         return matched
 
+    def _match_symbols(self, title: str, content: str | None = None) -> list[str]:
+        with get_db() as conn:
+            return self._match_symbols_with_conn(conn, title, content)
+
     def get_news(
         self,
         filters: dict[str, Any] | None = None,
@@ -169,8 +178,8 @@ class NewsService:
         effective_filters = dict(filters) if filters else {}
 
         if "symbol" in effective_filters:
-            conditions.append("related_symbols LIKE ?")
-            params.append(f'%{effective_filters["symbol"]}%')
+            conditions.append("related_symbols LIKE ? ESCAPE '\\'")
+            params.append(f'%{_escape_like(effective_filters["symbol"])}%')
 
         if "days" in effective_filters:
             conditions.append("published_at >= datetime('now', ?)")

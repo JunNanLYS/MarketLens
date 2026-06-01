@@ -102,22 +102,6 @@ class PortfolioService:
             logger.info("软删除账户: id={}", account_id)
             return True
 
-    def _get_current_holding(self, account_id: int, symbol: str) -> float:
-        with get_db() as conn:
-            rows = conn.execute(
-                "SELECT type, quantity FROM transactions WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL",
-                (account_id, symbol),
-            ).fetchall()
-        total: float = 0.0
-        for row in rows:
-            if row["type"] == "buy":
-                total += row["quantity"]
-            elif row["type"] == "sell":
-                total -= row["quantity"]
-            elif row["type"] == "split":
-                total *= row["quantity"]
-        return total
-
     def create_transaction(self, data: dict) -> dict:
         account_id: int = data["account_id"]
         symbol: str = data["symbol"].strip()
@@ -176,7 +160,7 @@ class PortfolioService:
         self, conn, account_id: int, symbol: str
     ) -> float:
         rows = conn.execute(
-            "SELECT type, quantity FROM transactions WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL",
+            "SELECT type, quantity FROM transactions WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL ORDER BY trade_date, created_at",
             (account_id, symbol),
         ).fetchall()
         total: float = 0.0
@@ -188,6 +172,24 @@ class PortfolioService:
             elif row["type"] == "split":
                 total *= row["quantity"]
         return total
+
+    @staticmethod
+    def _compute_position_detail(transactions: list[dict]) -> tuple[float, float]:
+        total_qty: float = 0.0
+        avg_cost: float = 0.0
+        for tx in transactions:
+            if tx["type"] == "buy":
+                new_qty: float = total_qty + tx["quantity"]
+                if new_qty > 0:
+                    avg_cost = (avg_cost * total_qty + tx["price"] * tx["quantity"]) / new_qty
+                total_qty = new_qty
+            elif tx["type"] == "sell":
+                total_qty -= tx["quantity"]
+            elif tx["type"] == "dividend":
+                pass
+            elif tx["type"] == "split":
+                total_qty *= tx["quantity"]
+        return total_qty, avg_cost
 
     def get_transactions(
         self,
@@ -347,23 +349,7 @@ class PortfolioService:
         positions: list[dict] = []
         with get_db() as conn:
             for (aid, sym), txs in grouped.items():
-                total_qty: float = 0.0
-                avg_cost: float = 0.0
-
-                for tx in txs:
-                    if tx["type"] == "buy":
-                        new_qty: float = total_qty + tx["quantity"]
-                        if new_qty > 0:
-                            avg_cost = (
-                                avg_cost * total_qty + tx["price"] * tx["quantity"]
-                            ) / new_qty
-                        total_qty = new_qty
-                    elif tx["type"] == "sell":
-                        total_qty -= tx["quantity"]
-                    elif tx["type"] == "dividend":
-                        pass
-                    elif tx["type"] == "split":
-                        total_qty *= tx["quantity"]
+                total_qty, avg_cost = self._compute_position_detail(txs)
 
                 if total_qty <= 1e-9:
                     continue
@@ -488,23 +474,6 @@ class PortfolioService:
             "SELECT type, quantity, price FROM transactions WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL ORDER BY trade_date, created_at",
             (account_id, symbol),
         ).fetchall()
-
-        total_qty: float = 0.0
-        avg_cost: float = 0.0
-
-        for row in rows:
-            if row["type"] == "buy":
-                new_qty: float = total_qty + row["quantity"]
-                if new_qty > 0:
-                    avg_cost = (
-                        avg_cost * total_qty + row["price"] * row["quantity"]
-                    ) / new_qty
-                total_qty = new_qty
-            elif row["type"] == "sell":
-                total_qty -= row["quantity"]
-            elif row["type"] == "dividend":
-                pass
-            elif row["type"] == "split":
-                total_qty *= row["quantity"]
-
+        rows_as_dicts: list[dict] = [dict(row) for row in rows]
+        _, avg_cost = self._compute_position_detail(rows_as_dicts)
         return avg_cost

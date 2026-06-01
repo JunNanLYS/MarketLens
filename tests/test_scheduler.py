@@ -310,7 +310,7 @@ class TestTriggerAPI:
         resp = client.post("/api/v1/tasks/trigger/nonexistent")
         assert resp.status_code == 404
         data = resp.json()
-        assert data["detail"]["error"] == "TASK_NOT_FOUND"
+        assert data["error"] == "TASK_NOT_FOUND"
 
     def test_trigger_all_valid_tasks(self, client: TestClient) -> None:
         for name in VALID_TASK_NAMES:

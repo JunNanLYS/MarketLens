@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.services.news_service import NewsService
@@ -11,10 +9,10 @@ _service = NewsService()
 
 @router.get("")
 def list_news(
-    symbol: Optional[str] = Query(default=None),
+    symbol: str | None = Query(default=None),
     days: int = Query(default=7, ge=1),
-    sentiment: Optional[str] = Query(default=None),
-    source: Optional[str] = Query(default=None),
+    sentiment: str | None = Query(default=None),
+    source: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:

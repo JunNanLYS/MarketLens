@@ -37,26 +37,31 @@ class EvidenceBuilder:
     def _build_quote(symbol: str) -> dict | None:
         with get_db() as conn:
             row = conn.execute(
-                """SELECT price, change, change_pct, volume, collected_at
+                """SELECT price, change, change_pct, volume, source, collected_at
                    FROM market_quotes WHERE symbol = ?
                    ORDER BY collected_at DESC LIMIT 1""",
                 (symbol,),
             ).fetchone()
         if row is None:
             return None
-        return dict(row)
+        result = dict(row)
+        result["_source"] = result["source"]
+        result["_collected_at"] = result["collected_at"]
+        return result
 
     @staticmethod
     def _build_kline(symbol: str) -> list[dict]:
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT date, open, high, low, close, volume
+                """SELECT date, open, high, low, close, volume, source, collected_at
                    FROM kline_daily WHERE symbol = ?
                    ORDER BY date DESC LIMIT 60""",
                 (symbol,),
             ).fetchall()
         if not rows:
             return []
+        latest_source = rows[0]["source"] if rows else None
+        latest_collected_at = rows[0]["collected_at"] if rows else None
         items = [dict(r) for r in reversed(rows)]
         df = pd.DataFrame(items)
         for window in [5, 10, 20, 60]:
@@ -70,13 +75,18 @@ class EvidenceBuilder:
                     item[key] = None
                 else:
                     item[key] = round(float(val), 4)
+            item.pop("source", None)
+            item.pop("collected_at", None)
+        if result:
+            result[-1]["_source"] = latest_source
+            result[-1]["_collected_at"] = latest_collected_at
         return result
 
     @staticmethod
     def _build_fund_flows(symbol: str) -> list[dict]:
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT date, main_net_inflow, net_inflow_ratio
+                """SELECT date, main_net_inflow, net_inflow_ratio, source, collected_at
                    FROM fund_flows WHERE symbol = ?
                    ORDER BY date DESC LIMIT 5""",
                 (symbol,),
@@ -90,21 +100,25 @@ class EvidenceBuilder:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT report_period, revenue, revenue_yoy, net_profit,
-                          net_profit_yoy, eps, roe, debt_ratio, gross_margin, net_margin
+                          net_profit_yoy, eps, roe, debt_ratio, gross_margin, net_margin,
+                          source, collected_at
                    FROM financial_reports WHERE symbol = ?
                    ORDER BY collected_at DESC LIMIT 1""",
                 (symbol,),
             ).fetchone()
         if row is None:
             return None
-        return dict(row)
+        result = dict(row)
+        result["_source"] = result["source"]
+        result["_collected_at"] = result["collected_at"]
+        return result
 
     @staticmethod
     def _build_news(symbol: str) -> dict | None:
         seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT title, sentiment, published_at
+                """SELECT title, sentiment, published_at, source, collected_at
                    FROM news_items
                    WHERE related_symbols LIKE ? AND published_at >= ?
                    ORDER BY published_at DESC""",
@@ -123,6 +137,8 @@ class EvidenceBuilder:
             "negative_count": negative_count,
             "neutral_count": neutral_count,
             "total_count": total_count,
+            "_source": items[0].get("source") if items else None,
+            "_collected_at": items[0].get("collected_at") if items else None,
         }
 
     @staticmethod
@@ -132,7 +148,8 @@ class EvidenceBuilder:
                 """SELECT symbol, date, ma5, ma10, ma20, ma60,
                           macd_dif, macd_dea, macd_histogram,
                           rsi6, rsi14,
-                          boll_upper, boll_middle, boll_lower
+                          boll_upper, boll_middle, boll_lower,
+                          source, collected_at
                    FROM technical_indicators WHERE symbol = ?
                    ORDER BY date DESC LIMIT 2""",
                 (symbol,),
@@ -153,6 +170,8 @@ class EvidenceBuilder:
             "boll_upper": latest.get("boll_upper"),
             "boll_middle": latest.get("boll_middle"),
             "boll_lower": latest.get("boll_lower"),
+            "_source": latest.get("source"),
+            "_collected_at": latest.get("collected_at"),
         }
         if len(rows) >= 2:
             prev = dict(rows[1])
@@ -172,60 +191,36 @@ class EvidenceBuilder:
         technical: dict | None,
     ) -> list[dict]:
         sources: list[dict] = []
-        with get_db() as conn:
-            if quote is not None:
-                row = conn.execute(
-                    """SELECT source, collected_at FROM market_quotes
-                       WHERE symbol = ? ORDER BY collected_at DESC LIMIT 1""",
-                    (symbol,),
-                ).fetchone()
-                if row is not None:
-                    sources.append({"source": row["source"], "type": "market_quotes", "collected_at": row["collected_at"]})
-
-            if kline:
-                row = conn.execute(
-                    """SELECT source, collected_at FROM kline_daily
-                       WHERE symbol = ? ORDER BY date DESC LIMIT 1""",
-                    (symbol,),
-                ).fetchone()
-                if row is not None:
-                    sources.append({"source": row["source"], "type": "kline_daily", "collected_at": row["collected_at"]})
-
-            if fund_flows:
-                row = conn.execute(
-                    """SELECT source, collected_at FROM fund_flows
-                       WHERE symbol = ? ORDER BY date DESC LIMIT 1""",
-                    (symbol,),
-                ).fetchone()
-                if row is not None:
-                    sources.append({"source": row["source"], "type": "fund_flows", "collected_at": row["collected_at"]})
-
-            if finance is not None:
-                row = conn.execute(
-                    """SELECT source, collected_at FROM financial_reports
-                       WHERE symbol = ? ORDER BY collected_at DESC LIMIT 1""",
-                    (symbol,),
-                ).fetchone()
-                if row is not None:
-                    sources.append({"source": row["source"], "type": "financial_reports", "collected_at": row["collected_at"]})
-
-            if news is not None:
-                row = conn.execute(
-                    """SELECT source, collected_at FROM news_items
-                       WHERE related_symbols LIKE ?
-                       ORDER BY collected_at DESC LIMIT 1""",
-                    (f"%{symbol}%",),
-                ).fetchone()
-                if row is not None:
-                    sources.append({"source": row["source"], "type": "news", "collected_at": row["collected_at"]})
-
-            if technical is not None:
-                row = conn.execute(
-                    """SELECT source, collected_at FROM technical_indicators
-                       WHERE symbol = ? ORDER BY date DESC LIMIT 1""",
-                    (symbol,),
-                ).fetchone()
-                if row is not None:
-                    sources.append({"source": row["source"], "type": "technical_indicators", "collected_at": row["collected_at"]})
-
+        if quote is not None:
+            src = quote.get("_source")
+            cat = quote.get("_collected_at")
+            if src is not None:
+                sources.append({"source": src, "type": "market_quotes", "collected_at": cat})
+        if kline:
+            last = kline[-1]
+            src = last.get("_source")
+            cat = last.get("_collected_at")
+            if src is not None:
+                sources.append({"source": src, "type": "kline_daily", "collected_at": cat})
+        if fund_flows:
+            first = fund_flows[0]
+            src = first.get("source")
+            cat = first.get("collected_at")
+            if src is not None:
+                sources.append({"source": src, "type": "fund_flows", "collected_at": cat})
+        if finance is not None:
+            src = finance.get("_source")
+            cat = finance.get("_collected_at")
+            if src is not None:
+                sources.append({"source": src, "type": "financial_reports", "collected_at": cat})
+        if news is not None:
+            src = news.get("_source")
+            cat = news.get("_collected_at")
+            if src is not None:
+                sources.append({"source": src, "type": "news", "collected_at": cat})
+        if technical is not None:
+            src = technical.get("_source")
+            cat = technical.get("_collected_at")
+            if src is not None:
+                sources.append({"source": src, "type": "technical_indicators", "collected_at": cat})
         return sources

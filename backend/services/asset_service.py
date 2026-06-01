@@ -10,6 +10,10 @@ from backend.storage.database import get_db
 SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut)(\w+)$")
 
 
+def _escape_like(value: str, escape_char: str = "\\") -> str:
+    return value.replace(escape_char, escape_char * 2).replace("%", f"{escape_char}%").replace("_", f"{escape_char}_")
+
+
 class AssetService:
     """标的管理服务，提供追踪标的 CRUD 功能。"""
 
@@ -147,8 +151,8 @@ class AssetService:
             params.append(effective_filters["asset_type"])
 
         if "tag" in effective_filters:
-            conditions.append("ta.tags LIKE ?")
-            params.append(f"%{effective_filters['tag']}%")
+            conditions.append("ta.tags LIKE ? ESCAPE '\\'")
+            params.append(f"%{_escape_like(effective_filters['tag'])}%")
 
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         offset = (page - 1) * page_size

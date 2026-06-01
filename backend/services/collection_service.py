@@ -59,6 +59,50 @@ class CollectionService:
             (task_name, status, started_at, finished_at, error_message, affected_assets),
         )
 
+    def _collect_quote_for_symbol(self, conn: Any, symbol: str) -> dict | None:
+        for provider in self._get_structured_providers():
+            try:
+                results = provider.quote([symbol])
+                if not results:
+                    continue
+                matched = [r for r in results if r.get("symbol") == symbol]
+                if not matched:
+                    continue
+                item = matched[0]
+                raw_json = json.dumps(item, ensure_ascii=False, default=str)
+                collected_at = item.get("collected_at", self._now_iso())
+                source = item.get("source", provider.name)
+                self._save_raw_data(conn, symbol, source, "quote", raw_json, collected_at)
+                conn.execute(
+                    """INSERT OR REPLACE INTO market_quotes
+                       (symbol, price, change, change_pct, open, high, low, prev_close,
+                        volume, amount, amplitude, turnover_rate, high_52w, low_52w, source, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        symbol,
+                        item.get("price"),
+                        item.get("change"),
+                        item.get("change_pct"),
+                        item.get("open"),
+                        item.get("high"),
+                        item.get("low"),
+                        item.get("prev_close"),
+                        item.get("volume"),
+                        item.get("amount"),
+                        item.get("amplitude"),
+                        item.get("turnover_rate"),
+                        item.get("high_52w"),
+                        item.get("low_52w"),
+                        source,
+                        collected_at,
+                    ),
+                )
+                return item
+            except Exception as e:
+                logger.warning("Provider {} 采集行情失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
     def collect_quotes(self) -> dict:
         started_at = self._now_iso()
         assets = self._asset_service.get_active_assets()
@@ -71,48 +115,9 @@ class CollectionService:
             for asset in assets:
                 symbol: str = asset["symbol"]
                 collected = False
-                for provider in self._get_structured_providers():
-                    try:
-                        results = provider.quote([symbol])
-                        if not results:
-                            continue
-                        matched = [r for r in results if r.get("symbol") == symbol]
-                        if not matched:
-                            continue
-                        item = matched[0]
-                        raw_json = json.dumps(item, ensure_ascii=False, default=str)
-                        collected_at = item.get("collected_at", self._now_iso())
-                        source = item.get("source", provider.name)
-                        self._save_raw_data(conn, symbol, source, "quote", raw_json, collected_at)
-                        conn.execute(
-                            """INSERT OR REPLACE INTO market_quotes
-                               (symbol, price, change, change_pct, open, high, low, prev_close,
-                                volume, amount, amplitude, turnover_rate, high_52w, low_52w, source, collected_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                symbol,
-                                item.get("price"),
-                                item.get("change"),
-                                item.get("change_pct"),
-                                item.get("open"),
-                                item.get("high"),
-                                item.get("low"),
-                                item.get("prev_close"),
-                                item.get("volume"),
-                                item.get("amount"),
-                                item.get("amplitude"),
-                                item.get("turnover_rate"),
-                                item.get("high_52w"),
-                                item.get("low_52w"),
-                                source,
-                                collected_at,
-                            ),
-                        )
-                        collected = True
-                        break
-                    except Exception as e:
-                        logger.warning("Provider {} 采集行情失败: {} - {}", provider.name, symbol, e)
-                        continue
+                item = self._collect_quote_for_symbol(conn, symbol)
+                if item is not None:
+                    collected = True
 
                 if collected:
                     success += 1
@@ -123,54 +128,13 @@ class CollectionService:
             finished_at = self._now_iso()
             status = "success" if failed == 0 else "failure"
             error_message = "; ".join(errors) if errors else None
-            self._write_run_log(conn, "quote", status, started_at, finished_at, error_message, success)
+            self._write_run_log(conn, "quote", status, started_at, finished_at, error_message, total)
 
         return {"success": success, "failed": failed, "total": total}
 
     def collect_quote_single(self, symbol: str) -> dict | None:
         with get_db() as conn:
-            for provider in self._get_structured_providers():
-                try:
-                    results = provider.quote([symbol])
-                    if not results:
-                        continue
-                    matched = [r for r in results if r.get("symbol") == symbol]
-                    if not matched:
-                        continue
-                    item = matched[0]
-                    raw_json = json.dumps(item, ensure_ascii=False, default=str)
-                    collected_at = item.get("collected_at", self._now_iso())
-                    source = item.get("source", provider.name)
-                    self._save_raw_data(conn, symbol, source, "quote", raw_json, collected_at)
-                    conn.execute(
-                        """INSERT OR REPLACE INTO market_quotes
-                           (symbol, price, change, change_pct, open, high, low, prev_close,
-                            volume, amount, amplitude, turnover_rate, high_52w, low_52w, source, collected_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            symbol,
-                            item.get("price"),
-                            item.get("change"),
-                            item.get("change_pct"),
-                            item.get("open"),
-                            item.get("high"),
-                            item.get("low"),
-                            item.get("prev_close"),
-                            item.get("volume"),
-                            item.get("amount"),
-                            item.get("amplitude"),
-                            item.get("turnover_rate"),
-                            item.get("high_52w"),
-                            item.get("low_52w"),
-                            source,
-                            collected_at,
-                        ),
-                    )
-                    return item
-                except Exception as e:
-                    logger.warning("Provider {} 采集行情失败: {} - {}", provider.name, symbol, e)
-                    continue
-        return None
+            return self._collect_quote_for_symbol(conn, symbol)
 
     def collect_daily_close(self) -> dict:
         started_at = self._now_iso()
