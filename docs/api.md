@@ -13,11 +13,12 @@
 | 📰 新闻 | [news / reports / tasks](api/news-reports-tasks.md#新闻) | 2 |
 | 🧠 AI 报告 | [news / reports / tasks](api/news-reports-tasks.md#ai-报告) | 4 |
 | ⏰ 任务管理 | [news / reports / tasks](api/news-reports-tasks.md#任务管理) | 3 |
+| 🔑 NeoData Token | [neodata](api/neodata.md) | 2 |
 | 💼 投资组合 | [portfolio](api/portfolio.md) | 12 |
 
 ---
 
-## 一页速览（33 个接口）
+## 一页速览（35 个接口）
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -58,6 +59,9 @@
 ---
 
 ## 通用约定
+
+| GET | /neodata/token-status | Token 状态 |
+| POST | /neodata/token | 保存 Token |
 
 ### 分页
 
