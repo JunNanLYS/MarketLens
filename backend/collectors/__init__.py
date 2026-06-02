@@ -21,27 +21,36 @@ PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "SinaNewsProvider": SinaNewsProvider,
 }
 
-def create_providers(config):
-    from loguru import logger
-    result = {'structured': [], 'news': []}
-    data_sources = config.get('data_sources', {})
-    for category in ('structured', 'news'):
-        sources = data_sources.get(category, [])
+
+def create_providers(config: dict) -> dict[str, list[BaseProvider]]:
+    """根据 config.yaml 中的 data_sources 配置动态实例化 Provider。
+
+    返回 {"structured": [...], "news": [...]} 结构，
+    每个列表中的 Provider 按配置顺序排列（即优先级顺序）。
+    """
+    result: dict[str, list[BaseProvider]] = {"structured": [], "news": []}
+    data_sources: dict = config.get("data_sources", {})
+
+    for category in ("structured", "news"):
+        sources: list[dict] = data_sources.get(category, [])
         for source_cfg in sources:
-            if not source_cfg.get('enabled', True):
-                logger.info('disabled: {}', source_cfg.get('name', 'unknown'))
+            if not source_cfg.get("enabled", True):
+                logger.info("数据源已禁用，跳过: {}", source_cfg.get("name", "unknown"))
                 continue
-            provider_name = source_cfg.get('provider', '')
+
+            provider_name: str = source_cfg.get("provider", "")
             provider_cls = PROVIDER_REGISTRY.get(provider_name)
             if provider_cls is None:
-                logger.error('unregistered: {}', provider_name)
+                logger.error("未注册的 Provider 类: {}, 跳过", provider_name)
                 continue
+
             instance = provider_cls(
-                name=source_cfg.get('name', provider_name),
-                timeout=source_cfg.get('timeout', 30),
-                params=source_cfg.get('params'),
-                optional=source_cfg.get('optional', False),
+                name=source_cfg.get("name", provider_name),
+                timeout=source_cfg.get("timeout", 30),
+                params=source_cfg.get("params"),
+                optional=source_cfg.get("optional", False),
             )
             result[category].append(instance)
-            logger.info('{} ({})', instance.name, provider_name)
+            logger.info("已注册 Provider: {} ({})", instance.name, provider_name)
+
     return result

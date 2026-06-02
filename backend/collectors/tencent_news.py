@@ -20,7 +20,7 @@ class TencentNewsProvider(BaseProvider):
     def __init__(self, name, timeout=30, params=None, optional=True):
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self._cli_path = None
-        self._max_items = int(params.get("max_items", 50)) if (params and "max_items" in params) else 50
+        self._max_items: int = int(params.get("max_items", 50)) if params else 50
 
     @staticmethod
     def _now():

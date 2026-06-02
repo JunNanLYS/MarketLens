@@ -16,8 +16,8 @@ class RSSProvider(BaseProvider):
         "content": "http://purl.org/rss/1.0/modules/content/",
         "dc": "http://purl.org/dc/elements/1.1/",
         "atom": "http://www.w3.org/2005/Atom",
+
     }
-    """通用 RSS 新闻采集提供者，通过 HTTP GET 获取 RSS feed 并解析。"""
 
     def __init__(
         self,
@@ -145,7 +145,8 @@ class RSSProvider(BaseProvider):
             })
         return results
 
-def _get_text(element: ET.Element, tag: str) -> str:
+    @staticmethod
+    def _get_text(element: ET.Element, tag: str) -> str:
         # 尝试直接查找（不带命名空间）
         child = element.find(tag)
         if child is not None and child.text:
