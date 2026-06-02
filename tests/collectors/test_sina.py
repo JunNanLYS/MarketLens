@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+﻿from unittest.mock import MagicMock, patch
+import json
 
 import httpx
 import pytest
@@ -38,6 +39,39 @@ def test_to_sina_code_already_prefixed() -> None:
     assert SinaProvider._to_sina_code("sh600519") == "sh600519"
     assert SinaProvider._to_sina_code("sz000001") == "sz000001"
 
+
+def test_to_sina_code_hk_us() -> None:
+    assert SinaProvider._to_sina_code("hk00700") == "hk00700"
+    assert SinaProvider._to_sina_code("usAAPL") == "usAAPL"
+
+
+def test_strip_code_for_finance() -> None:
+    assert SinaProvider._strip_code_for_finance("sh600519") == "600519"
+    assert SinaProvider._strip_code_for_finance("sz000001") == "000001"
+    assert SinaProvider._strip_code_for_finance("hk00700") is None
+    assert SinaProvider._strip_code_for_finance("600519") == "600519"
+    assert SinaProvider._strip_code_for_finance("abc") is None
+
+
+def test_market_prefix() -> None:
+    assert SinaProvider._market_prefix("sh600519") == "sh"
+    assert SinaProvider._market_prefix("sz000001") == "sz"
+    assert SinaProvider._market_prefix("600519") == "sh"
+    assert SinaProvider._market_prefix("000001") == "sz"
+    assert SinaProvider._market_prefix("300001") == "sz"
+
+
+def test_safe_float() -> None:
+    assert SinaProvider._safe_float(None) is None
+    assert SinaProvider._safe_float("") is None
+    assert SinaProvider._safe_float("abc") is None
+    assert SinaProvider._safe_float(123) == 123.0
+    assert SinaProvider._safe_float("123.45") == 123.45
+    assert SinaProvider._safe_float("1,234.56") == 1234.56
+    assert SinaProvider._safe_float("-28.80") == -28.80
+
+
+# ── quote 测试 ───────────────────────────────────────────────
 
 def test_quote_success(provider: SinaProvider) -> None:
     sina_response = (
@@ -134,17 +168,237 @@ def test_search_returns_empty(provider: SinaProvider) -> None:
     assert provider.search("茅台") == []
 
 
-def test_kline_returns_empty(provider: SinaProvider) -> None:
-    assert provider.kline("sh600519") == []
-
-
-def test_finance_returns_empty(provider: SinaProvider) -> None:
-    assert provider.finance("sh600519") == {}
-
-
-def test_fund_flow_returns_empty(provider: SinaProvider) -> None:
-    assert provider.fund_flow("sh600519") == {}
-
-
 def test_technical_returns_empty(provider: SinaProvider) -> None:
     assert provider.technical("sh600519") == {}
+
+
+# ── kline 测试 ────────────────────────────────────────────────
+
+def test_kline_success(provider: SinaProvider) -> None:
+    mock_data = [
+        {"day": "2026-06-01", "open": "1327.000", "high": "1327.000",
+         "low": "1301.310", "close": "1309.600", "volume": "43845"},
+        {"day": "2026-05-29", "open": "1270.600", "high": "1329.000",
+         "low": "1270.000", "close": "1326.000", "volume": "76478"},
+    ]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = mock_data
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.kline("sh600519")
+
+    assert len(result) == 2
+    assert result[0]["symbol"] == "sh600519"
+    assert result[0]["open"] == 1327.0
+    assert result[0]["close"] == 1309.6
+    assert result[0]["volume"] == 43845.0
+    assert result[0]["source"] == "sina"
+    assert "collected_at" in result[0]
+    assert result[0]["change_pct"] is None
+
+
+def test_kline_hk_returns_empty(provider: SinaProvider) -> None:
+    result = provider.kline("hk00700")
+    assert result == []
+
+
+def test_kline_us_returns_empty(provider: SinaProvider) -> None:
+    result = provider.kline("usAAPL")
+    assert result == []
+
+
+def test_kline_empty_response(provider: SinaProvider) -> None:
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = []
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.kline("sh600519")
+    assert result == []
+
+
+def test_kline_non_list_response(provider: SinaProvider) -> None:
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"error": "not found"}
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.kline("sh600519")
+    assert result == []
+
+
+def test_kline_timeout(provider: SinaProvider) -> None:
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_get.side_effect = httpx.TimeoutException("timeout")
+        result = provider.kline("sh600519")
+        assert result == []
+
+
+def test_kline_http_error(provider: SinaProvider) -> None:
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_get.side_effect = httpx.HTTPStatusError(
+            "Server Error", request=MagicMock(), response=mock_resp
+        )
+        result = provider.kline("sh600519")
+        assert result == []
+
+
+def test_kline_weekly_period(provider: SinaProvider) -> None:
+    mock_data = [{"day": "2026-06-01", "open": "1300", "high": "1320",
+                   "low": "1290", "close": "1310", "volume": "100000"}]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = mock_data
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_get.return_value = mock_resp
+        result = provider.kline("sh600519", period="weekly")
+        assert len(result) == 1
+        call_args = mock_get.call_args
+        assert call_args[1]["params"]["scale"] == 1200
+
+
+def test_kline_monthly_period(provider: SinaProvider) -> None:
+    mock_data = [{"day": "2026-05-01", "open": "1300", "high": "1310",
+                   "low": "1290", "close": "1305", "volume": "200000"}]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = mock_data
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_get.return_value = mock_resp
+        provider.kline("sh600519", period="monthly")
+        call_args = mock_get.call_args
+        assert call_args[1]["params"]["scale"] == 7200
+
+
+# ── finance 测试 ──────────────────────────────────────────────
+
+def test_finance_success(provider: SinaProvider) -> None:
+    html = (
+        '<html><body>'
+        '<td>报告期：2025-12-31</td>'
+        '<td>营业收入 1,688,381.03</td>'
+        '<td>净利润 823,200.67</td>'
+        '<td>每股收益 65.66</td>'
+        '<td>净资产收益率 22.50</td>'
+        '</body></html>'
+    )
+    mock_resp = MagicMock()
+    mock_resp.text = html
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.finance("sh600519")
+
+    assert result["symbol"] == "sh600519"
+    assert result["report_period"] == "2025-12-31"
+    assert result["revenue"] == pytest.approx(16883810300.0, rel=0.1)
+    assert result["net_profit"] == pytest.approx(8232006700.0, rel=0.1)
+    assert result["eps"] == 65.66
+    assert result["roe"] == 22.50
+    assert result["source"] == "sina"
+    assert result["revenue_yoy"] is None
+    assert "collected_at" in result
+
+
+def test_finance_non_a_share(provider: SinaProvider) -> None:
+    result = provider.finance("hk00700")
+    assert result == {}
+
+
+def test_finance_timeout(provider: SinaProvider) -> None:
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_get.side_effect = httpx.TimeoutException("timeout")
+        result = provider.finance("sh600519")
+        assert result == {}
+
+
+def test_finance_http_error(provider: SinaProvider) -> None:
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_get.side_effect = httpx.HTTPStatusError(
+            "Not Found", request=MagicMock(), response=mock_resp
+        )
+        result = provider.finance("sh600519")
+        assert result == {}
+
+
+# ── fund_flow 测试 ───────────────────────────────────────────
+
+def test_fund_flow_success(provider: SinaProvider) -> None:
+    mock_json = [{
+        "date": "2026-06-01",
+        "main_net_inflow": -189981349.0,
+        "superlarge_net": 100236788.0,
+        "large_net": -290218137.0,
+        "medium_net": 190296011.0,
+        "small_net": -314662.0,
+        "net_ratio": 0.01,
+    }]
+    mock_resp = MagicMock()
+    mock_resp.text = json.dumps(mock_json)
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.fund_flow("sh600519")
+
+    assert result["symbol"] == "sh600519"
+    assert result["date"] == "2026-06-01"
+    assert result["main_net_inflow"] == -189981349.0
+    assert result["super_large_net_inflow"] == 100236788.0
+    assert result["large_net_inflow"] == -290218137.0
+    assert result["medium_net_inflow"] == 190296011.0
+    assert result["small_net_inflow"] == -314662.0
+    assert result["net_inflow_ratio"] == 0.01
+    assert result["source"] == "sina"
+    assert "collected_at" in result
+
+
+def test_fund_flow_single_object(provider: SinaProvider) -> None:
+    mock_data = {"date": "2026-06-01", "main_net_inflow": 50000000.0}
+    mock_resp = MagicMock()
+    mock_resp.text = json.dumps(mock_data)
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.fund_flow("sh600519")
+
+    assert result["main_net_inflow"] == 50000000.0
+    assert result["source"] == "sina"
+
+
+def test_fund_flow_non_a_share(provider: SinaProvider) -> None:
+    result = provider.fund_flow("hk00700")
+    assert result == {}
+
+
+def test_fund_flow_timeout(provider: SinaProvider) -> None:
+    with patch("backend.collectors.sina.httpx.get") as mock_get:
+        mock_get.side_effect = httpx.TimeoutException("timeout")
+        result = provider.fund_flow("sh600519")
+        assert result == {}
+
+
+def test_fund_flow_invalid_json(provider: SinaProvider) -> None:
+    mock_resp = MagicMock()
+    mock_resp.text = "not valid json at all"
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.fund_flow("sh600519")
+    assert result == {}
+
+
+def test_fund_flow_empty_text(provider: SinaProvider) -> None:
+    mock_resp = MagicMock()
+    mock_resp.text = ""
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("backend.collectors.sina.httpx.get", return_value=mock_resp):
+        result = provider.fund_flow("sh600519")
+    assert result == {}

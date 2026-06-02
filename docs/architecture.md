@@ -1,4 +1,4 @@
-﻿# MarketLens 项目架构文档
+# MarketLens 项目架构文档
 
 ## 1. 系统概述
 
@@ -39,7 +39,7 @@ MarketLens/
 │   │   ├── __init__.py
 │   │   ├── base.py              # 抽象基类（统一接口）
 │   │   ├── westock.py           # WeStockProvider — westock-data-clawhub CLI
-│   │   ├── sina.py              # SinaProvider — 新浪财经行情
+│   │   ├── sina.py              # SinaProvider — 行情 / K线 / 财务 / 资金流向
 │   │   ├── neodata.py           # NeoDataProvider — 金融数据增强
 │   │   └── rss.py               # RSSProvider — 通用 RSS 采集
 │   ├── services/                # 业务逻辑层
@@ -502,7 +502,7 @@ FastAPI 异常 → 全局异常中间件 → 统一 JSON 错误响应
 | 依赖 | 版本 | 用途 | 类型 |
 |---|---|---|---|
 | `westock-data-clawhub` | 1.0.4 | A 股/港股/美股结构化数据 | Node.js CLI（子进程调用） |
-| 新浪财经 API | — | 行情补充 | HTTP 公开接口 |
+| 新浪财经 API | — | 行情 / K线 / 财务 / 资金流向 | HTTP 公开接口 |
 | NeoData | — | 金融数据增强（可选） | HTTP API |
 | RSS 源 | — | 财经新闻采集 | HTTP GET |
 
