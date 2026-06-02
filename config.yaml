@@ -57,6 +57,20 @@ data_sources:
     timeout: 15
     params:
       url: https://feeds.bbci.co.uk/news/business/rss.xml
+  - name: bbc_top
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://feeds.bbci.co.uk/news/rss.xml
+  - name: bbc_technology
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://feeds.bbci.co.uk/news/technology/rss.xml
   - name: reuters_world
     provider: RSSProvider
     enabled: true
@@ -128,7 +142,7 @@ markets:
     - future
     note: 期货代码不含市场前缀，如 rb2501、IF2506、sc2401
 database:
-  path: data/marketlens.db
+  path: marketlens.db
   echo: false
 evidence:
   kline_limit: 60
