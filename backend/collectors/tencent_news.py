@@ -20,7 +20,7 @@ class TencentNewsProvider(BaseProvider):
     def __init__(self, name, timeout=30, params=None, optional=True):
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self._cli_path = None
-        self._max_items = int(params.get("max_items", 50)) if params else 50
+        self._max_items = int(params.get("max_items", 50)) if (params and "max_items" in params) else 50
 
     @staticmethod
     def _now():
@@ -101,7 +101,13 @@ class TencentNewsProvider(BaseProvider):
         return out
 
     def fetch_news(self):
-        for cmd in [["hot", "--limit", str(self._max_items)], ["news", "hot", "--limit", str(self._max_items)]]:
+        apikey = (self.params or {}).get("apikey", "")
+        if apikey:
+            cmds = [["hot", "--limit", str(self._max_items), "--caller", apikey]]
+        else:
+            cmds = [["hot", "--limit", str(self._max_items)]]
+        cmds.append(["search", "财经", "--limit", str(self._max_items)])
+        for cmd in cmds:
             out, err = self._run(cmd)
             if not err and out:
                 items = self._parse_json(out) or self._parse_table(out)

@@ -1,3 +1,4 @@
+import feedparser
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -69,6 +70,14 @@ class RSSProvider(BaseProvider):
             return []
 
     def _parse_rss(self, text: str) -> list[dict]:
+        # 优先用 feedparser 解析（容错性好，能处理非标准 RSS/Atom）
+        items = self._parse_with_feedparser(text)
+        if items:
+            return items
+        # 回退：xml.etree.ElementTree
+        return self._parse_with_etree(text)
+
+    def _parse_with_etree(self, text: str) -> list[dict]:
         results: list[dict] = []
         try:
             # 注册常见命名空间以支持带前缀的标签查找
@@ -89,7 +98,7 @@ class RSSProvider(BaseProvider):
             title = self._get_text(item, "title")
             link = self._get_text(item, "link")
             published_at = self._get_text(item, "pubDate")
-            summary = self._get_text(item, "description")
+            summary = self._get_text(item, "description") or ""
             content = self._get_text(item, "content:encoded") or self._get_text(item, "description")
             results.append({
                 "title": title,
@@ -102,8 +111,41 @@ class RSSProvider(BaseProvider):
             })
         return results
 
-    @staticmethod
-    def _get_text(element: ET.Element, tag: str) -> str:
+    def _parse_with_feedparser(self, text: str) -> list[dict]:
+        """使用 feedparser 解析 RSS/Atom，容错性优于 xml.etree。"""
+        results: list[dict] = []
+        try:
+            d = feedparser.parse(text)
+        except Exception as e:
+            logger.warning("feedparser 解析异常: provider={}, error={}", self.name, e)
+            return results
+
+        for entry in d.entries:
+            title = entry.get("title", "").strip()
+            if not title:
+                continue
+            link = entry.get("link", "")
+            published_at = entry.get("published", "") or entry.get("updated", "")
+            summary = entry.get("summary", "").strip()
+            content = ""
+            if hasattr(entry, "content") and entry.content:
+                content = entry.content[0].get("value", "")
+            if not content:
+                content = entry.get("description", "")
+            if not content:
+                content = summary
+            results.append({
+                "title": title,
+                "source": self.name,
+                "url": link,
+                "published_at": published_at,
+                "summary": summary,
+                "content": content,
+                "collected_at": self._now(),
+            })
+        return results
+
+def _get_text(element: ET.Element, tag: str) -> str:
         # 尝试直接查找（不带命名空间）
         child = element.find(tag)
         if child is not None and child.text:

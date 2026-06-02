@@ -115,6 +115,10 @@ class WeStockProvider(BaseProvider):
 
     def _run_cli(self, args: str) -> tuple[list[list[dict[str, str]]], str | None]:
         cmd_parts = self.command.split() + args.split()
+        # Windows: resolve executable via shutil.which for .cmd/.exe extensions
+        exe = shutil.which(cmd_parts[0])
+        if exe:
+            cmd_parts[0] = exe
 
         try:
             result = subprocess.run(

@@ -1,182 +1,154 @@
-# MarketLens 配置文件 — 顺序决定优先级（从上到下递减）
-# config.yaml 只管"声明"（有哪些源、优先级、参数），具体获取逻辑由 Provider 类实现
-
-# ============================================================
-# 数据源
-# ============================================================
 data_sources:
-  # 结构化数据源（行情/K线/财报/资金流/技术指标）
   structured:
-    - name: westock
-      provider: WeStockProvider
-      enabled: true
-      timeout: 30
-      params:
-        command: "npx -y westock-data-clawhub@1.0.4"
-
-    - name: sina
-      provider: SinaProvider
-      enabled: true
-      timeout: 15
-      params:
-        quote_url: "https://hq.sinajs.cn/list={codes}"
-
-    - name: neodata
-      provider: NeoDataProvider
-      enabled: true
-      optional: true
-      timeout: 30
-      params:
-        endpoint: "https://copilot.tencent.com/agenttool/v1/neodata"
-        token: ""
-
-  # 新闻/公告/研报源
+  - name: westock
+    provider: WeStockProvider
+    enabled: true
+    timeout: 30
+    params:
+      command: npx -y westock-data-clawhub@1.0.4
+  - name: sina
+    provider: SinaProvider
+    enabled: true
+    timeout: 15
+    params:
+      quote_url: https://hq.sinajs.cn/list={codes}
+  - name: neodata
+    provider: NeoDataProvider
+    enabled: true
+    optional: true
+    timeout: 30
+    params:
+      endpoint: https://copilot.tencent.com/agenttool/v1/neodata
+      token: ''
   news:
-    - name: neodata
-      provider: NeoDataProvider
-      enabled: true
-      optional: true
-      timeout: 30
-      params:
-        endpoint: "https://copilot.tencent.com/agenttool/v1/neodata"
-        token: ""
-
-    - name: westock_hot
-      provider: WeStockProvider
-      enabled: true
-      optional: true
-      timeout: 30
-      params:
-        command: "npx -y westock-data-clawhub@1.0.4"
-
-    - name: sina_rss
-      provider: RSSProvider
-      enabled: true
-      timeout: 15
-      params:
-        url: "https://rss.sina.com.cn/finance"
-
-
-    - name: bbc_world
-      provider: RSSProvider
-      enabled: true
-      optional: true
-      timeout: 15
-      params:
-        url: "https://feeds.bbci.co.uk/news/world/rss.xml"
-
-    - name: bbc_business
-      provider: RSSProvider
-      enabled: true
-      optional: true
-      timeout: 15
-      params:
-        url: "https://feeds.bbci.co.uk/news/business/rss.xml"
-
-    - name: reuters_world
-      provider: RSSProvider
-      enabled: true
-      optional: true
-      timeout: 15
-      params:
-        url: "https://www.reutersagency.com/feed/?best-regions=world&post_type=best"
-
-    - name: npr_news
-      provider: RSSProvider
-      enabled: true
-      optional: true
-      timeout: 15
-      params:
-        url: "https://feeds.npr.org/1001/rss.xml"
-
-    - name: aljazeera
-      provider: RSSProvider
-      enabled: true
-      optional: true
-      timeout: 15
-      params:
-        url: "https://www.aljazeera.com/xml/rss/all.xml"
-
-    - name: tencent_news
-      provider: TencentNewsProvider
-      enabled: true
-      optional: true
-      timeout: 30
-      params:
-        max_items: 50
-
-    - name: multi_search
-      provider: SearchEngineNewsProvider
-      enabled: true
-      optional: true
-      timeout: 15
-      params:
-        primary_engine: duckduckgo
-        max_items: 30
-        keywords:
-          - "财经新闻"
-          - "股市"
-
-# ============================================================
-# 市场与资产类型
-# ============================================================
+  - name: neodata
+    provider: NeoDataProvider
+    enabled: true
+    optional: true
+    timeout: 30
+    params:
+      endpoint: https://copilot.tencent.com/agenttool/v1/neodata
+      token: ''
+  - name: westock_hot
+    provider: WeStockProvider
+    enabled: true
+    optional: true
+    timeout: 30
+    params:
+      command: npx -y westock-data-clawhub@1.0.4
+  - name: sina_rss
+    provider: SinaNewsProvider
+    enabled: true
+    timeout: 15
+    params:
+      url: https://feed.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=50
+      max_items: 50
+  - name: bbc_world
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://feeds.bbci.co.uk/news/world/rss.xml
+  - name: bbc_business
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://feeds.bbci.co.uk/news/business/rss.xml
+  - name: reuters_world
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://news.google.com/rss/search?q=reuters+world&hl=en-US&gl=US&ceid=US:en
+  - name: npr_news
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://feeds.npr.org/1001/rss.xml
+  - name: aljazeera
+    provider: RSSProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      url: https://www.aljazeera.com/xml/rss/all.xml
+  - name: tencent_news
+    provider: TencentNewsProvider
+    enabled: true
+    optional: true
+    timeout: 30
+    params:
+      max_items: 50
+      apikey: ''
+  - name: multi_search
+    provider: SearchEngineNewsProvider
+    enabled: true
+    optional: true
+    timeout: 15
+    params:
+      primary_engine: duckduckgo
+      max_items: 30
+      keywords:
+      - 财经新闻
+      - 股市
 markets:
-  sh:        # 上海 A 股
+  sh:
     prefix: sh
-    asset_types: [stock, etf, index]
-  sz:        # 深圳 A 股
+    asset_types:
+    - stock
+    - etf
+    - index
+  sz:
     prefix: sz
-    asset_types: [stock, etf, index]
-  hk:        # 港股
+    asset_types:
+    - stock
+    - etf
+    - index
+  hk:
     prefix: hk
-    asset_types: [stock, etf, index]
-  us:        # 美股
+    asset_types:
+    - stock
+    - etf
+    - index
+  us:
     prefix: us
-    asset_types: [stock, etf, index]
-  fut:       # 国内期货（上期所/大商所/郑商所/中金所/上能源）
+    asset_types:
+    - stock
+    - etf
+    - index
+  fut:
     prefix: fut
-    asset_types: [future]
-    note: "期货代码不含市场前缀，如 rb2501、IF2506、sc2401"
-
-# 数据库
-# ============================================================
+    asset_types:
+    - future
+    note: 期货代码不含市场前缀，如 rb2501、IF2506、sc2401
 database:
   path: data/marketlens.db
   echo: false
-
-# Evidence builder configuration
-# ============================================================
 evidence:
   kline_limit: 60
   fund_flow_limit: 5
   finance_limit: 2
   news_days: 7
-
-# Security configuration
-# ============================================================
 security:
   cors_origins:
-    - "*"
-
-
-# ============================================================
-# 调度
-# ============================================================
+  - '*'
 scheduler:
   timezone: Asia/Shanghai
   tasks:
     quote:
       interval: 15
     daily_close:
-      cron: "0 16 * * 1-5"
+      cron: 0 16 * * 1-5
     news:
       interval: 60
     ai_report:
-      cron: "0 20 * * *"
-
-# ============================================================
-# AI
-# ============================================================
+      cron: 0 20 * * *
 ai:
   default_action: watch
   confidence_threshold: 0.5
