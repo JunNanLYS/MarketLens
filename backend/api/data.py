@@ -117,3 +117,38 @@ def get_technical(symbol: str) -> dict:
             detail={"error": "SYMBOL_NOT_FOUND", "detail": f"标的 '{symbol}' 无技术指标数据"},
         )
     return _format_technical(row)
+
+@router.get("/intraday/{symbol}")
+def get_intraday(symbol: str, days: int = Query(1, ge=1, le=5)) -> dict:
+    """获取分时数据（实时采集，不缓存）。"""
+    result = _service.collect_intraday(symbol, days=days)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 分时数据采集失败"},
+        )
+    return {"symbol": symbol, "items": result}
+
+
+@router.get("/shareholder/{symbol}")
+def get_shareholder(symbol: str) -> dict:
+    """获取股东结构数据（实时采集，不缓存）。"""
+    result = _service.collect_shareholder(symbol)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 股东结构数据采集失败"},
+        )
+    return result
+
+
+@router.get("/reserve/{symbol}")
+def get_reserve(symbol: str) -> dict:
+    """获取最新业绩预告（实时采集，不缓存）。"""
+    result = _service.collect_reserve(symbol)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 业绩预告采集失败"},
+        )
+    return result

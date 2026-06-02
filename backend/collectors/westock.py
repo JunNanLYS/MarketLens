@@ -1,4 +1,4 @@
-﻿import re
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -379,6 +379,135 @@ class WeStockProvider(BaseProvider):
 
     @staticmethod
     def _fund_flow_cmd(symbol: str) -> str:
+        prefix = symbol[:2].lower()
+        if prefix in _A_SHARE_PREFIXES:
+            return "asfund"
+        if prefix == "hk":
+            return "hkfund"
+        if prefix == "us":
+            return "usfund"
+        return "asfund"
+
+
+    # ------------------------------------------------------------------
+    # 扩展方法（不在 BaseProvider 接口中，WeStock 特有）
+    # ------------------------------------------------------------------
+
+    def minute(self, symbol: str, days: int = 1) -> list[dict]:
+        """获取分时数据。"""
+        tables, err = self._run_cli(f"minute {symbol} --days {days}")
+        if err or not tables:
+            return []
+        results: list[dict] = []
+        for row in tables[0]:
+            results.append(self._normalize_minute_row(row, symbol))
+        return results
+
+    def dividend(self, symbol: str) -> list[dict]:
+        """获取分红记录列表。"""
+        tables, err = self._run_cli(f"dividend {symbol}")
+        if err or not tables:
+            return []
+        results: list[dict] = []
+        for row in tables[0]:
+            results.append(self._normalize_dividend(row, symbol))
+        return results
+
+    def shareholder(self, symbol: str) -> dict:
+        """获取股东结构数据。"""
+        tables, err = self._run_cli(f"shareholder {symbol}")
+        if err or not tables:
+            return {}
+        return self._normalize_shareholder(tables, symbol)
+
+    def reserve(self, symbol: str) -> dict:
+        """获取最新业绩预告。"""
+        tables, err = self._run_cli(f"reserve {symbol}")
+        if err or not tables:
+            return {"symbol": symbol, "source": "westock", "collected_at": self._now()}
+        return self._normalize_reserve(tables, symbol)
+
+    # ------------------------------------------------------------------
+    # 标准化方法
+    # ------------------------------------------------------------------
+
+    def _normalize_minute_row(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "time": raw.get("time", ""),
+            "price": _try_number(raw.get("price", "")),
+            "volume": _try_number(raw.get("volume", "")),
+            "avg_price": _try_number(raw.get("avg_price", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_dividend(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "ex_date": raw.get("ex_date", raw.get("ex_dividend_date", "")),
+            "cash_dividend": _try_number(raw.get("cash_dividend", raw.get("CashDiv", ""))),
+            "share_bonus": _try_number(raw.get("share_bonus", raw.get("BonusShareRatio", ""))),
+            "record_date": raw.get("record_date", raw.get("recordDate", "")),
+            "announce_date": raw.get("announce_date", raw.get("announceDate", "")),
+            "dividend_year": raw.get("dividend_year", raw.get("year", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_shareholder(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
+        """股东结构：返回多表数据（十大股东、股东人数变化等）"""
+        result: dict = {
+            "symbol": symbol,
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+        share_holders: list[dict] = []
+        if tables and tables[0]:
+            for row in tables[0]:
+                share_holders.append({
+                    "rank": _try_number(row.get("rank", row.get("HolderRank", ""))),
+                    "name": row.get("name", row.get("HolderName", "")),
+                    "shares": _try_number(row.get("shares", row.get("HoldAmount", ""))),
+                    "ratio": _try_number(row.get("ratio", row.get("HoldPercent", ""))),
+                    "change": _try_number(row.get("change", row.get("Change", ""))),
+                })
+        result["top_shareholders"] = share_holders
+
+        holder_count: list[dict] = []
+        if len(tables) >= 2 and tables[1]:
+            for row in tables[1]:
+                holder_count.append({
+                    "date": row.get("date", row.get("EndDate", "")),
+                    "total_holders": _try_number(row.get("total_holders", row.get("HolderTotal", ""))),
+                    "avg_shares": _try_number(row.get("avg_shares", row.get("AvgShares", ""))),
+                })
+        result["holder_count_history"] = holder_count
+
+        return result
+
+    def _normalize_reserve(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
+        """业绩预告：返回最新一条预告"""
+        if not tables or not tables[0]:
+            return {
+                "symbol": symbol,
+                "source": "westock",
+                "collected_at": self._now(),
+            }
+        row = tables[0][0]
+        return {
+            "symbol": symbol,
+            "report_period": row.get("report_period", row.get("ReportDate", "")),
+            "forecast_type": row.get("forecast_type", row.get("ForcastType", "")),
+            "profit_lower": _try_number(row.get("profit_lower", row.get("NetProfitLow", ""))),
+            "profit_upper": _try_number(row.get("profit_upper", row.get("NetProfitHigh", ""))),
+            "change_lower": _try_number(row.get("change_lower", row.get("ChangeLow", ""))),
+            "change_upper": _try_number(row.get("change_upper", row.get("ChangeHigh", ""))),
+            "summary": row.get("summary", row.get("Summary", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
         prefix = symbol[:2].lower()
         if prefix in _A_SHARE_PREFIXES:
             return "asfund"
