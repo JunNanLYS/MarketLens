@@ -93,13 +93,12 @@ data_sources:
     params:
       url: https://www.aljazeera.com/xml/rss/all.xml
   - name: tencent_news
-    provider: TencentNewsProvider
+    provider: TencentNewsHTTPProvider
     enabled: true
     optional: true
     timeout: 30
     params:
       max_items: 50
-      apikey: ''
   - name: multi_search
     provider: SearchEngineNewsProvider
     enabled: true
