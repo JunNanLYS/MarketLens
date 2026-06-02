@@ -30,7 +30,7 @@ class ReportService:
                     if not force and ReportService._has_today_report(conn, symbol):
                         skipped += 1
                         continue
-                    evidence = EvidenceBuilder.build(symbol)
+                    evidence = EvidenceBuilder.build(symbol, conn=conn)
                     result = AIAnalyzer.analyze(evidence)
                     ReportService._save_report(conn, symbol, result, force)
                     generated += 1

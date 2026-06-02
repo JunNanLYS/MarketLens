@@ -93,16 +93,35 @@ Location: /api/v1/assets/1
 <summary>错误 400 — 无效代码</summary>
 
 ```json
-{ "error": "INVALID_SYMBOL", "detail": "无法识别代码 'xyz999'" }
+{ "error": "INVALID_SYMBOL", "message": "无法识别代码 'xyz999'" }
 ```
 </details>
 
 <details>
 <summary>错误 409 — 重复</summary>
 
+返回结构携带 `existing_asset` 快照，前端据此判断是「已启用」还是「已停用」：
+
 ```json
-{ "error": "ASSET_EXISTS", "detail": "标的 'hk00700' 已在追踪列表中（ID: 1）" }
+{
+  "detail": {
+    "error": "ASSET_EXISTS",
+    "message": "标的 'hk00700' 已在追踪列表中（ID: 1，已停用）",
+    "existing_asset": {
+      "id": 1,
+      "symbol": "hk00700",
+      "name": "腾讯控股",
+      "market": "hk",
+      "asset_type": "stock",
+      "enabled": false
+    }
+  }
+}
 ```
+
+`existing_asset.enabled` 语义：
+- `true`  —— 标的已启用，前端应提示「已在追踪列表」。
+- `false` —— 标的已被软删除（停用），前端应提示「已停用」并提供一键启用入口。
 </details>
 
 ---

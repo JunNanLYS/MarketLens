@@ -55,40 +55,6 @@ def get_task_logs(
             task_name=task_name, status=status, page=page, page_size=page_size
         )
     except RuntimeError:
-        # Fallback: directly query DB when scheduler not initialized
-        conditions: list[str] = []
-        params: list[str | int] = []
-        if task_name is not None:
-            conditions.append("task_name = ?")
-            params.append(task_name)
-        if status is not None:
-            conditions.append("status = ?")
-            params.append(status)
-        where_clause: str = "" if not conditions else "WHERE " + " AND ".join(conditions)
-        from backend.storage.database import get_db
-        with get_db() as conn:
-            count_row = conn.execute(
-                f"SELECT COUNT(*) as cnt FROM run_logs {where_clause}",
-                params,
-            ).fetchone()
-            total: int = count_row["cnt"] if count_row else 0
-            offset: int = (page - 1) * page_size
-            rows = conn.execute(
-                f"""SELECT id, task_name, status, started_at, finished_at,
-                           error_message, affected_assets
-                    FROM run_logs
-                    {where_clause}
-                    ORDER BY started_at DESC
-                    LIMIT ? OFFSET ?""",
-                params + [page_size, offset],
-            ).fetchall()
-        items: list[dict] = [dict(row) for row in rows]
-        return {
-            "items": items,
-            "page_info": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
-            },
-        }
+        # Fallback: scheduler ???????? storage ????????? DB?
+        from backend.storage.database import query_run_logs
+        return query_run_logs(task_name=task_name, status=status, page=page, page_size=page_size)

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from backend.services.asset_service import AssetService
+from backend.services.asset_service import AssetExistsError, AssetService
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
@@ -28,21 +28,30 @@ def create_asset(body: AssetCreateRequest) -> dict:
     try:
         data = body.model_dump(exclude_none=True)
         return _service.add_asset(data)
+    except AssetExistsError as e:
+        existing = e.existing_asset
+        status_label: str = "已启用" if existing.get("enabled") else "已停用"
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "ASSET_EXISTS",
+                "message": (
+                    f"标的 '{existing.get('symbol')}' 已在追踪列表中"
+                    f"（ID: {existing.get('id')}，{status_label}）"
+                ),
+                "existing_asset": existing,
+            },
+        )
     except ValueError as e:
         msg = str(e)
-        if "已在追踪列表" in msg:
-            raise HTTPException(
-                status_code=409,
-                detail={"error": "ASSET_EXISTS", "detail": msg},
-            )
         if "无法识别" in msg:
             raise HTTPException(
                 status_code=400,
-                detail={"error": "INVALID_SYMBOL", "detail": msg},
+                detail={"error": "INVALID_SYMBOL", "message": msg},
             )
         raise HTTPException(
             status_code=400,
-            detail={"error": "BAD_REQUEST", "detail": msg},
+            detail={"error": "BAD_REQUEST", "message": msg},
         )
 
 

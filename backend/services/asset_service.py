@@ -1,4 +1,4 @@
-﻿import re
+import re
 import sqlite3
 from typing import Any
 
@@ -10,6 +10,14 @@ from backend.storage.database import get_db
 from backend.utils import escape_like
 
 SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut|hf|nf)(\w+)$")
+
+
+class AssetExistsError(ValueError):
+    """重复添加标的时抛出的异常，附带已存在标的快照供上层展示。"""
+
+    def __init__(self, message: str, existing_asset: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.existing_asset = existing_asset
 
 
 class AssetService:
@@ -88,12 +96,21 @@ class AssetService:
 
         with get_db() as conn:
             existing = conn.execute(
-                "SELECT id, symbol FROM tracked_assets WHERE symbol = ?",
+                """SELECT id, symbol, name, market, asset_type, enabled
+                   FROM tracked_assets WHERE symbol = ?""",
                 (symbol,),
             ).fetchone()
             if existing is not None:
-                raise ValueError(
-                    f"标的 '{symbol}' 已在追踪列表中（ID: {existing['id']}）"
+                raise AssetExistsError(
+                    f"标的 '{symbol}' 已在追踪列表中（ID: {existing['id']}）",
+                    {
+                        "id": existing["id"],
+                        "symbol": existing["symbol"],
+                        "name": existing["name"],
+                        "market": existing["market"],
+                        "asset_type": existing["asset_type"],
+                        "enabled": bool(existing["enabled"]),
+                    },
                 )
 
             try:
@@ -103,9 +120,24 @@ class AssetService:
                     (symbol, name, market, asset_type, tags, notes),
                 )
             except sqlite3.IntegrityError:
-                raise ValueError(
-                    f"标的 '{symbol}' 已在追踪列表中"
-                )
+                fallback = conn.execute(
+                    """SELECT id, symbol, name, market, asset_type, enabled
+                       FROM tracked_assets WHERE symbol = ?""",
+                    (symbol,),
+                ).fetchone()
+                if fallback is None:
+                    raise ValueError(f"标的 '{symbol}' 已在追踪列表中") from None
+                raise AssetExistsError(
+                    f"标的 '{symbol}' 已在追踪列表中（ID: {fallback['id']}）",
+                    {
+                        "id": fallback["id"],
+                        "symbol": fallback["symbol"],
+                        "name": fallback["name"],
+                        "market": fallback["market"],
+                        "asset_type": fallback["asset_type"],
+                        "enabled": bool(fallback["enabled"]),
+                    },
+                ) from None
 
             asset_id = cursor.lastrowid
             row = conn.execute(

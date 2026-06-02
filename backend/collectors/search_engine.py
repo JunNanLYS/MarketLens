@@ -26,7 +26,7 @@ class _LinkExtractor(HTMLParser):
         self._current_text = ""
         self._in_result = False
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = dict(attrs)
         if tag == "a":
             href = attrs_dict.get("href", "")
@@ -37,7 +37,7 @@ class _LinkExtractor(HTMLParser):
         elif self._in_result and tag in ("b", "strong", "span", "div"):
             self._tag_stack.append(tag)
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if self._in_result and tag == "a":
             text = self._current_text.strip()
             if text and self._current_link:
@@ -48,7 +48,7 @@ class _LinkExtractor(HTMLParser):
         elif self._tag_stack and self._tag_stack[-1] == tag:
             self._tag_stack.pop()
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self._in_result:
             self._current_text += data
 
@@ -75,7 +75,7 @@ class SearchEngineNewsProvider(BaseProvider):
         },
     }
 
-    def __init__(self, name, timeout=30, params=None, optional=True):
+    def __init__(self, name: str, timeout: int = 30, params: dict | None = None, optional: bool = True) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         engines_cfg = self.params.get("engines", {}) if params else {}
         self._engines = engines_cfg or dict(SearchEngineNewsProvider.DEFAULT_ENGINES)
@@ -85,10 +85,10 @@ class SearchEngineNewsProvider(BaseProvider):
         self._client = httpx.Client(timeout=self.timeout, follow_redirects=True)
 
     @staticmethod
-    def _now():
+    def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _build_query(self, base_keywords=None):
+    def _build_query(self, base_keywords: list[str] | None = None) -> str:
         """构建搜索关键词。"""
         parts = []
         if base_keywords:
@@ -99,7 +99,7 @@ class SearchEngineNewsProvider(BaseProvider):
             parts = ["\u8d22\u7ecf", "\u80a1\u5e02", "\u6295\u8d44"]
         return " ".join(parts)
 
-    def _fetch_engine(self, engine_name, keyword):
+    def _fetch_engine(self, engine_name: str, keyword: str) -> list[dict]:
         """从指定搜索引擎获取结果。"""
         engine = self._engines.get(engine_name)
         if not engine:
@@ -140,7 +140,7 @@ class SearchEngineNewsProvider(BaseProvider):
             logger.warning("{} \u5f02\u5e38: {}", engine.get("name"), e)
             return []
 
-    def fetch_news(self, keywords=None):
+    def fetch_news(self, keywords: list[str] | None = None) -> list[dict]:
         """搜索财经新闻。"""
         query = self._build_query(keywords)
         results = self._fetch_engine(self._primary, query)
@@ -153,11 +153,16 @@ class SearchEngineNewsProvider(BaseProvider):
                         break
         return results
 
-    def search(self, keyword):
+    def search(self, keyword: str) -> list[dict]:
         return self.fetch_news([keyword])
 
-    def quote(self, symbols): return []
-    def kline(self, symbol, period="daily"): return []
-    def finance(self, symbol): return {}
-    def fund_flow(self, symbol): return {}
-    def technical(self, symbol): return {}
+    def quote(self, symbols: list[str]) -> list[dict]:
+        return []
+    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+        return []
+    def finance(self, symbol: str) -> dict:
+        return {}
+    def fund_flow(self, symbol: str) -> dict:
+        return {}
+    def technical(self, symbol: str) -> dict:
+        return {}

@@ -202,7 +202,7 @@ class NeoDataClient:
             resp.raise_for_status()
             body = resp.json()
 
-            if _is_auth_error(None, body):
+            if _is_auth_error(resp.status_code, body):
                 return None
 
             return body

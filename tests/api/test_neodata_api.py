@@ -20,7 +20,7 @@ def mock_client() -> MagicMock:
 
 @pytest.fixture
 def test_client(mock_client: MagicMock) -> TestClient:
-    with patch("backend.api.neodata._client", mock_client):
+    with patch("backend.api.neodata._client_cache", mock_client):
         yield TestClient(app)
 
 

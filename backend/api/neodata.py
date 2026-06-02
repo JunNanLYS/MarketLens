@@ -24,7 +24,14 @@ def _get_client() -> NeoDataClient:
     )
 
 
-_client = _get_client()
+_client_cache: NeoDataClient | None = None
+
+
+def _get_or_create_client() -> NeoDataClient:
+    global _client_cache
+    if _client_cache is None:
+        _client_cache = _get_client()
+    return _client_cache
 
 
 class TokenSaveRequest(BaseModel):
@@ -33,10 +40,10 @@ class TokenSaveRequest(BaseModel):
 
 @router.get("/token-status")
 def get_token_status() -> dict:
-    return _client.get_token_status()
+    return _get_or_create_client().get_token_status()
 
 
 @router.post("/token")
 def save_token(body: TokenSaveRequest) -> dict:
-    _client.save_token(body.token)
+    _get_or_create_client().save_token(body.token)
     return {"message": "Token saved successfully"}

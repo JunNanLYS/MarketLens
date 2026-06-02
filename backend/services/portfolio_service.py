@@ -344,77 +344,77 @@ class PortfolioService:
             ).fetchall()
 
             grouped: dict[tuple[int, str], list[dict]] = {}
-        for row in rows:
-            key: tuple[int, str] = (row["account_id"], row["symbol"])
-            grouped.setdefault(key, []).append(dict(row))
+            for row in rows:
+                key: tuple[int, str] = (row["account_id"], row["symbol"])
+                grouped.setdefault(key, []).append(dict(row))
 
-            # 批量查询行情和资产名，避免 N+1 查询
-            all_symbols = list({str(sym) for (_, sym) in grouped})
-            quotes_map: dict[str, float | None] = {}
-            names_map: dict[str, str | None] = {}
-            if all_symbols:
-                ph = ','.join(['?'] * len(all_symbols))
-                with get_db() as conn2:
-                    qrows = conn2.execute(
-                        'SELECT mq.symbol, mq.price FROM market_quotes mq WHERE mq.symbol IN (' + ph + ') AND mq.collected_at = (SELECT MAX(collected_at) FROM market_quotes WHERE symbol = mq.symbol)',
-                        all_symbols,
-                    ).fetchall()
-                    quotes_map = {r['symbol']: r['price'] for r in qrows}
-                    arows = conn2.execute(
-                        'SELECT symbol, name FROM tracked_assets WHERE symbol IN (' + ph + ')',
-                        all_symbols,
-                    ).fetchall()
-                    names_map = {r['symbol']: r['name'] for r in arows}
 
-            positions: list[dict] = []
+        # ????????????? N+1 ??
+        all_symbols = list({str(sym) for (_, sym) in grouped})
+        quotes_map: dict[str, float | None] = {}
+        names_map: dict[str, str | None] = {}
+        if all_symbols:
+            ph = ', '.join(['?'] * len(all_symbols))
+            with get_db() as conn2:
+                qrows = conn2.execute(
+                    'SELECT mq.symbol, mq.price FROM market_quotes mq WHERE mq.symbol IN (' + ph + ') AND mq.collected_at = (SELECT MAX(collected_at) FROM market_quotes WHERE symbol = mq.symbol)',
+                    all_symbols,
+                ).fetchall()
+                quotes_map = {r['symbol']: r['price'] for r in qrows}
+                arows = conn2.execute(
+                    'SELECT symbol, name FROM tracked_assets WHERE symbol IN (' + ph + ')',
+                    all_symbols,
+                ).fetchall()
+                names_map = {r['symbol']: r['name'] for r in arows}
+
+        positions: list[dict] = []
         for (aid, sym), txs in grouped.items():
-                total_qty, avg_cost = self._compute_position_detail(txs)
+            total_qty, avg_cost = self._compute_position_detail(txs)
+            if total_qty <= 1e-9:
+                continue
 
-                if total_qty <= 1e-9:
-                    continue
+            current_price = quotes_map.get(sym)
+            asset_name = names_map.get(sym)
 
-                current_price = quotes_map.get(sym)
-                asset_name = names_map.get(sym)
+            market_value: float | None = (
+                total_qty * current_price if current_price is not None else None
+            )
+            unrealized_pnl: float | None = (
+                (current_price - avg_cost) * total_qty
+                if current_price is not None
+                else None
+            )
+            unrealized_pnl_pct: float | None = (
+                (current_price - avg_cost) / avg_cost * 100
+                if current_price is not None and avg_cost > 0
+                else None
+            )
 
-                market_value: float | None = (
-                    total_qty * current_price if current_price is not None else None
-                )
-                unrealized_pnl: float | None = (
-                    (current_price - avg_cost) * total_qty
-                    if current_price is not None
-                    else None
-                )
-                unrealized_pnl_pct: float | None = (
-                    (current_price - avg_cost) / avg_cost * 100
-                    if current_price is not None and avg_cost > 0
-                    else None
-                )
-
-                positions.append(
-                    {
-                        "account_id": aid,
-                        "symbol": sym,
-                        "name": asset_name,
-                        "total_qty": round(total_qty, 6),
-                        "avg_cost": round(avg_cost, 4),
-                        "current_price": current_price,
-                        "market_value": (
-                            round(market_value, 2)
-                            if market_value is not None
-                            else None
-                        ),
-                        "unrealized_pnl": (
-                            round(unrealized_pnl, 2)
-                            if unrealized_pnl is not None
-                            else None
-                        ),
-                        "unrealized_pnl_pct": (
-                            round(unrealized_pnl_pct, 2)
-                            if unrealized_pnl_pct is not None
-                            else None
-                        ),
-                    }
-                )
+            positions.append(
+                {
+                    "account_id": aid,
+                    "symbol": sym,
+                    "name": asset_name,
+                    "total_qty": round(total_qty, 6),
+                    "avg_cost": round(avg_cost, 4),
+                    "current_price": current_price,
+                    "market_value": (
+                        round(market_value, 2)
+                        if market_value is not None
+                        else None
+                    ),
+                    "unrealized_pnl": (
+                        round(unrealized_pnl, 2)
+                        if unrealized_pnl is not None
+                        else None
+                    ),
+                    "unrealized_pnl_pct": (
+                        round(unrealized_pnl_pct, 2)
+                        if unrealized_pnl_pct is not None
+                        else None
+                    ),
+                }
+            )
 
         return positions
 
@@ -423,7 +423,7 @@ class PortfolioService:
         account_id: int | None = None,
         symbol: str | None = None,
     ) -> list[dict]:
-        """???????????????????"""
+        """??????????????????"""
         conditions: list[str] = ["t.deleted_at IS NULL"]
         params: list = []
 
@@ -472,6 +472,10 @@ class PortfolioService:
                         total_realized += realized
                         total_sell_qty += tx["quantity"]
                         total_qty -= tx["quantity"]
+                        # ????????????????????????
+                        if total_qty <= 1e-9:
+                            avg_cost = 0.0
+                            total_qty = 0.0
                     elif tx["type"] == "split":
                         total_qty *= tx["quantity"]
 

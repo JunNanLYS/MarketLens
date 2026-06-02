@@ -266,27 +266,27 @@ class CollectionService:
                 source = provider.name
                 raw_json = json.dumps(data, ensure_ascii=False, default=str)
                 self._save_raw_data(conn, symbol, source, "fund_flow", raw_json, collected_at)
-                items = data if isinstance(data, list) else [data]
-                for item in items:
-                    conn.execute(
-                        """INSERT OR IGNORE INTO fund_flows
-                           (symbol, date, main_net_inflow, super_large_net_inflow, large_net_inflow,
-                            medium_net_inflow, small_net_inflow, net_inflow_ratio, source, collected_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            symbol,
-                            item.get("date"),
-                            item.get("main_net_inflow") or item.get("net_flow"),
-                            item.get("super_large_net_inflow"),
-                            item.get("large_net_inflow") or item.get("main_inflow"),
-                            item.get("medium_net_inflow"),
-                            item.get("small_net_inflow"),
-                            item.get("net_inflow_ratio"),
-                            item.get("source", source),
-                            item.get("collected_at", collected_at),
-                        ),
-                    )
-                success += len(items)
+                # fund_flow() ?? dict?Provider ??????????
+                item = data
+                conn.execute(
+                    """INSERT OR IGNORE INTO fund_flows
+                       (symbol, date, main_net_inflow, super_large_net_inflow, large_net_inflow,
+                        medium_net_inflow, small_net_inflow, net_inflow_ratio, source, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        symbol,
+                        item.get("date"),
+                        item.get("main_net_inflow") or item.get("net_flow"),
+                        item.get("super_large_net_inflow"),
+                        item.get("large_net_inflow") or item.get("main_inflow"),
+                        item.get("medium_net_inflow"),
+                        item.get("small_net_inflow"),
+                        item.get("net_inflow_ratio"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ),
+                )
+                success += 1
                 break
             except Exception as e:
                 logger.warning("Provider {} 采集资金流向失败: {} - {}", provider.name, symbol, e)

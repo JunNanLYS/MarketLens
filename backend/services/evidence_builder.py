@@ -6,21 +6,28 @@ from loguru import logger
 
 from backend.config import get_config
 from backend.storage.database import get_db
-from backend.utils import escape_like
 
 
 class EvidenceBuilder:
     """为 AI 分析准备结构化输入数据，确保分析基于真实采集数据。"""
 
     @staticmethod
-    def build(symbol: str) -> dict:
-        with get_db() as conn:
+    def build(symbol: str, conn: sqlite3.Connection | None = None) -> dict:
+        if conn is not None:
             quote = EvidenceBuilder._build_quote(conn, symbol)
             kline = EvidenceBuilder._build_kline(conn, symbol)
             fund_flows = EvidenceBuilder._build_fund_flows(conn, symbol)
             finance = EvidenceBuilder._build_finance(conn, symbol)
             news = EvidenceBuilder._build_news(conn, symbol)
             technical = EvidenceBuilder._build_technical(conn, symbol)
+        else:
+            with get_db() as conn:
+                quote = EvidenceBuilder._build_quote(conn, symbol)
+                kline = EvidenceBuilder._build_kline(conn, symbol)
+                fund_flows = EvidenceBuilder._build_fund_flows(conn, symbol)
+                finance = EvidenceBuilder._build_finance(conn, symbol)
+                news = EvidenceBuilder._build_news(conn, symbol)
+                technical = EvidenceBuilder._build_technical(conn, symbol)
         data_sources = EvidenceBuilder._collect_data_sources(
             symbol, quote, kline, fund_flows, finance, news, technical
         )
@@ -72,8 +79,8 @@ class EvidenceBuilder:
         row = conn.execute(
                 """SELECT price, change, change_pct, volume, source, collected_at
                    FROM market_quotes WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT ?""",
-                (symbol, EvidenceBuilder._get_config_limit("finance_limit", 2)),
+                   ORDER BY collected_at DESC LIMIT 1""",
+                (symbol,),
             ).fetchone()
         if row is None:
             return None
@@ -96,7 +103,7 @@ class EvidenceBuilder:
         latest_collected_at = rows[0]["collected_at"] if rows else None
         items = [dict(r) for r in reversed(rows)]
         df = pd.DataFrame(items)
-        for window in [5, 10, 20, 60]:
+        for window in (5, 10, 20, 60):
             col = f"ma{window}"
             df[col] = df["close"].rolling(window=window, min_periods=window).mean()
         result = df.to_dict(orient="records")
@@ -151,9 +158,9 @@ class EvidenceBuilder:
         rows = conn.execute(
                 """SELECT title, sentiment, published_at, source, collected_at
                    FROM news_items
-                   WHERE related_symbols LIKE ? ESCAPE '\\' AND published_at >= ?
+                   WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?) AND published_at >= ?
                    ORDER BY published_at DESC""",
-                (f'%"{escape_like(symbol)}"%', cutoff),
+                (symbol, cutoff),
             ).fetchall()
         if not rows:
             return None

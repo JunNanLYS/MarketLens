@@ -3,6 +3,16 @@ from datetime import datetime, timezone
 from loguru import logger
 
 
+# ??????
+SIGNAL_BULLISH_STRONG = 0.3    # ??? > 0.3 ????????buy?
+SIGNAL_BULLISH_WEAK = 0.1      # ??? > 0.1 ??????watch?
+SIGNAL_BEARISH_STRONG = -0.3   # ??? < -0.3 ????????sell?
+SIGNAL_BEARISH_WEAK = -0.1     # ??? < -0.1 ??????watch?
+
+RISK_HIGH_THRESHOLD = 0.6      # ??? > 0.6 ??? > 0.2 ? ???
+RISK_MEDIUM_THRESHOLD = 0.3    # ??? > 0.3 ? ??????????
+RISK_BEARISH_MIN = 0.2         # ??????? 0.2 ?????????
+
 class AIAnalyzer:
     """规则型分析引擎，基于预设规则矩阵对证据包进行分析。"""
 
@@ -59,20 +69,20 @@ class AIAnalyzer:
         total_score = bullish_score + bearish_score
         confidence = abs(score_diff) / max(total_score, 0.01)
 
-        if score_diff > 0.3:
+        if score_diff > SIGNAL_BULLISH_STRONG:
             action = "buy"
-        elif score_diff > 0.1:
+        elif score_diff > SIGNAL_BULLISH_WEAK:
             action = "watch"
-        elif score_diff < -0.3:
+        elif score_diff < SIGNAL_BEARISH_STRONG:
             action = "sell"
-        elif score_diff < -0.1:
+        elif score_diff < SIGNAL_BEARISH_WEAK:
             action = "watch"
         else:
             action = "watch"
 
-        if confidence > 0.6 and bearish_score > 0.2:
+        if confidence > RISK_HIGH_THRESHOLD and bearish_score > RISK_BEARISH_MIN:
             risk_level = "high"
-        elif confidence > 0.3:
+        elif confidence > RISK_MEDIUM_THRESHOLD:
             risk_level = "medium"
         else:
             risk_level = "low"
@@ -270,13 +280,13 @@ class AIAnalyzer:
         finance: dict | None,
     ) -> str:
         parts: list[str] = []
-        if score_diff > 0.3:
+        if score_diff > SIGNAL_BULLISH_STRONG:
             parts.append("多头信号较强")
-        elif score_diff > 0.1:
+        elif score_diff > SIGNAL_BULLISH_WEAK:
             parts.append("短期偏多")
-        elif score_diff < -0.3:
+        elif score_diff < SIGNAL_BEARISH_STRONG:
             parts.append("空头信号较强")
-        elif score_diff < -0.1:
+        elif score_diff < SIGNAL_BEARISH_WEAK:
             parts.append("短期偏空")
         else:
             parts.append("趋势震荡")

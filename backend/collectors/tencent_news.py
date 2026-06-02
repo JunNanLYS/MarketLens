@@ -17,23 +17,23 @@ BIN_NAME = "tencent-news-cli.exe"
 class TencentNewsProvider(BaseProvider):
     """Tencent News provider using CLI."""
 
-    def __init__(self, name, timeout=30, params=None, optional=True):
+    def __init__(self, name: str, timeout: int = 30, params: dict | None = None, optional: bool = True) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self._cli_path = None
         self._max_items: int = int(params.get("max_items", 50)) if params else 50
 
     @staticmethod
-    def _now():
+    def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _find_cli(self):
+    def _find_cli(self) -> str | None:
         import shutil
         for p in [shutil.which(BIN_NAME), GLOBAL_DIR / BIN_NAME, SKILL_DIR / BIN_NAME, Path(__file__).resolve().parent.parent.parent / "bin" / BIN_NAME]:
             if p and Path(p).exists():
                 return str(p)
         return None
 
-    def _ensure(self):
+    def _ensure(self) -> bool:
         if self._cli_path:
             return True
         p = self._find_cli()
@@ -44,7 +44,7 @@ class TencentNewsProvider(BaseProvider):
         logger.warning("TencentNews CLI not available")
         return False
 
-    def _run(self, args):
+    def _run(self, args: list[str]) -> tuple[str | None, str | None]:
         if not self._ensure():
             return None, "CLI not installed"
         try:
@@ -57,7 +57,7 @@ class TencentNewsProvider(BaseProvider):
             return None, (r.stderr or r.stdout or "").strip()[:200]
         return r.stdout, None
 
-    def _parse_json(self, text):
+    def _parse_json(self, text: str) -> list[dict]:
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
@@ -90,7 +90,7 @@ class TencentNewsProvider(BaseProvider):
             })
         return out
 
-    def _parse_table(self, text):
+    def _parse_table(self, text: str) -> list[dict]:
         out = []
         for line in text.strip().split("\n"):
             s = line.strip()
@@ -100,7 +100,7 @@ class TencentNewsProvider(BaseProvider):
                     out.append({"title": title, "source": "\u817e\u8baf\u65b0\u95fb", "url": "", "content": "", "summary": "", "published_at": None, "sentiment": "neutral", "importance": "normal", "collected_at": self._now()})
         return out
 
-    def fetch_news(self):
+    def fetch_news(self) -> list[dict]:
         apikey = (self.params or {}).get("apikey", "")
         if apikey:
             cmds = [["hot", "--limit", str(self._max_items), "--caller", apikey]]
@@ -116,9 +116,15 @@ class TencentNewsProvider(BaseProvider):
                     return items
         return []
 
-    def search(self, keyword): return []
-    def quote(self, symbols): return []
-    def kline(self, symbol, period="daily"): return []
-    def finance(self, symbol): return {}
-    def fund_flow(self, symbol): return {}
-    def technical(self, symbol): return {}
+    def search(self, keyword: str) -> list[dict]:
+        return []
+    def quote(self, symbols: list[str]) -> list[dict]:
+        return []
+    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+        return []
+    def finance(self, symbol: str) -> dict:
+        return {}
+    def fund_flow(self, symbol: str) -> dict:
+        return {}
+    def technical(self, symbol: str) -> dict:
+        return {}

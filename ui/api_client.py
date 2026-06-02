@@ -70,7 +70,7 @@ def search_assets(keyword: str, market: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {"keyword": keyword}
     if market:
         payload["market"] = market
-    resp: httpx.Response = client.post("/assets/search", json=payload)
+    resp: httpx.Response = client.get("/assets/search", params=payload)
     return _handle_response(resp)
 
 
