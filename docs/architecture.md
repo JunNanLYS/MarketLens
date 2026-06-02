@@ -1,6 +1,6 @@
 # MarketLens 项目架构文档
 
-## 1. 系统概述
+> 版本: 1.1 | 日期: 2026-06-02
 
 MarketLens 是一个本地优先的 AI 金融研究助理系统，面向个人投资者与研究员。系统围绕"追踪标的 → 自动采集数据 → 证据驱动 AI 分析 → 可视化报告"的主链路构建。
 
@@ -38,7 +38,7 @@ MarketLens/
 │   ├── collectors/              # 数据采集提供者
 │   │   ├── __init__.py
 │   │   ├── base.py              # 抽象基类（统一接口）
-│   │   ├── westock.py           # WeStockProvider — westock-data-clawhub CLI
+│   │   ├── westock.py           # WeStockProvider — CLI 行情/K线/财务/资金/技术/分时/分红/股东/预告
 │   │   ├── sina.py              # SinaProvider — 行情 / K线 / 财务 / 资金流向
 │   │   ├── neodata.py           # NeoDataProvider — 金融数据增强
 │   │   └── rss.py               # RSSProvider — 通用 RSS 采集
@@ -404,6 +404,7 @@ EvidenceBuilder.build(symbol)
   ├── 查 market_quotes → 当前价格、涨跌幅
   ├── 查 kline_daily → 近 60 日 K 线，计算 MA/MACD/RSI
   ├── 查 fund_flows → 近 5 日资金净流向
+  ├── 查 reserve_records → 最新业绩预告（如有）
   ├── 查 financial_reports → 最新一期财报关键指标
   └── 查 news_items → 近 7 日关联新闻，情绪聚合
       ↓
@@ -501,7 +502,7 @@ FastAPI 异常 → 全局异常中间件 → 统一 JSON 错误响应
 
 | 依赖 | 版本 | 用途 | 类型 |
 |---|---|---|---|
-| `westock-data-clawhub` | 1.0.4 | A 股/港股/美股结构化数据 | Node.js CLI（子进程调用） |
+| `westock-data-clawhub` | 1.0.4 | 行情/K线/财务/资金流/技术/分时/分红/股东/预告（CLI 子进程调用） | Node.js CLI |
 | 新浪财经 API | — | 行情 / K线 / 财务 / 资金流向 | HTTP 公开接口 |
 | NeoData | — | 金融数据增强（可选） | HTTP API |
 | RSS 源 | — | 财经新闻采集 | HTTP GET |
