@@ -1,6 +1,8 @@
 from loguru import logger
 
 from backend.collectors.base import BaseProvider
+from backend.collectors.tencent_news import TencentNewsProvider
+from backend.collectors.search_engine import SearchEngineNewsProvider
 from backend.collectors.neodata import NeoDataProvider
 from backend.collectors.rss import RSSProvider
 from backend.collectors.sina import SinaProvider
@@ -11,6 +13,8 @@ PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "SinaProvider": SinaProvider,
     "RSSProvider": RSSProvider,
     "NeoDataProvider": NeoDataProvider,
+    "TencentNewsProvider": TencentNewsProvider,
+    "SearchEngineNewsProvider": SearchEngineNewsProvider,
 }
 
 

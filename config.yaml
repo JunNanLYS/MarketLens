@@ -56,6 +56,67 @@ data_sources:
       params:
         url: "https://rss.sina.com.cn/finance"
 
+
+    - name: bbc_world
+      provider: RSSProvider
+      enabled: true
+      optional: true
+      timeout: 15
+      params:
+        url: "https://feeds.bbci.co.uk/news/world/rss.xml"
+
+    - name: bbc_business
+      provider: RSSProvider
+      enabled: true
+      optional: true
+      timeout: 15
+      params:
+        url: "https://feeds.bbci.co.uk/news/business/rss.xml"
+
+    - name: reuters_world
+      provider: RSSProvider
+      enabled: true
+      optional: true
+      timeout: 15
+      params:
+        url: "https://www.reutersagency.com/feed/?best-regions=world&post_type=best"
+
+    - name: npr_news
+      provider: RSSProvider
+      enabled: true
+      optional: true
+      timeout: 15
+      params:
+        url: "https://feeds.npr.org/1001/rss.xml"
+
+    - name: aljazeera
+      provider: RSSProvider
+      enabled: true
+      optional: true
+      timeout: 15
+      params:
+        url: "https://www.aljazeera.com/xml/rss/all.xml"
+
+    - name: tencent_news
+      provider: TencentNewsProvider
+      enabled: true
+      optional: true
+      timeout: 30
+      params:
+        max_items: 50
+
+    - name: multi_search
+      provider: SearchEngineNewsProvider
+      enabled: true
+      optional: true
+      timeout: 15
+      params:
+        primary_engine: duckduckgo
+        max_items: 30
+        keywords:
+          - "财经新闻"
+          - "股市"
+
 # ============================================================
 # 市场与资产类型
 # ============================================================
@@ -119,9 +180,3 @@ scheduler:
 ai:
   default_action: watch
   confidence_threshold: 0.5
-
-
-
-
-
-
