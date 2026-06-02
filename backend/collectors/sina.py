@@ -1,4 +1,4 @@
-import re
+﻿import re
 import json
 from datetime import datetime, timezone
 
@@ -23,7 +23,7 @@ class SinaProvider(BaseProvider):
 
     @staticmethod
     def _to_sina_code(symbol: str) -> str:
-        if symbol.startswith("sh") or symbol.startswith("sz") or symbol.startswith("hk") or symbol.startswith("us"):
+        if any(symbol.startswith(p) for p in ("sh", "sz", "hk", "us", "hf", "nf")):
             return symbol
         code = symbol.strip()
         if code.startswith("6"):

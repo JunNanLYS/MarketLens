@@ -1,4 +1,4 @@
-import re
+﻿import re
 import sqlite3
 from typing import Any
 
@@ -9,7 +9,7 @@ from backend.config import get_config
 from backend.storage.database import get_db
 from backend.utils import escape_like
 
-SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut)(\w+)$")
+SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut|hf|nf)(\w+)$")
 
 
 class AssetService:

@@ -1,10 +1,18 @@
-from typing import Any
+﻿from typing import Any
 
 import streamlit as st
 
 from ui.api_client import get_assets, create_asset, update_asset, delete_asset, search_assets
 
 MARKET_OPTIONS: dict[str, str] = {
+    "全部": "",
+    "A 股 (sh)": "sh",
+    "A 股 (sz)": "sz",
+    "港股 (hk)": "hk",
+    "美股 (us)": "us",
+    "期货 (fut)": "fut",
+    "国际商品 (hf)": "hf",
+    "国内期货 (nf)": "nf",
     "全部": "",
     "A 股 (sh)": "sh",
     "A 股 (sz)": "sz",

@@ -140,6 +140,18 @@ markets:
     asset_types:
     - future
     note: 期货代码不含市场前缀，如 rb2501、IF2506、sc2401
+
+  hf:
+    prefix: hf
+    asset_types:
+    - commodity
+    note: 国际商品(如 hf_XAU 伦敦金、hf_XAG 伦敦银)
+  nf:
+    prefix: nf
+    asset_types:
+    - future
+    note: 国内商品期货(如 nf_AU0 沪金连续、nf_SC0 原油连续)
+
 database:
   path: marketlens.db
   echo: false
