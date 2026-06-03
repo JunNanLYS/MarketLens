@@ -9,6 +9,7 @@ from ui.api_client import (
     delete_account,
     get_transactions,
     create_transaction,
+    update_transaction,
     delete_transaction,
     get_positions,
     get_realized_pnl,
@@ -172,9 +173,38 @@ def _render_transactions_tab() -> None:
                 with tc5:
                     st.text(f"日期: {tx.get('trade_date', '-')}")
                 with tc6:
+                    if st.button("✏️", key=f"edit_tx_{tx.get('id', '')}"):
+                        st.session_state[f"edit_tx_{tx.get('id', '')}"] = True
+                        st.rerun()
                     if st.button("🗑️", key=f"del_tx_{tx.get('id', '')}"):
                         st.session_state[f"confirm_del_tx_{tx.get('id', '')}"] = True
                         st.rerun()
+
+                if st.session_state.get(f"edit_tx_{tx.get('id', '')}"):
+                    with st.form(f"edit_transaction_form_{tx.get('id', '')}"):
+                        st.markdown(f"**编辑交易 #{tx.get('id', '')} — {tx.get('symbol', '')}**")
+                        ex1, ex2, ex3 = st.columns(3)
+                        with ex1:
+                            new_qty: float = st.number_input("数量 *", min_value=0.01, value=float(tx.get("quantity", 0) or 0), step=1.0, key=f"etx_qty_{tx.get('id', '')}")
+                        with ex2:
+                            new_price: float = st.number_input("价格 *", min_value=0.01, value=float(tx.get("price", 0) or 0), step=0.01, key=f"etx_price_{tx.get('id', '')}")
+                        with ex3:
+                            new_fee: float = st.number_input("手续费", min_value=0.0, value=float(tx.get("fee", 0) or 0), step=0.01, key=f"etx_fee_{tx.get('id', '')}")
+                        new_notes: str = st.text_input("备注", value=tx.get("notes", "") or "", key=f"etx_notes_{tx.get('id', '')}")
+                        es1, es2 = st.columns(2)
+                        with es1:
+                            if st.form_submit_button("保存"):
+                                upd: dict[str, Any] = {"quantity": new_qty, "price": new_price, "fee": new_fee}
+                                if new_notes.strip():
+                                    upd["notes"] = new_notes.strip()
+                                update_transaction(int(tx["id"]), upd)
+                                st.session_state.pop(f"edit_tx_{tx.get('id', '')}", None)
+                                st.success("已更新")
+                                st.rerun()
+                        with es2:
+                            if st.form_submit_button("取消"):
+                                st.session_state.pop(f"edit_tx_{tx.get('id', '')}", None)
+                                st.rerun()
 
                 if st.session_state.get(f"confirm_del_tx_{tx.get('id', '')}"):
                     st.warning(f"确认删除交易 {tx.get('id', '')}？")
@@ -269,9 +299,44 @@ def _render_accounts_tab() -> None:
                     st.text(acc.get("notes", "") or "")
                 with ac5:
                     acc_id: int = acc.get("id", 0)
+                    if st.button("✏️", key=f"edit_acc_{acc_id}"):
+                        st.session_state[f"edit_acc_{acc_id}"] = True
+                        st.rerun()
                     if st.button("🗑️", key=f"del_acc_{acc_id}"):
                         st.session_state[f"confirm_del_acc_{acc_id}"] = True
                         st.rerun()
+
+                if st.session_state.get(f"edit_acc_{acc_id}"):
+                    with st.form(f"edit_account_form_{acc_id}"):
+                        st.markdown(f"**编辑账户「{acc.get('name', '')}」**")
+                        ec1, ec2, ec3, ec4 = st.columns(4)
+                        with ec1:
+                            new_name: str = st.text_input("名称 *", value=acc.get("name", ""), key=f"eacc_name_{acc_id}")
+                        with ec2:
+                            new_broker: str = st.text_input("券商", value=acc.get("broker", "") or "", key=f"eacc_broker_{acc_id}")
+                        with ec3:
+                            new_currency: str = st.selectbox("币种", CURRENCY_OPTIONS, index=CURRENCY_OPTIONS.index(acc.get("currency", "CNY")) if acc.get("currency") in CURRENCY_OPTIONS else 0, key=f"eacc_currency_{acc_id}")
+                        with ec4:
+                            new_notes: str = st.text_input("备注", value=acc.get("notes", "") or "", key=f"eacc_notes_{acc_id}")
+                        es1, es2 = st.columns(2)
+                        with es1:
+                            if st.form_submit_button("保存"):
+                                if not new_name.strip():
+                                    st.error("请输入账户名称")
+                                else:
+                                    upd: dict[str, Any] = {"name": new_name.strip(), "currency": new_currency}
+                                    if new_broker.strip():
+                                        upd["broker"] = new_broker.strip()
+                                    if new_notes.strip():
+                                        upd["notes"] = new_notes.strip()
+                                    update_account(acc_id, upd)
+                                    st.session_state.pop(f"edit_acc_{acc_id}", None)
+                                    st.success("已更新")
+                                    st.rerun()
+                        with es2:
+                            if st.form_submit_button("取消"):
+                                st.session_state.pop(f"edit_acc_{acc_id}", None)
+                                st.rerun()
 
                 if st.session_state.get(f"confirm_del_acc_{acc_id}"):
                     st.warning(f"确认删除账户「{acc.get('name', '')}」？关联交易记录将保留。")

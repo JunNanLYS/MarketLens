@@ -191,3 +191,57 @@ def get_task_status() -> dict[str, Any]:
     client: httpx.Client = _get_client()
     resp: httpx.Response = client.get("/tasks/status")
     return _handle_response(resp)
+
+
+def get_intraday(symbol: str, days: int = 1) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/intraday/{symbol}", params={"days": days})
+    return _handle_response(resp)
+
+
+def get_shareholder(symbol: str) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/shareholder/{symbol}")
+    return _handle_response(resp)
+
+
+def get_reserve(symbol: str) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/reserve/{symbol}")
+    return _handle_response(resp)
+
+
+def get_dividend(symbol: str) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/dividend/{symbol}")
+    return _handle_response(resp)
+
+
+def get_news(**params: Any) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/news", params=params)
+    return _handle_response(resp)
+
+
+def get_news_detail(news_id: int) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/news/{news_id}")
+    return _handle_response(resp)
+
+
+def get_task_logs(**params: Any) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/tasks/logs", params=params)
+    return _handle_response(resp)
+
+
+def trigger_task(task_name: str) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(f"/tasks/trigger/{task_name}")
+    return _handle_response(resp)
+
+
+def update_transaction(transaction_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.patch(f"/transactions/{transaction_id}", json=data)
+    return _handle_response(resp)

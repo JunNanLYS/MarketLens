@@ -3,7 +3,7 @@ import time
 import streamlit as st
 
 from ui.api_client import check_health
-from ui.pages import tracked_assets, asset_detail, ai_reports, portfolio
+from ui.pages import tracked_assets, asset_detail, ai_reports, portfolio, news_list, task_status, settings
 
 
 def _cached_health_check() -> bool:
@@ -27,6 +27,9 @@ PAGES: dict[str, str] = {
     "标的详情": "detail",
     "AI 报告": "reports",
     "投资组合": "portfolio",
+    "新闻列表": "news",
+    "任务状态": "status",
+    "系统配置": "settings",
 }
 
 with st.sidebar:
@@ -50,3 +53,9 @@ elif page_key == "reports":
     ai_reports.render()
 elif page_key == "portfolio":
     portfolio.render()
+elif page_key == "news":
+    news_list.render()
+elif page_key == "status":
+    task_status.render()
+elif page_key == "settings":
+    settings.render()

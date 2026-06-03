@@ -385,6 +385,21 @@ class CollectionService:
                 logger.warning("Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e)
                 continue
         return None
+
+    def collect_dividend(self, symbol: str) -> list[dict] | None:
+        """实时采集分红记录。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = provider.dividend(symbol)
+                if items:
+                    return items
+            except Exception as e:
+                logger.warning("Provider {} 采集分红记录失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
     def get_quote(self, symbol: str) -> dict | None:
         with get_db() as conn:
             row = conn.execute(

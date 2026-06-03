@@ -141,6 +141,17 @@ def get_shareholder(symbol: str) -> dict:
         )
     return result
 
+@router.get("/dividend/{symbol}")
+def get_dividend(symbol: str) -> dict:
+    """获取分红记录（实时采集，不缓存）。"""
+    items = _service.collect_dividend(symbol)
+    if items is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 分红数据采集失败"},
+        )
+    return {"symbol": symbol, "items": items}
+
 
 @router.get("/reserve/{symbol}")
 def get_reserve(symbol: str) -> dict:
