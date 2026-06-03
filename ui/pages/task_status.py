@@ -4,15 +4,12 @@ import streamlit as st
 
 from ui.api_client import get_task_status, get_task_logs, trigger_task
 
+# 注意：键名必须与后端 scheduler/jobs.py 中的 VALID_TASK_NAMES 完全一致
 TASK_LABELS: dict[str, str] = {
-    "collect_quotes": "行情采集",
-    "collect_daily_close": "日收盘采集",
-    "collect_news": "新闻采集",
-    "generate_reports": "AI 报告生成",
-    "collect_kline": "K 线采集",
-    "collect_finance": "财务数据采集",
-    "collect_fund_flow": "资金流向采集",
-    "collect_technical": "技术指标采集",
+    "quote": "行情采集",
+    "daily_close": "日收盘采集",
+    "news": "新闻采集",
+    "ai_report": "AI 报告生成",
 }
 
 
