@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 
 from backend.collectors import BaseProvider, create_providers
+from backend.collectors.westock import WeStockProvider
 from backend.config import get_config
 from backend.services.asset_service import AssetService
 from backend.storage.database import get_db
@@ -341,6 +342,63 @@ class CollectionService:
                 failed += 1
                 continue
         return {"success": success, "failed": failed}
+
+
+    def collect_intraday(self, symbol: str, days: int = 1) -> list[dict] | None:
+        """实时采集分时数据。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = provider.minute(symbol, days=days)
+                if items:
+                    return items
+            except Exception as e:
+                logger.warning("Provider {} 采集分时失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    def collect_shareholder(self, symbol: str) -> dict | None:
+        """实时采集股东结构数据。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                result = provider.shareholder(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning("Provider {} 采集股东结构失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    def collect_reserve(self, symbol: str) -> dict | None:
+        """实时采集业绩预告。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                result = provider.reserve(symbol)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning("Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    def collect_dividend(self, symbol: str) -> list[dict] | None:
+        """实时采集分红记录。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = provider.dividend(symbol)
+                if items:
+                    return items
+            except Exception as e:
+                logger.warning("Provider {} 采集分红记录失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
 
     def get_quote(self, symbol: str) -> dict | None:
         with get_db() as conn:

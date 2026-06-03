@@ -2,7 +2,7 @@ from typing import Any
 
 import streamlit as st
 
-from ui.api_client import get_assets, get_asset, get_quote, get_kline, get_finance, get_fund_flow, get_latest_report
+from ui.api_client import get_assets, get_asset, get_quote, get_kline, get_finance, get_fund_flow, get_latest_report, get_intraday, get_shareholder, get_reserve, get_dividend
 
 ACTION_COLORS: dict[str, str] = {
     "buy": "green",
@@ -187,40 +187,156 @@ def render() -> None:
 
     detail: dict[str, Any] = get_asset(asset_id)
 
-    quote: dict[str, Any] | None = detail.get("quote")
-    if quote:
-        _render_quote_section(quote)
-    else:
-        st.info("暂无行情数据")
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "行情", "K 线", "财务", "资金流向", "分时走势", "股东结构", "业绩预告", "分红记录", "AI 报告",
+    ])
 
-    st.divider()
+    with tab1:
+        quote: dict[str, Any] | None = detail.get("quote")
+        if quote:
+            _render_quote_section(quote)
+        else:
+            st.info("暂无行情数据")
 
-    kline_summary: dict[str, Any] | None = detail.get("kline_summary")
-    if kline_summary:
-        _render_kline_section(kline_summary)
-    else:
-        st.info("暂无 K 线数据")
+    with tab2:
+        kline_summary: dict[str, Any] | None = detail.get("kline_summary")
+        if kline_summary:
+            _render_kline_section(kline_summary)
+        else:
+            st.info("暂无 K 线数据")
 
-    st.divider()
+    with tab3:
+        finance_summary: dict[str, Any] | None = detail.get("finance_summary")
+        if finance_summary:
+            _render_finance_section(finance_summary)
+        else:
+            st.info("暂无财务数据")
 
-    finance_summary: dict[str, Any] | None = detail.get("finance_summary")
-    if finance_summary:
-        _render_finance_section(finance_summary)
-    else:
-        st.info("暂无财务数据")
+    with tab4:
+        fund_flow_summary: dict[str, Any] | None = detail.get("fund_flow_summary")
+        if fund_flow_summary:
+            _render_fund_flow_section(fund_flow_summary)
+        else:
+            st.info("暂无资金流向数据")
 
-    st.divider()
+    with tab5:
+        _render_intraday_tab(symbol)
 
-    fund_flow_summary: dict[str, Any] | None = detail.get("fund_flow_summary")
-    if fund_flow_summary:
-        _render_fund_flow_section(fund_flow_summary)
-    else:
-        st.info("暂无资金流向数据")
+    with tab6:
+        _render_shareholder_tab(symbol)
 
-    st.divider()
+    with tab7:
+        _render_reserve_tab(symbol)
 
-    latest_report: dict[str, Any] | None = detail.get("latest_report")
-    if latest_report:
-        _render_report_section(latest_report)
-    else:
-        st.info("暂无 AI 报告")
+    with tab8:
+        _render_dividend_tab(symbol)
+
+    with tab9:
+        latest_report: dict[str, Any] | None = detail.get("latest_report")
+        if latest_report:
+            _render_report_section(latest_report)
+        else:
+            st.info("暂无 AI 报告")
+
+
+def _render_intraday_tab(symbol: str) -> None:
+    st.subheader("分时走势")
+    try:
+        result: dict[str, Any] = get_intraday(symbol)
+        items: list[dict[str, Any]] = result.get("items", [])
+        if not items:
+            st.info("暂无分时数据")
+            return
+        for row in items[:20]:
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.text(str(row.get("time", "-")))
+            with c2:
+                st.text(str(row.get("price", "-")))
+            with c3:
+                st.text(str(row.get("volume", "-")))
+            with c4:
+                st.text(str(row.get("avg_price", "-")))
+        if len(items) > 20:
+            st.caption(f"... 共 {len(items)} 条数据，仅显示前 20 条")
+    except Exception as e:
+        st.warning(f"分时数据加载失败: {e}")
+
+
+def _render_shareholder_tab(symbol: str) -> None:
+    st.subheader("股东结构")
+    try:
+        result: dict[str, Any] = get_shareholder(symbol)
+        top_shareholders: list[dict[str, Any]] = result.get("top_shareholders", [])
+        if top_shareholders:
+            st.markdown("**十大股东**")
+            for h in top_shareholders:
+                sc1, sc2, sc3 = st.columns([2, 2, 2])
+                with sc1:
+                    st.text(h.get("name", "-"))
+                with sc2:
+                    st.text(f"{h.get('shares', '-')} 股")
+                with sc3:
+                    pct: float | None = h.get("ratio")
+                    st.text(f"{pct:.2f}%" if pct is not None else "-")
+            st.divider()
+        holder_count: list[dict[str, Any]] = result.get("holder_count_history", [])
+        if holder_count:
+            st.markdown("**股东人数变化**")
+            for hc in holder_count[:10]:
+                hc1, hc2 = st.columns(2)
+                with hc1:
+                    st.text(str(hc.get("date", "-")))
+                with hc2:
+                    st.text(str(hc.get("total_holders", "-")))
+        if not top_shareholders and not holder_count:
+            st.info("暂无股东结构数据")
+    except Exception as e:
+        st.warning(f"股东数据加载失败: {e}")
+
+
+def _render_reserve_tab(symbol: str) -> None:
+    st.subheader("业绩预告")
+    try:
+        result: dict[str, Any] = get_reserve(symbol)
+        forecast_type: str = result.get("forecast_type", "") or result.get("report_period", "")
+        if not forecast_type and not result.get("profit_lower"):
+            st.info("暂无业绩预告数据")
+            return
+        rc1, rc2, rc3 = st.columns(3)
+        with rc1:
+            st.metric("预告类型", forecast_type or "-")
+        with rc2:
+            profit_lower: float | None = result.get("profit_lower")
+            st.metric("利润下限", f"{profit_lower / 1e8:.2f}亿" if profit_lower else "-")
+        with rc3:
+            profit_upper: float | None = result.get("profit_upper")
+            st.metric("利润上限", f"{profit_upper / 1e8:.2f}亿" if profit_upper else "-")
+        summary: str = result.get("summary", "")
+        if summary:
+            st.markdown(f"> {summary}")
+    except Exception as e:
+        st.warning(f"业绩预告加载失败: {e}")
+
+
+def _render_dividend_tab(symbol: str) -> None:
+    st.subheader("分红记录")
+    try:
+        result: dict[str, Any] = get_dividend(symbol)
+        items: list[dict[str, Any]] = result.get("items", [])
+        if not items:
+            st.info("暂无分红记录")
+            return
+        for d in items:
+            dc1, dc2, dc3, dc4 = st.columns(4)
+            with dc1:
+                st.text(f"除权日: {d.get('ex_date', '-')}")
+            with dc2:
+                st.text(f"每股分红: {d.get('cash_dividend', '-')}")
+            with dc3:
+                st.text(f"送股: {d.get('share_bonus', '-')}")
+            with dc4:
+                st.text(f"登记日: {d.get('record_date', '-')}")
+            st.divider()
+    except Exception as e:
+        st.warning(f"分红数据加载失败: {e}")

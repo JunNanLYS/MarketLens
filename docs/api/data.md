@@ -1,4 +1,4 @@
-﻿# 市场数据 API
+# 市场数据 API
 
 > 基准路径: `/api/v1/data` | 返回上级: [API 概述](../api.md)
 
@@ -206,3 +206,105 @@ GET /api/v1/data/technical/hk00700 HTTP/1.1
 }
 ```
 </details>
+
+---
+
+## `GET /data/intraday/{symbol}` — 分时数据
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `days` | integer | 1 | 最近 N 日分时（最大 5） |
+
+```http
+GET /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
+```
+
+<details>
+<summary>响应 200</summary>
+
+```json
+{
+  "symbol": "hk00700",
+  "items": [
+    {
+      "symbol": "hk00700",
+      "time": "09:30",
+      "price": 380.0,
+      "volume": 1234567,
+      "avg_price": 380.0,
+      "source": "westock",
+      "collected_at": "2026-06-02T10:00:00+08:00"
+    }
+  ]
+}
+```
+</details>
+
+> 分时数据实时采集，不落库缓存。
+
+---
+
+## `GET /data/shareholder/{symbol}` — 股东结构
+
+```http
+GET /api/v1/data/shareholder/sh600519 HTTP/1.1
+```
+
+<details>
+<summary>响应 200</summary>
+
+```json
+{
+  "symbol": "sh600519",
+  "top_shareholders": [
+    {
+      "rank": 1,
+      "name": "中国贵州茅台酒厂(集团)有限责任公司",
+      "shares": 700000000,
+      "ratio": 58.0,
+      "change": null
+    }
+  ],
+  "holder_count_history": [
+    {
+      "date": "2025-12-31",
+      "total_holders": 150000,
+      "avg_shares": 8000
+    }
+  ],
+  "source": "westock",
+  "collected_at": "2026-06-02T10:00:00+08:00"
+}
+```
+</details>
+
+> 股东结构数据实时采集，不落库缓存。包含十大股东列表和股东人数变化历史。
+
+---
+
+## `GET /data/reserve/{symbol}` — 业绩预告
+
+```http
+GET /api/v1/data/reserve/sz000001 HTTP/1.1
+```
+
+<details>
+<summary>响应 200</summary>
+
+```json
+{
+  "symbol": "sz000001",
+  "report_period": "2025Q4",
+  "forecast_type": "预增",
+  "profit_lower": 500000000,
+  "profit_upper": 550000000,
+  "change_lower": 20.0,
+  "change_upper": 32.0,
+  "summary": "业绩大幅增长",
+  "source": "westock",
+  "collected_at": "2026-06-02T10:00:00+08:00"
+}
+```
+</details>
+
+> 业绩预告数据实时采集，返回最新一条预告。
