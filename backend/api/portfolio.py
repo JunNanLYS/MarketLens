@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from backend.api.neodata import verify_api_key
 from backend.services.portfolio_service import PortfolioService
 
 router = APIRouter(prefix="/api/v1", tags=["portfolio"])
@@ -44,7 +45,10 @@ class UpdateTransactionRequest(BaseModel):
 
 
 @router.post("/accounts", status_code=201)
-def create_account(req: CreateAccountRequest) -> dict:
+def create_account(
+    req: CreateAccountRequest,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     try:
         return _service.create_account(req.model_dump())
     except ValueError as e:
@@ -76,7 +80,11 @@ def get_account(account_id: int) -> dict:
 
 
 @router.patch("/accounts/{account_id}")
-def update_account(account_id: int, req: UpdateAccountRequest) -> dict:
+def update_account(
+    account_id: int,
+    req: UpdateAccountRequest,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     data: dict = req.model_dump(exclude_none=True)
     if not data:
         account: dict | None = _service.get_account_by_id(account_id)
@@ -107,7 +115,10 @@ def update_account(account_id: int, req: UpdateAccountRequest) -> dict:
 
 
 @router.delete("/accounts/{account_id}", status_code=204)
-def delete_account(account_id: int) -> None:
+def delete_account(
+    account_id: int,
+    _auth: None = Depends(verify_api_key),
+) -> None:
     success: bool = _service.delete_account(account_id)
     if not success:
         raise HTTPException(
@@ -118,7 +129,10 @@ def delete_account(account_id: int) -> None:
 
 
 @router.post("/transactions", status_code=201)
-def create_transaction(req: CreateTransactionRequest) -> dict:
+def create_transaction(
+    req: CreateTransactionRequest,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     try:
         return _service.create_transaction(req.model_dump())
     except ValueError as e:
@@ -177,7 +191,11 @@ def get_transaction(transaction_id: int) -> dict:
 
 
 @router.patch("/transactions/{transaction_id}")
-def update_transaction(transaction_id: int, req: UpdateTransactionRequest) -> dict:
+def update_transaction(
+    transaction_id: int,
+    req: UpdateTransactionRequest,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     data: dict = req.model_dump(exclude_none=True)
     if not data:
         tx: dict | None = _service.get_transaction_by_id(transaction_id)
@@ -209,7 +227,10 @@ def update_transaction(transaction_id: int, req: UpdateTransactionRequest) -> di
 
 
 @router.delete("/transactions/{transaction_id}", status_code=204)
-def delete_transaction(transaction_id: int) -> None:
+def delete_transaction(
+    transaction_id: int,
+    _auth: None = Depends(verify_api_key),
+) -> None:
     try:
         success: bool = _service.delete_transaction(transaction_id)
     except ValueError as e:

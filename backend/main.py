@@ -5,6 +5,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response
 
 from backend.api.assets import router as assets_router
 from backend.api.data import router as data_router
@@ -17,6 +20,31 @@ from backend.api.tasks import _set_scheduler
 from backend.config import get_config
 from backend.scheduler.jobs import SchedulerManager
 from backend.storage.schema import init_db
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """注入常用安全响应头，抑制 XSS/点击劫持/MIME 嗅探/信息泄露。
+
+    - X-Content-Type-Options: nosniff — 禁止浏览器进行 MIME 嗅探。
+    - X-Frame-Options: DENY — 禁止任何 iframe 嵌入。
+    - Referrer-Policy: no-referrer — 出口链路不携带来源。
+    - Strict-Transport-Security: 强制 HTTPS（本地开发无影响，生产环境必须 HTTPS）。
+    - Content-Security-Policy: 保持宽松（FastAPI Swagger UI 需要 inline script/style）。
+    """
+
+    async def dispatch(self, request: StarletteRequest, call_next):  # type: ignore[override]
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        # CSP 留宽松：Swagger UI 需要 inline script/style
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'"
+        )
+        return response
 
 _scheduler_manager: SchedulerManager | None = None
 _db_ready = False
@@ -65,6 +93,9 @@ cors_origins = config.get("security", {}).get("cors_origins", _default_cors_orig
 cors_methods = config.get("security", {}).get("cors_methods", _default_cors_methods)
 cors_headers = config.get("security", {}).get("cors_headers", _default_cors_headers)
 
+# 安全头中间件必须在 CORS 之前注册，
+# 以保证 preflight 401/4xx 响应也携带安全头。
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,

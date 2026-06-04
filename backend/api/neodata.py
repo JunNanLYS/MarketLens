@@ -1,4 +1,7 @@
-﻿from fastapi import APIRouter, Header, HTTPException
+import os
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from backend.collectors.neodata_client import NeoDataClient
@@ -30,6 +33,24 @@ def _get_or_create_client() -> NeoDataClient:
     return _client_cache
 
 
+def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
+    """写端点鉴权依赖：从配置或环境变量校验 API Key。
+
+    优先级：环境变量 MARKETLENS_API_KEY > config.security.api_key。
+    启动时若检测到默认 key 未被环境变量覆盖，仅记录 warning（本地工具可继续使用）。
+    """
+    config = get_config()
+    expected_key: str = (
+        os.getenv("MARKETLENS_API_KEY")
+        or config.get("security", {}).get("api_key", "marketlens-local")
+    )
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "UNAUTHORIZED", "detail": "无效或缺失的 API Key"},
+        )
+
+
 class TokenSaveRequest(BaseModel):
     token: str = Field(..., min_length=1)
 
@@ -40,10 +61,16 @@ async def get_token_status() -> dict:
 
 
 @router.post("/token")
-async def save_token(body: TokenSaveRequest, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+async def save_token(
+    body: TokenSaveRequest,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     config = get_config()
     expected_key = config.get("security", {}).get("api_key", "marketlens-local")
-    if not x_api_key or x_api_key != expected_key:
-        raise HTTPException(status_code=401, detail={"error": "UNAUTHORIZED", "detail": "无效或缺失的 API Key"})
+    if expected_key == "marketlens-local" and not os.getenv("MARKETLENS_API_KEY"):
+        logger.warning(
+            "NeoData token 端点仍使用默认 API Key \"marketlens-local\"。"
+            "生产环境请通过环境变量 MARKETLENS_API_KEY 或 config.yaml 覆盖。"
+        )
     _get_or_create_client().save_token(body.token)
     return {"message": "Token saved successfully"}

@@ -1,5 +1,6 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.api.neodata import verify_api_key
 from backend.scheduler.jobs import SchedulerManager, VALID_TASK_NAMES
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
@@ -35,6 +36,7 @@ def get_task_status(manager: SchedulerManager = Depends(get_scheduler)) -> dict:
 @router.post("/trigger/{task_name}", status_code=202)
 def trigger_task(
     task_name: str,
+    _auth: None = Depends(verify_api_key),
     manager: SchedulerManager = Depends(get_scheduler),
 ) -> dict:
     if task_name not in VALID_TASK_NAMES:

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from backend.api.neodata import verify_api_key
 from backend.services.report_service import ReportService
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
@@ -14,7 +15,10 @@ class GenerateRequest(BaseModel):
 
 
 @router.post("/generate", status_code=200)
-async def generate_reports(body: GenerateRequest) -> dict:
+async def generate_reports(
+    body: GenerateRequest,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     symbols = body.symbols
     force = body.force
     targets = len(symbols) if symbols else 0

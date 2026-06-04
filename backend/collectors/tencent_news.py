@@ -9,9 +9,11 @@ from pathlib import Path
 from loguru import logger
 from backend.collectors.base import BaseProvider
 
-# CLI 搜索路径：优先从环境变量 TENCT_NEWS_CLI_PATH 获取，其次在 CODEX_HOME 或用户目录下的 skill 路径
+# CLI 搜索路径：优先从环境变量 TENCT_NEWS_CLI_PATH 获取；固定路径下查找安装的 skill。
+# 安全考量：不读取 CODEX_HOME 等未签名环境变量覆盖安装路径，
+# 防止恶意进程通过环境变量劫持 CLI 路径执行任意代码。
 _ENV_CLI_PATH = os.environ.get("TENCT_NEWS_CLI_PATH")
-SKILL_DIR = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "skills" / "tencent-news"
+SKILL_DIR = Path.home() / ".codex" / "skills" / "tencent-news"
 GLOBAL_DIR = Path.home() / ".tencent-news-cli" / "bin"
 # 跨平台二进制名：Windows 加 .exe 后缀
 if sys.platform == "win32":
@@ -121,15 +123,15 @@ class TencentNewsProvider(BaseProvider):
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         apikey = (self.params or {}).get("apikey", "")
-        # \u4f18\u5148\u901a\u8fc7\u73af\u5883\u53d8\u91cf\u4f20\u9012 apikey\uff0c\u907f\u514d\u5728\u547d\u4ee4\u884c\u53c2\u6570\u4e2d\u660e\u6587\u6cc4\u9732
+        # \u4f18\u5148\u901a\u8fc7\u73af\u5883\u53d8\u91cf TENCENT_NEWS_APIKEY \u4f20\u9012 apikey\uff0c\u907f\u514d\u5728\u547d\u4ee4\u884c\u53c2\u6570\u4e2d\u660e\u6587\u6cc4\u9732\u3002
+        # \u5b89\u5168\u8003\u91cf\uff1a\u4e0d\u63d0\u4f9b --caller fallback\uff08\u65e7\u7248 CLI \u4e0d\u652f\u6301 env \u65f6\u5e94\u5347\u7ea7 CLI \u800c\u975e\u964d\u7ea7\u5b89\u5168\uff09\uff1a
+        # Linux/macOS \u7684 /proc/<pid>/cmdline \u8fdb\u7a0b\u5217\u8868\u5bf9\u540c\u7528\u6237\u8fdb\u7a0b\u53ef\u89c1\uff0c
+        # \u547d\u4ee4\u884c\u53c2\u6570\u4f1a\u6cc4\u9732 API Key\u3002\u4ec5\u4f9d\u8d56\u73af\u5883\u53d8\u91cf\u900f\u4f20\u3002
         run_env: dict[str, str] | None = None
         if apikey:
             run_env = os.environ.copy()
             run_env["TENCENT_NEWS_APIKEY"] = apikey
         cmds: list[list[str]] = [["hot", "--limit", str(self._max_items)]]
-        if apikey:
-            # \u4fdd\u7559 --caller \u4f5c\u4e3a fallback\uff1a\u65e7\u7248 CLI \u53ef\u80fd\u4e0d\u8bc6\u522b env
-            cmds[0].extend(["--caller", apikey])
         cmds.append(["search", "\u8d22\u7ecf", "--limit", str(self._max_items)])
         for cmd in cmds:
             out, err = await self._run(cmd, env=run_env)
