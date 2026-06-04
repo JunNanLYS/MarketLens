@@ -90,7 +90,7 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                             st.success(f"已{label}")
                             st.rerun()
                 with btn_cols[1]:
-                    if st.button("🗑️", key=f"del_{asset_id}"):
+                    if st.button("🗑️", key=f"del_{asset_id}", help="删除该标的"):
                         st.session_state[f"confirm_delete_{asset_id}"] = True
                         st.rerun()
 
@@ -134,6 +134,15 @@ def _render_add_form() -> None:
                 if not symbol.strip():
                     st.error("请输入标的代码")
                 else:
+                    tags_split: list[str] = []
+                    if tags_input.strip():
+                        tags_split = [t.strip() for t in tags_input.split(",") if t.strip()]
+                    if len(tags_split) > 10:
+                        st.error("标签数量不能超过 10 个")
+                        return
+                    if any(len(t) > 20 for t in tags_split):
+                        st.error("单个标签长度不能超过 20 个字符")
+                        return
                     data: dict[str, Any] = {
                         "symbol": symbol.strip(),
                         "asset_type": asset_type,
@@ -142,8 +151,8 @@ def _render_add_form() -> None:
                         data["name"] = name.strip()
                     if market != "自动识别":
                         data["market"] = market
-                    if tags_input.strip():
-                        data["tags"] = [t.strip() for t in tags_input.split(",") if t.strip()]
+                    if tags_split:
+                        data["tags"] = tags_split
                     if notes.strip():
                         data["notes"] = notes.strip()
                     result: dict[str, Any] = create_asset(data)

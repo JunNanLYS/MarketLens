@@ -1,6 +1,7 @@
 from typing import Any
 
 import streamlit as st
+from loguru import logger
 
 from ui.api_client import get_news
 from ui.api_client import get_assets
@@ -63,5 +64,6 @@ def render() -> None:
                 if published:
                     st.caption(f"发布时间: {published}")
                 st.divider()
-    except Exception as e:
-        st.warning(f"新闻加载失败: {e}")
+    except Exception:
+        logger.exception("新闻加载失败")
+        st.warning("新闻加载失败，请稍后重试")

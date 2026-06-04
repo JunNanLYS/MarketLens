@@ -254,11 +254,16 @@ def _render_intraday_tab(symbol: str) -> None:
         for row in items[:20]:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.text(str(row.get("time", "-")))
+                time_str: str = str(row.get("time", "-"))
+                st.text(time_str[-8:] if len(time_str) >= 8 else time_str)
             with c2:
                 st.text(str(row.get("price", "-")))
             with c3:
-                st.text(str(row.get("volume", "-")))
+                vol_val: Any = row.get("volume")
+                if isinstance(vol_val, (int, float)):
+                    st.text(f"{vol_val:,.0f}")
+                else:
+                    st.text(str(vol_val) if vol_val is not None else "-")
             with c4:
                 st.text(str(row.get("avg_price", "-")))
         if len(items) > 20:

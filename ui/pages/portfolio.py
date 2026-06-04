@@ -39,6 +39,8 @@ def _render_positions_tab() -> None:
         st.info("暂无持仓")
         return
 
+    account_map: dict[int, str] = {a["id"]: a.get("name", "") for a in get_accounts()}
+
     total_market_value: float = 0.0
     total_unrealized_pnl: float = 0.0
 
@@ -70,7 +72,10 @@ def _render_positions_tab() -> None:
             st.caption(pos.get("name", ""))
         with cols[1]:
             account_id: int | None = pos.get("account_id")
-            st.text(f"账户 {account_id}" if account_id else "-")
+            if account_id is not None and account_id in account_map:
+                st.text(f"账户 {account_map[account_id]}")
+            else:
+                st.text("-")
         with cols[2]:
             qty: float | None = pos.get("total_qty")
             st.text(f"{qty:.0f}" if qty is not None else "-")
@@ -301,10 +306,10 @@ def _render_accounts_tab() -> None:
                     st.text(acc.get("notes", "") or "")
                 with ac5:
                     acc_id: int = acc.get("id", 0)
-                    if st.button("✏️", key=f"edit_acc_{acc_id}"):
+                    if st.button("✏️", key=f"edit_acc_{acc_id}", help="编辑该账户"):
                         st.session_state[f"edit_acc_{acc_id}"] = True
                         st.rerun()
-                    if st.button("🗑️", key=f"del_acc_{acc_id}"):
+                    if st.button("🗑️", key=f"del_acc_{acc_id}", help="删除该账户"):
                         st.session_state[f"confirm_del_acc_{acc_id}"] = True
                         st.rerun()
 
