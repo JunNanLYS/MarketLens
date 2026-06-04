@@ -44,7 +44,7 @@ class SinaProvider(BaseProvider):
 
     @staticmethod
     def _to_sina_code(symbol: str) -> str:
-        if any(symbol.startswith(p) for p in ("sh", "sz", "hk", "us", "hf", "nf")):
+        if any(symbol.startswith(p) for p in ("sh", "sz", "bj", "hk", "us", "hf", "nf", "gb")):
             return symbol
         code = symbol.strip()
         if code.startswith("6"):
@@ -68,9 +68,13 @@ class SinaProvider(BaseProvider):
 
     @staticmethod
     def _market_prefix(sina_code: str) -> str:
-        """返回市场前缀 sh/sz。"""
+        """返回市场前缀 sh/sz/bj/gb。"""
         if sina_code.startswith("sh") or sina_code.startswith("sz"):
             return sina_code[:2]
+        if sina_code.startswith("bj"):
+            return "bj"
+        if sina_code.startswith("gb"):
+            return "gb"
         code = sina_code.strip()
         if code.startswith("6"):
             return "sh"
