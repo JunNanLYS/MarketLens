@@ -10,12 +10,12 @@
 |---|---|---|---|
 | `GET` | `/data/quotes/{symbol}` | 最新行情 | 200, 404 |
 | `POST` | `/data/quotes/{symbol}/refresh` | 手动刷新行情 | 200, 502 |
-| `GET` | `/data/quotes/{symbol}/history` | 历史行情序列 | 200, 404 |
-| `GET` | `/data/kline/{symbol}` | 日 K 线 | 200, 404 |
+| `GET` | `/data/quotes/{symbol}/history` | 历史行情序列 | 200, 404, 422 |
+| `GET` | `/data/kline/{symbol}` | 日 K 线 | 200, 404, 422 |
 | `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 404 |
-| `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 404 |
+| `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 404, 422 |
 | `GET` | `/data/technical/{symbol}` | 技术指标 | 200, 404 |
-| `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 502 |
+| `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 422, 502 |
 | `POST` | `/data/shareholder/{symbol}` | 股东结构采集 | 200, 502 |
 | `POST` | `/data/dividend/{symbol}` | 分红数据采集 | 200, 502 |
 | `POST` | `/data/reserve/{symbol}` | 业绩预告采集 | 200, 502 |

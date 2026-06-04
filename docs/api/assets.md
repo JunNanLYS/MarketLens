@@ -191,7 +191,7 @@ GET /api/v1/assets/1 HTTP/1.1
 
 ## `PATCH /assets/{id}` — 部分更新
 
-可更新字段：`enabled`、`tags`（全量替换）、`notes`。
+可更新字段：`name`、`enabled`、`tags`（全量替换）、`notes`。
 
 ```http
 PATCH /api/v1/assets/1 HTTP/1.1

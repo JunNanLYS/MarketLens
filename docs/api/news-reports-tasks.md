@@ -73,7 +73,7 @@ GET /api/v1/news/1 HTTP/1.1
 |---|---|---|---|
 | `action` | string | — | `buy` / `sell` / `watch` / `avoid` |
 | `risk_level` | string | — | `low` / `medium` / `high` |
-| `date` | date | 今天 | 日期筛选 |
+| `date` | date | 今天 | 日期筛选，ISO 8601 日期或日期时间字符串（如 `2026-05-31`） |
 | `page` / `page_size` | int | 1 / 20 | 分页 |
 
 ```http
@@ -115,7 +115,7 @@ GET /api/v1/reports/hk00700 HTTP/1.1
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `limit` | integer | 30 | 最大 90 |
-| `from` / `to` | date | — | 日期范围 |
+| `from` / `to` | date | — | 日期范围，ISO 8601 日期或日期时间字符串（如 `2026-05-31` 或 `2026-05-31T00:00:00+08:00`） |
 
 ### `POST /reports/generate` — 手动生成
 

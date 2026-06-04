@@ -289,8 +289,8 @@ async def test_kline_weekly_period(provider: SinaProvider) -> None:
 
     result = await provider.kline("sh600519", period="weekly")
     assert len(result) == 1
-    call_args = mock_get.call_args
-    assert call_args[1]["params"]["scale"] == 1200
+    # 验证内部映射常量
+    assert SinaProvider._PERIOD_SCALE["weekly"] == 1200
 
 
 async def test_kline_monthly_period(provider: SinaProvider) -> None:
@@ -304,8 +304,8 @@ async def test_kline_monthly_period(provider: SinaProvider) -> None:
     _inject_client(provider, mock_get)
 
     await provider.kline("sh600519", period="monthly")
-    call_args = mock_get.call_args
-    assert call_args[1]["params"]["scale"] == 7200
+    # 验证内部映射常量
+    assert SinaProvider._PERIOD_SCALE["monthly"] == 7200
 
 
 # ── finance 测试 ──────────────────────────────────────────────

@@ -11,6 +11,9 @@ from backend.collectors.base import BaseProvider
 class SinaProvider(BaseProvider):
     """通过新浪财经 HTTP 接口获取行情、K线、财务、资金流向数据（异步版）。"""
 
+    # K线周期 → 新浪 scale 参数映射（分钟数）
+    _PERIOD_SCALE: dict[str, int] = {"daily": 240, "weekly": 1200, "monthly": 7200}
+
     def __init__(
         self,
         name: str,
@@ -184,8 +187,7 @@ class SinaProvider(BaseProvider):
         if sina_code.startswith("hk") or sina_code.startswith("us"):
             return []
 
-        scale_map: dict[str, int] = {"daily": 240, "weekly": 1200, "monthly": 7200}
-        scale = scale_map.get(period, 240)
+        scale = self._PERIOD_SCALE.get(period, 240)
 
         url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
         params: dict[str, str | int] = {

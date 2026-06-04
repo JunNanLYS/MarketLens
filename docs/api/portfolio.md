@@ -162,7 +162,7 @@
 
 ### `PATCH /transactions/{transaction_id}` — 更新交易
 
-可更新字段：`quantity`、`price`、`fee`、`currency`、`trade_date`、`notes`。
+可更新字段：`account_id`、`symbol`、`type`、`quantity`（> 0）、`price`（> 0）、`fee`、`currency`、`trade_date`、`notes`。
 
 更新后验证持仓不为负。
 
