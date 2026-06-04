@@ -137,7 +137,7 @@ class TestGetTaskStatus:
         mgr = SchedulerManager()
         mgr.register_jobs()
         status = mgr.get_task_status()
-        assert len(status) == 4
+        assert len(status) == 5
         for item in status:
             assert item["task_name"] in VALID_TASK_NAMES
             assert item["last_run_at"] is None
@@ -207,6 +207,11 @@ class TestTaskLogsAPI:
 
     @pytest.fixture
     def client(self) -> TestClient:
+        from backend.api.tasks import set_scheduler
+
+        mgr = SchedulerManager()
+        mgr.register_jobs()
+        set_scheduler(mgr)
         return TestClient(app)
 
     async def test_get_logs_empty(self, client: TestClient) -> None:
@@ -269,7 +274,7 @@ class TestTaskStatusAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert "items" in data
-        assert len(data["items"]) == 4
+        assert len(data["items"]) == 5
 
     async def test_get_status_with_logs(self, client: TestClient) -> None:
         now = datetime.now(timezone.utc).isoformat()
