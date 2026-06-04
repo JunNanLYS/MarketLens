@@ -108,10 +108,10 @@ _TASK_FUNCTIONS: dict[str, object] = {
 
 
 class SchedulerManager:
-    """APScheduler ????????????????????????????????"""
+    """APScheduler 调度器管理器：注册并管理所有后台定时任务。"""
 
     def __init__(self) -> None:
-        """???????? config.yaml ??????????"""
+        """读取 scheduler 配置节并初始化后台调度器实例。"""
         config = get_config()
         scheduler_cfg: dict = config.get("scheduler", {})
         tz: str = scheduler_cfg.get("timezone", "Asia/Shanghai")
@@ -119,7 +119,7 @@ class SchedulerManager:
         self._tasks_cfg: dict = scheduler_cfg.get("tasks", {})
 
     def register_jobs(self) -> None:
-        """?????????quote?daily_close?news?ai_report??"""
+        """从配置注册 quote / daily_close / news / ai_report / cleanup 等所有定时任务。"""
         quote_cfg: dict = self._tasks_cfg.get("quote", {})
         quote_interval: int = quote_cfg.get("interval", 15)
         self._scheduler.add_job(
@@ -193,24 +193,24 @@ class SchedulerManager:
         return TASK_SCHEDULE_DESCRIPTIONS.get(task_name, "")
 
     def start(self) -> None:
-        """???????????"""
+        """注册所有任务后启动调度器。"""
         self.register_jobs()
         self._scheduler.start()
         logger.info("调度器已启动")
 
     def shutdown(self) -> None:
-        """???????????????"""
+        """关闭调度器，不再等待正在执行的任务。"""
         self._scheduler.shutdown(wait=False)
         logger.info("调度器已关闭")
 
     def trigger_task(self, task_name: str) -> bool:
-        """?????????
+        """手动触发指定名称的定时任务。
 
         Args:
-            task_name: ?????quote / daily_close / news / ai_report??
+            task_name: 任务名，可选 quote / daily_close / news / ai_report / cleanup。
 
         Returns:
-            ?????????????? False??
+            触发成功返回 True；任务名无效或执行失败返回 False。
         """
         if task_name not in VALID_TASK_NAMES:
             logger.warning("无效的任务名: {}", task_name)
@@ -225,10 +225,10 @@ class SchedulerManager:
         return True
 
     def get_task_status(self) -> list[dict]:
-        """????????????????
+        """汇总每个任务最近一次执行情况与下一次执行时间。
 
         Returns:
-            ?????????????????????????????
+            每个任务一条记录，包含描述、调度表达式、最近运行状态、耗时、错误、下次运行时间等。
         """
         result: list[dict] = []
         task_names: list[str] = sorted(VALID_TASK_NAMES)

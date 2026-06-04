@@ -257,10 +257,10 @@ class WeStockProvider(BaseProvider):
             change = last_val - prev_close
         return {
             "symbol": symbol,
-            "price": last_val if last_val != "" else None,
+            "price": last_val if isinstance(last_val, (int, float)) else None,
             "change": change,
             "change_pct": _try_number(raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))),
-            "open": open_val if open_val != "" else None,
+            "open": open_val if isinstance(open_val, (int, float)) else None,
             "high": _try_number(raw.get("high", "")),
             "low": _try_number(raw.get("low", "")),
             "prev_close": prev_close,

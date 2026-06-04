@@ -159,7 +159,7 @@ async def test_neodata_client_query_retries_on_auth_error(
 
     with (
         patch("backend.collectors.neodata_client._TOKEN_FILE", cache_file),
-        patch.dict("os.environ", {"NEODATA_TOKEN": "env_fallback_tok"}),
+        patch.dict("os.environ", {"NEODATA_TOKEN": "different_env_tok"}),
     ):
         client = NeoDataClient(endpoint="https://example.com/api")
         client._client = mock_client
