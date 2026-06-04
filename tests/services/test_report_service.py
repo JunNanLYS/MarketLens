@@ -181,7 +181,7 @@ class TestReportServiceLatest:
         assert isinstance(report["key_risks"], list)
         assert isinstance(report["data_used"], list)
 
-    def test_no_report(self, tmp_db: Path) -> None:
+    async def test_no_report(self, tmp_db: Path) -> None:
         report = ReportService.get_latest_report("hk00001")
         assert report is None
 
@@ -197,7 +197,7 @@ class TestReportServiceHistory:
         assert len(history) == 1
         assert history[0]["symbol"] == "hk00700"
 
-    def test_no_history(self, tmp_db: Path) -> None:
+    async def test_no_history(self, tmp_db: Path) -> None:
         history = ReportService.get_report_history("hk00001")
         assert len(history) == 0
 

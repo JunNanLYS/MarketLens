@@ -325,33 +325,33 @@ async def test_get_technical(service: CollectionService) -> None:
     assert tech["rsi6"] == 62.3
 
 
-def test_get_quote_no_data(service: CollectionService) -> None:
+async def test_get_quote_no_data(service: CollectionService) -> None:
     result = service.get_quote("nonexistent")
     assert result is None
 
 
-def test_get_quote_history_no_data(service: CollectionService) -> None:
+async def test_get_quote_history_no_data(service: CollectionService) -> None:
     result = service.get_quote_history("nonexistent")
     assert result == []
 
 
-def test_get_kline_no_data(service: CollectionService) -> None:
+async def test_get_kline_no_data(service: CollectionService) -> None:
     result = service.get_kline("nonexistent")
     assert result == []
 
 
-def test_get_finance_no_data(service: CollectionService) -> None:
+async def test_get_finance_no_data(service: CollectionService) -> None:
     result = service.get_finance("nonexistent")
     assert result == []
 
 
-def test_get_fund_flow_no_data(service: CollectionService) -> None:
+async def test_get_fund_flow_no_data(service: CollectionService) -> None:
     result = service.get_fund_flow("nonexistent")
     assert result["items"] == []
     assert result["summary"]["trend"] == "无数据"
 
 
-def test_get_technical_no_data(service: CollectionService) -> None:
+async def test_get_technical_no_data(service: CollectionService) -> None:
     result = service.get_technical("nonexistent")
     assert result is None
 

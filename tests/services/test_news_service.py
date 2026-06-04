@@ -185,7 +185,7 @@ async def test_collect_news_neodata_failure_no_crash() -> None:
     assert result["collected"] == 0
 
 
-def test_get_news_pagination() -> None:
+async def test_get_news_pagination() -> None:
     for i in range(5):
         with get_db() as conn:
             conn.execute(
@@ -210,7 +210,7 @@ def test_get_news_pagination() -> None:
     assert result["page_info"]["total_pages"] == 3
 
 
-def test_get_news_filter_by_symbol() -> None:
+async def test_get_news_filter_by_symbol() -> None:
     with get_db() as conn:
         conn.execute(
             """INSERT INTO news_items (title, source, url, published_at, sentiment, importance, related_symbols, collected_at)
@@ -247,7 +247,7 @@ def test_get_news_filter_by_symbol() -> None:
     assert result["items"][0]["related_symbols"] == ["hk00700"]
 
 
-def test_get_news_filter_by_sentiment() -> None:
+async def test_get_news_filter_by_sentiment() -> None:
     with get_db() as conn:
         conn.execute(
             """INSERT INTO news_items (title, source, url, published_at, sentiment, importance, related_symbols, collected_at)
@@ -284,7 +284,7 @@ def test_get_news_filter_by_sentiment() -> None:
     assert result["items"][0]["sentiment"] == "positive"
 
 
-def test_get_news_filter_by_source() -> None:
+async def test_get_news_filter_by_source() -> None:
     with get_db() as conn:
         conn.execute(
             """INSERT INTO news_items (title, source, url, published_at, sentiment, importance, related_symbols, collected_at)
@@ -321,7 +321,7 @@ def test_get_news_filter_by_source() -> None:
     assert result["items"][0]["source"] == "sina_rss"
 
 
-def test_get_news_by_id() -> None:
+async def test_get_news_by_id() -> None:
     with get_db() as conn:
         cursor = conn.execute(
             """INSERT INTO news_items (title, source, url, content, published_at, sentiment, importance, related_symbols, collected_at)
@@ -348,13 +348,13 @@ def test_get_news_by_id() -> None:
     assert result["related_symbols"] == ["hk00700"]
 
 
-def test_get_news_by_id_not_found() -> None:
+async def test_get_news_by_id_not_found() -> None:
     service = NewsService(news_providers=[])
     result = service.get_news_by_id(999)
     assert result is None
 
 
-def test_get_news_empty() -> None:
+async def test_get_news_empty() -> None:
     service = NewsService(news_providers=[])
     result = service.get_news()
     assert result["items"] == []
@@ -382,21 +382,21 @@ async def test_collect_news_run_logs() -> None:
     assert row["finished_at"] is not None
 
 
-def test_match_symbols_by_symbol_code() -> None:
+async def test_match_symbols_by_symbol_code() -> None:
     _insert_asset("hk00700", "腾讯控股")
     service = NewsService(news_providers=[])
     matched = service._match_symbols("hk00700 发布财报")
     assert "hk00700" in matched
 
 
-def test_match_symbols_by_tags() -> None:
+async def test_match_symbols_by_tags() -> None:
     _insert_asset("hk00700", "腾讯控股", tags="互联网,AI概念")
     service = NewsService(news_providers=[])
     matched = service._match_symbols("AI概念板块大涨")
     assert "hk00700" in matched
 
 
-def test_match_symbols_by_content() -> None:
+async def test_match_symbols_by_content() -> None:
     _insert_asset("hk00700", "腾讯控股")
     service = NewsService(news_providers=[])
     matched = service._match_symbols("市场动态", content="腾讯控股今日表现亮眼")

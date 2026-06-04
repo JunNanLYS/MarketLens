@@ -16,27 +16,27 @@ def db_path() -> str:
     Path(path).unlink(missing_ok=True)
 
 
-def test_get_connection_sync(db_path: str) -> None:
+async def test_get_connection_sync(db_path: str) -> None:
     conn = get_connection_sync(db_path)
     assert isinstance(conn, sqlite3.Connection)
     conn.close()
 
 
-def test_pragma_journal_mode(db_path: str) -> None:
+async def test_pragma_journal_mode(db_path: str) -> None:
     conn = get_connection_sync(db_path)
     result = conn.execute("PRAGMA journal_mode").fetchone()[0]
     assert result == "wal"
     conn.close()
 
 
-def test_pragma_foreign_keys(db_path: str) -> None:
+async def test_pragma_foreign_keys(db_path: str) -> None:
     conn = get_connection_sync(db_path)
     result = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     assert result == 1
     conn.close()
 
 
-def test_get_db_commit(db_path: str) -> None:
+async def test_get_db_commit(db_path: str) -> None:
     init_db(db_path)
     with get_db(db_path) as conn:
         conn.execute(
@@ -51,7 +51,7 @@ def test_get_db_commit(db_path: str) -> None:
         assert row["symbol"] == "sh600000"
 
 
-def test_get_db_rollback(db_path: str) -> None:
+async def test_get_db_rollback(db_path: str) -> None:
     init_db(db_path)
     with pytest.raises(ValueError):
         with get_db(db_path) as conn:
@@ -67,7 +67,7 @@ def test_get_db_rollback(db_path: str) -> None:
         assert row is None
 
 
-def test_get_db_auto_close(db_path: str) -> None:
+async def test_get_db_auto_close(db_path: str) -> None:
     with get_db(db_path) as conn:
         assert conn.total_changes >= 0
     with pytest.raises(sqlite3.ProgrammingError):
