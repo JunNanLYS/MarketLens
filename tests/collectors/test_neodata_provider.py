@@ -1,4 +1,4 @@
-﻿from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from backend.collectors.neodata import NeoDataProvider
@@ -6,12 +6,20 @@ from backend.collectors.neodata import NeoDataProvider
 
 @pytest.fixture
 async def provider() -> NeoDataProvider:
-    return NeoDataProvider(
+    """创建 NeoDataProvider；首次访问 _client 时再注入 AsyncMock。"""
+    p = NeoDataProvider(
         name="neodata",
         timeout=30,
         params={"endpoint": "https://example.com/api", "token": "test_token"},
         optional=True,
     )
+    return p
+
+
+def _inject_query(provider: NeoDataProvider, mock_obj: object) -> None:
+    """将 mock 对象注入 provider._client.query，绕过懒加载。"""
+    provider._client = MagicMock()
+    provider._client.query = mock_obj
 
 
 async def test_search_parses_entities(provider: NeoDataProvider) -> None:
@@ -28,8 +36,10 @@ async def test_search_parses_entities(provider: NeoDataProvider) -> None:
             }
         }
     }
-    with patch.object(provider._client, "query", return_value=mock_result):
-        result = await provider.search("腾讯")
+    mock_query = AsyncMock(return_value=mock_result)
+    _inject_query(provider, mock_query)
+
+    result = await provider.search("腾讯")
 
     assert len(result) == 5
     assert result[0]["symbol"] == "00700.HK"
@@ -45,12 +55,16 @@ async def test_search_parses_entities(provider: NeoDataProvider) -> None:
 
 
 async def test_search_returns_empty_on_failure(provider: NeoDataProvider) -> None:
-    with patch.object(provider._client, "query", return_value=None):
-        result = await provider.search("腾讯")
+    mock_query = AsyncMock(return_value=None)
+    _inject_query(provider, mock_query)
+
+    result = await provider.search("腾讯")
     assert result == []
 
-    with patch.object(provider._client, "query", side_effect=Exception("boom")):
-        result = await provider.search("腾讯")
+    mock_query = AsyncMock(side_effect=Exception("boom"))
+    _inject_query(provider, mock_query)
+
+    result = await provider.search("腾讯")
     assert result == []
 
 
@@ -67,7 +81,7 @@ async def test_quote_parses_basic_info(provider: NeoDataProvider) -> None:
         "成交额": "57亿",
     }
 
-    async def mock_query(query_text, data_type="all"):
+    async def mock_query(query_text: str, data_type: str = "all") -> dict:
         return {
             "data": {
                 "apiData": {
@@ -81,8 +95,10 @@ async def test_quote_parses_basic_info(provider: NeoDataProvider) -> None:
             }
         }
 
-    with patch.object(provider._client, "query", side_effect=mock_query):
-        result = await provider.quote(["00700.HK"])
+    mock_query_obj = AsyncMock(side_effect=mock_query)
+    _inject_query(provider, mock_query_obj)
+
+    result = await provider.quote(["00700.HK"])
 
     assert len(result) == 1
     item = result[0]
@@ -100,8 +116,10 @@ async def test_quote_parses_basic_info(provider: NeoDataProvider) -> None:
 
 
 async def test_quote_skips_symbol_on_failure(provider: NeoDataProvider) -> None:
-    with patch.object(provider._client, "query", return_value=None):
-        result = await provider.quote(["00700.HK", "TCEHY.US"])
+    mock_query = AsyncMock(return_value=None)
+    _inject_query(provider, mock_query)
+
+    result = await provider.quote(["00700.HK", "TCEHY.US"])
     assert result == []
 
 
@@ -124,7 +142,7 @@ async def test_finance_parses_basic_info(provider: NeoDataProvider) -> None:
         "净利率": "27.8%",
     }
 
-    async def mock_query(query_text, data_type="all"):
+    async def mock_query(query_text: str, data_type: str = "all") -> dict:
         return {
             "data": {
                 "apiData": {
@@ -138,8 +156,10 @@ async def test_finance_parses_basic_info(provider: NeoDataProvider) -> None:
             }
         }
 
-    with patch.object(provider._client, "query", side_effect=mock_query):
-        result = await provider.finance("00700.HK")
+    mock_query_obj = AsyncMock(side_effect=mock_query)
+    _inject_query(provider, mock_query_obj)
+
+    result = await provider.finance("00700.HK")
 
     assert result["report_period"] == "2025Q1"
     assert result["revenue"] == 1800.0
@@ -161,7 +181,7 @@ async def test_fund_flow_parses_basic_info(provider: NeoDataProvider) -> None:
         "净流入占比": "2.1%",
     }
 
-    async def mock_query(query_text, data_type="all"):
+    async def mock_query(query_text: str, data_type: str = "all") -> dict:
         return {
             "data": {
                 "apiData": {
@@ -175,8 +195,10 @@ async def test_fund_flow_parses_basic_info(provider: NeoDataProvider) -> None:
             }
         }
 
-    with patch.object(provider._client, "query", side_effect=mock_query):
-        result = await provider.fund_flow("00700.HK")
+    mock_query_obj = AsyncMock(side_effect=mock_query)
+    _inject_query(provider, mock_query_obj)
+
+    result = await provider.fund_flow("00700.HK")
 
     assert result["main_net_inflow"] == 3.5
     assert result["net_inflow_ratio"] == 2.1
@@ -216,8 +238,10 @@ async def test_fetch_news_parses_doc_data(provider: NeoDataProvider) -> None:
         }
     }
 
-    with patch.object(provider._client, "query", return_value=mock_result):
-        result = await provider.fetch_news(symbols=["00700.HK"])
+    mock_query = AsyncMock(return_value=mock_result)
+    _inject_query(provider, mock_query)
+
+    result = await provider.fetch_news(symbols=["00700.HK"])
 
     assert len(result) == 2
     assert result[0]["title"] == "腾讯发布Q1财报"
@@ -271,10 +295,10 @@ async def test_fetch_news_deduplicates_by_url(provider: NeoDataProvider) -> None
         }
     }
 
-    with patch.object(
-        provider._client, "query", side_effect=[mock_result_1, mock_result_2]
-    ):
-        result = await provider.fetch_news(symbols=["00700.HK", "TCEHY.US"])
+    mock_query = AsyncMock(side_effect=[mock_result_1, mock_result_2])
+    _inject_query(provider, mock_query)
+
+    result = await provider.fetch_news(symbols=["00700.HK", "TCEHY.US"])
 
     assert len(result) == 1
     assert result[0]["title"] == "腾讯发布Q1财报"
@@ -283,6 +307,8 @@ async def test_fetch_news_deduplicates_by_url(provider: NeoDataProvider) -> None
 async def test_fetch_news_handles_missing_symbols(provider: NeoDataProvider) -> None:
     assert await provider.fetch_news(symbols=None) == []
 
-    with patch.object(provider._client, "query", return_value=None):
-        result = await provider.fetch_news(symbols=["00700.HK"])
+    mock_query = AsyncMock(return_value=None)
+    _inject_query(provider, mock_query)
+
+    result = await provider.fetch_news(symbols=["00700.HK"])
     assert result == []

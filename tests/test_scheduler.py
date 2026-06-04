@@ -305,20 +305,29 @@ class TestTriggerAPI:
         return TestClient(app)
 
     async def test_trigger_valid_task(self, client: TestClient) -> None:
-        resp = client.post("/api/v1/tasks/trigger/quote")
+        resp = client.post(
+            "/api/v1/tasks/trigger/quote",
+            headers={"X-API-Key": "marketlens-local"},
+        )
         assert resp.status_code == 202
         data = resp.json()
         assert data["task_name"] == "quote"
         assert data["status"] == "triggered"
 
     async def test_trigger_invalid_task(self, client: TestClient) -> None:
-        resp = client.post("/api/v1/tasks/trigger/nonexistent")
+        resp = client.post(
+            "/api/v1/tasks/trigger/nonexistent",
+            headers={"X-API-Key": "marketlens-local"},
+        )
         assert resp.status_code == 404
         data = resp.json()
         assert data["error"] == "TASK_NOT_FOUND"
 
     async def test_trigger_all_valid_tasks(self, client: TestClient) -> None:
         for name in VALID_TASK_NAMES:
-            resp = client.post(f"/api/v1/tasks/trigger/{name}")
+            resp = client.post(
+                f"/api/v1/tasks/trigger/{name}",
+                headers={"X-API-Key": "marketlens-local"},
+            )
             assert resp.status_code == 202
             assert resp.json()["status"] == "triggered"

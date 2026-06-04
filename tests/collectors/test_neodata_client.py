@@ -179,17 +179,16 @@ async def test_neodata_client_query_returns_none_on_retry_failure(
     auth_resp.json.return_value = {"code": "40101", "msg": "token expired"}
     auth_resp.raise_for_status = MagicMock()
 
-    mock_client = MagicMock()
+    # 异步客户端：两次 post 都返回 401，触发 _is_auth_error → 走到 retry → 重试仍 401 → 第三次仍是 401 → 最终返回 None
+    mock_client = AsyncMock()
     mock_client.post.return_value = auth_resp
-    mock_client.__enter__ = MagicMock(return_value=mock_client)
-    mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
         patch("backend.collectors.neodata_client._TOKEN_FILE", cache_file),
-        patch("backend.collectors.neodata_client.httpx.Client", return_value=mock_client),
         patch.dict("os.environ", {"NEODATA_TOKEN": "env_fallback_tok"}),
     ):
         client = NeoDataClient(endpoint="https://example.com/api")
+        client._client = mock_client
         result = await client.query("test query")
 
     assert result is None

@@ -54,6 +54,10 @@ async def test_save_token_success(test_client: TestClient, mock_client: MagicMoc
 async def test_save_token_empty_returns_400(
     test_client: TestClient, mock_client: MagicMock
 ) -> None:
-    resp = test_client.post("/api/v1/neodata/token", json={"token": ""})
+    resp = test_client.post(
+        "/api/v1/neodata/token",
+        json={"token": ""},
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 422
     mock_client.save_token.assert_not_called()
