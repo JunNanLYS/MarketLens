@@ -1,11 +1,4 @@
-"""Multi-search engine news provider.
-
-利用多搜索引擎搜索财经新闻，无需 API Key。
-默认使用 DuckDuckGo（无需 API Key），也可配置其他引擎。
-"""
-
-import re
-from datetime import datetime, timezone
+﻿import re
 from html.parser import HTMLParser
 from urllib.parse import quote_plus
 
@@ -16,8 +9,6 @@ from backend.collectors.base import BaseProvider
 
 
 class _LinkExtractor(HTMLParser):
-    """从 HTML 中提取链接和标题。"""
-
     def __init__(self):
         super().__init__()
         self.results = []
@@ -54,12 +45,8 @@ class _LinkExtractor(HTMLParser):
 
 
 class SearchEngineNewsProvider(BaseProvider):
-    """多搜索引擎新闻提供者。
+    """多搜索引擎新闻提供者（异步版）。"""
 
-    搜索财经新闻，支持配置多个搜索引擎。
-    """
-
-    # 默认搜索引擘配置
     DEFAULT_ENGINES = {
         "duckduckgo": {
             "url": "https://duckduckgo.com/html/?q={keyword}",
@@ -82,14 +69,31 @@ class SearchEngineNewsProvider(BaseProvider):
         self._primary = self.params.get("primary_engine", "duckduckgo") if params else "duckduckgo"
         self._keywords = self.params.get("keywords", []) if params else []
         self._max_items = int(self.params.get("max_items", 30)) if params else 30
-        self._client = httpx.Client(timeout=self.timeout, follow_redirects=True)
+        # 懒加载 httpx.AsyncClient：见 rss.py 同类注释
+        self._client: httpx.AsyncClient | None = None
+        self._client_headers: dict[str, str] = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+    async def _get_client(self) -> httpx.AsyncClient:
+        """首次使用时创建 httpx 客户端，后续复用。"""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+                headers=self._client_headers,
+            )
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
 
     def _build_query(self, base_keywords: list[str] | None = None) -> str:
-        """构建搜索关键词。"""
         parts = []
         if base_keywords:
             parts.extend(base_keywords)
@@ -99,19 +103,14 @@ class SearchEngineNewsProvider(BaseProvider):
             parts = ["\u8d22\u7ecf", "\u80a1\u5e02", "\u6295\u8d44"]
         return " ".join(parts)
 
-    def _fetch_engine(self, engine_name: str, keyword: str) -> list[dict]:
-        """从指定搜索引擎获取结果。"""
+    async def _fetch_engine(self, engine_name: str, keyword: str) -> list[dict]:
         engine = self._engines.get(engine_name)
         if not engine:
             return []
         url = engine["url"].replace("{keyword}", quote_plus(keyword))
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        }
         try:
-            resp = self._client.get(url, headers=headers)
+            client = await self._get_client()
+            resp = await client.get(url)
             resp.raise_for_status()
             extractor = _LinkExtractor()
             extractor.feed(resp.text)
@@ -128,41 +127,39 @@ class SearchEngineNewsProvider(BaseProvider):
                     "importance": "normal",
                     "collected_at": self._now(),
                 })
-            logger.info("{} \u641c\u7d22\u5230 {} \u6761\u7ed3\u679c", engine.get("name"), len(results))
+            logger.info("{} 搜索到 {} 条结果", engine.get("name"), len(results))
             return results
         except httpx.TimeoutException:
-            logger.warning("{} \u8d85\u65f6", engine.get("name"))
+            logger.warning("{} 超时", engine.get("name"))
             return []
         except httpx.HTTPStatusError as e:
-            logger.warning("{} HTTP \u9519\u8bef: {}", engine.get("name"), e.response.status_code)
+            logger.warning("{} HTTP 错误: {}", engine.get("name"), e.response.status_code)
             return []
         except Exception as e:
-            logger.warning("{} \u5f02\u5e38: {}", engine.get("name"), e)
+            logger.warning("{} 异常: {}", engine.get("name"), e)
             return []
 
-    def fetch_news(self, keywords: list[str] | None = None) -> list[dict]:
-        """搜索财经新闻。"""
+    async def fetch_news(self, keywords: list[str] | None = None) -> list[dict]:
         query = self._build_query(keywords)
-        results = self._fetch_engine(self._primary, query)
+        results = await self._fetch_engine(self._primary, query)
         if not results:
-            # \u5907\u7528\u5f15\u64ce
             for name in self._engines:
                 if name != self._primary:
-                    results = self._fetch_engine(name, query)
+                    results = await self._fetch_engine(name, query)
                     if results:
                         break
         return results
 
-    def search(self, keyword: str) -> list[dict]:
-        return self.fetch_news([keyword])
+    async def search(self, keyword: str) -> list[dict]:
+        return await self.fetch_news([keyword])
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         return []
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         return []
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         return {}
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         return {}
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         return {}

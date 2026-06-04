@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 
 class BaseProvider(ABC):
-    """数据采集提供者抽象基类，所有 Provider 必须实现统一接口。"""
+    """数据采集提供者抽象基类（异步版）。"""
 
     def __init__(
         self,
@@ -16,20 +16,29 @@ class BaseProvider(ABC):
         self.params = params or {}
         self.optional = optional
 
-    @abstractmethod
-    def search(self, keyword: str) -> list[dict]: ...
+    @staticmethod
+    def _now() -> str:
+        """返回当前 UTC 时间的 ISO 格式字符串。"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
+
+    async def close(self) -> None:
+        """关闭底层连接（默认空操作，子类可按需覆盖）。"""
 
     @abstractmethod
-    def quote(self, symbols: list[str]) -> list[dict]: ...
+    async def search(self, keyword: str) -> list[dict]: ...
 
     @abstractmethod
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]: ...
+    async def quote(self, symbols: list[str]) -> list[dict]: ...
 
     @abstractmethod
-    def finance(self, symbol: str) -> dict: ...
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]: ...
 
     @abstractmethod
-    def fund_flow(self, symbol: str) -> dict: ...
+    async def finance(self, symbol: str) -> dict: ...
 
     @abstractmethod
-    def technical(self, symbol: str) -> dict: ...
+    async def fund_flow(self, symbol: str) -> dict: ...
+
+    @abstractmethod
+    async def technical(self, symbol: str) -> dict: ...
