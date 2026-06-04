@@ -14,7 +14,6 @@ env/
 data/*.db
 data/*.sqlite3
 .uv/
-uv.lock
 .trae/
 *.log
 .DS_Store
