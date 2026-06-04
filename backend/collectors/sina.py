@@ -9,7 +9,7 @@ from backend.collectors.base import BaseProvider
 
 
 class SinaProvider(BaseProvider):
-    """通过新浪财经 HTTP 接口获取行情、K线、财务、资金流向数据。"""
+    """通过新浪财经 HTTP 接口获取行情、K线、财务、资金流向数据（异步版）。"""
 
     def __init__(
         self,
@@ -20,6 +20,27 @@ class SinaProvider(BaseProvider):
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.quote_url: str = self.params.get("quote_url", "https://hq.sinajs.cn/list={codes}")
+        # 懒加载 httpx.AsyncClient：见 rss.py 同类注释
+        self._client: httpx.AsyncClient | None = None
+        self._client_headers: dict[str, str] = {
+            "Referer": "https://finance.sina.com.cn",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """首次使用时创建 httpx 客户端，后续复用。"""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+                headers=self._client_headers,
+            )
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     @staticmethod
     def _to_sina_code(symbol: str) -> str:
@@ -69,23 +90,20 @@ class SinaProvider(BaseProvider):
             return None
 
     # ------------------------------------------------------------------
-    # Provider 接口实现
+    # Provider 接口实现（异步版）
     # ------------------------------------------------------------------
 
-    def search(self, keyword: str) -> list[dict]:
+    async def search(self, keyword: str) -> list[dict]:
         return []
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         if not symbols:
             return []
         codes = ",".join(self._to_sina_code(s) for s in symbols)
         url = self.quote_url.replace("{codes}", codes)
-        headers = {
-            "Referer": "https://finance.sina.com.cn",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
         try:
-            resp = httpx.get(url, headers=headers, timeout=self.timeout)
+            client = await self._get_client()
+            resp = await client.get(url)
             resp.raise_for_status()
             return self._parse_quote(resp.text)
         except httpx.TimeoutException:
@@ -100,7 +118,9 @@ class SinaProvider(BaseProvider):
 
     def _parse_quote(self, text: str) -> list[dict]:
         results: list[dict] = []
-        pattern = re.compile(r'var hq_str_(s[hz]\d+)="(.+?)"')
+        # 行情代码前缀集合需与 _to_sina_code 支持的范围保持一致：
+        # sh/sz/bj 沪深京 A 股、hk 港股、us 美股、hf/nf 期货/指数等
+        pattern = re.compile(r"var hq_str_((?:s[hz]|bj|hk|us|hf|nf|gb)\w*)=\"(.+?)\"")
         for match in pattern.finditer(text):
             code = match.group(1)
             fields = match.group(2).split(",")
@@ -151,7 +171,7 @@ class SinaProvider(BaseProvider):
             "collected_at": self._now(),
         }
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         """通过新浪财经 JSON API 获取日K线数据。
 
         API: CN_MarketData.getKLineData，仅支持 A 股。
@@ -167,13 +187,10 @@ class SinaProvider(BaseProvider):
         params: dict[str, str | int] = {
             "symbol": sina_code, "scale": scale, "ma": "no", "datalen": 60,
         }
-        headers = {
-            "Referer": "https://finance.sina.com.cn",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
 
         try:
-            resp = httpx.get(url, params=params, headers=headers, timeout=self.timeout)
+            client = await self._get_client()
+            resp = await client.get(url, params=params)
             resp.raise_for_status()
             data = resp.json()
             if not isinstance(data, list) or not data:
@@ -190,7 +207,7 @@ class SinaProvider(BaseProvider):
             logger.error("新浪K线请求异常: symbol={}, error={}", symbol, e)
             return []
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         """通过新浪财务摘要页面获取关键财务指标。
 
         抓取 vFD_FinanceSummary 页面，用正则提取：报告期/营收/净利润/EPS/ROE。
@@ -205,13 +222,10 @@ class SinaProvider(BaseProvider):
             f"https://vip.stock.finance.sina.com.cn/corp/go.php/"
             f"vFD_FinanceSummary/stockid/{pure_code}/displaytype/4/"
         )
-        headers = {
-            "Referer": "https://finance.sina.com.cn",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
 
         try:
-            resp = httpx.get(url, headers=headers, timeout=self.timeout, follow_redirects=True)
+            client = await self._get_client()
+            resp = await client.get(url)
             resp.raise_for_status()
             return self._parse_finance_html(symbol, resp.text)
         except httpx.TimeoutException:
@@ -224,7 +238,7 @@ class SinaProvider(BaseProvider):
             logger.error("新浪财务请求异常: symbol={}, error={}", symbol, e)
             return {}
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         """通过新浪资金流向 API 获取主力资金数据。
 
         API: MoneyFlow.ssc_qzzh_js，仅支持 A 股。
@@ -237,13 +251,10 @@ class SinaProvider(BaseProvider):
         prefix = self._market_prefix(sina_code)
         url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssc_qzzh_js"
         params: dict[str, str] = {"daima": f"{prefix}{pure_code}"}
-        headers = {
-            "Referer": "https://finance.sina.com.cn",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
 
         try:
-            resp = httpx.get(url, params=params, headers=headers, timeout=self.timeout)
+            client = await self._get_client()
+            resp = await client.get(url, params=params)
             resp.raise_for_status()
             text = resp.text.strip()
             if not text:
@@ -259,12 +270,12 @@ class SinaProvider(BaseProvider):
             logger.error("新浪资金流向请求异常: symbol={}, error={}", symbol, e)
             return {}
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         """技术指标不在新浪直接获取，由 EvidenceBuilder 从 K 线数据计算。"""
         return {}
 
     # ------------------------------------------------------------------
-    # 数据标准化
+    # 数据标准化（同步）
     # ------------------------------------------------------------------
 
     def _normalize_kline(self, symbol: str, raw: dict) -> dict:

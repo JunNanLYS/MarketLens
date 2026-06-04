@@ -1,14 +1,13 @@
-"""WeStockProvider 扩展方法测试：minute / dividend / shareholder / reserve"""
+﻿"""WeStockProvider 扩展方法测试：minute / dividend / shareholder / reserve"""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from backend.collectors.westock import WeStockProvider
 
 
 @pytest.fixture
-def provider() -> WeStockProvider:
+async def provider() -> WeStockProvider:
     return WeStockProvider(
         name="westock",
         timeout=30,
@@ -20,7 +19,7 @@ def provider() -> WeStockProvider:
 # minute (分时数据)
 # ═══════════════════════════════════════════════════════════════════
 
-def test_minute_success(provider: WeStockProvider) -> None:
+async def test_minute_success(provider: WeStockProvider) -> None:
     stdout = (
         "| time | price | volume | avg_price |\n"
         "| --- | --- | --- | --- |\n"
@@ -29,7 +28,7 @@ def test_minute_success(provider: WeStockProvider) -> None:
     )
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
-        result = provider.minute("sh600519")
+        result = await provider.minute("sh600519")
         assert len(result) == 2
         assert result[0]["time"] == "09:30"
         assert result[0]["price"] == 380.0
@@ -37,14 +36,14 @@ def test_minute_success(provider: WeStockProvider) -> None:
         assert "collected_at" in result[0]
 
 
-def test_minute_empty(provider: WeStockProvider) -> None:
+async def test_minute_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="数据为空", returncode=0)
-        result = provider.minute("sh600519")
+        result = await provider.minute("sh600519")
         assert result == []
 
 
-def test_minute_with_days(provider: WeStockProvider) -> None:
+async def test_minute_with_days(provider: WeStockProvider) -> None:
     stdout = (
         "| time | price | volume | avg_price |\n"
         "| --- | --- | --- | --- |\n"
@@ -52,7 +51,7 @@ def test_minute_with_days(provider: WeStockProvider) -> None:
     )
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
-        result = provider.minute("sh600519", days=5)
+        result = await provider.minute("sh600519", days=5)
         assert len(result) == 1
 
 
@@ -60,7 +59,7 @@ def test_minute_with_days(provider: WeStockProvider) -> None:
 # dividend (分红记录)
 # ═══════════════════════════════════════════════════════════════════
 
-def test_dividend_success(provider: WeStockProvider) -> None:
+async def test_dividend_success(provider: WeStockProvider) -> None:
     stdout = (
         "| ex_dividend_date | CashDiv | BonusShareRatio | recordDate | announceDate |\n"
         "| --- | --- | --- | --- | --- |\n"
@@ -69,7 +68,7 @@ def test_dividend_success(provider: WeStockProvider) -> None:
     )
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
-        result = provider.dividend("sh600519")
+        result = await provider.dividend("sh600519")
         assert len(result) == 2
         assert result[0]["cash_dividend"] == 1.5
         assert result[0]["ex_date"] == "2025-06-15"
@@ -77,10 +76,10 @@ def test_dividend_success(provider: WeStockProvider) -> None:
         assert result[1]["cash_dividend"] == 1.2
 
 
-def test_dividend_empty(provider: WeStockProvider) -> None:
+async def test_dividend_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="数据为空", returncode=0)
-        result = provider.dividend("sz000001")
+        result = await provider.dividend("sz000001")
         assert result == []
 
 
@@ -88,7 +87,7 @@ def test_dividend_empty(provider: WeStockProvider) -> None:
 # shareholder (股东结构)
 # ═══════════════════════════════════════════════════════════════════
 
-def test_shareholder_success(provider: WeStockProvider) -> None:
+async def test_shareholder_success(provider: WeStockProvider) -> None:
     """CLI 返回两个表格：十大股东 + 股东人数变化"""
     stdout_lines = [
         "| rank | HolderName | HoldAmount | HoldPercent |",
@@ -103,7 +102,7 @@ def test_shareholder_success(provider: WeStockProvider) -> None:
     stdout = chr(10).join(stdout_lines)
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
-        result = provider.shareholder("sh600519")
+        result = await provider.shareholder("sh600519")
         assert result["source"] == "westock"
         assert len(result["top_shareholders"]) == 2
         assert result["top_shareholders"][0]["name"] == "AAA"
@@ -112,10 +111,10 @@ def test_shareholder_success(provider: WeStockProvider) -> None:
         assert result["holder_count_history"][0]["total_holders"] == 150000
 
 
-def test_shareholder_empty(provider: WeStockProvider) -> None:
+async def test_shareholder_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="数据为空", returncode=0)
-        result = provider.shareholder("sz000001")
+        result = await provider.shareholder("sz000001")
         assert result == {}
 
 
@@ -123,7 +122,7 @@ def test_shareholder_empty(provider: WeStockProvider) -> None:
 # reserve (业绩预告)
 # ═══════════════════════════════════════════════════════════════════
 
-def test_reserve_success(provider: WeStockProvider) -> None:
+async def test_reserve_success(provider: WeStockProvider) -> None:
     stdout = (
         "| ReportDate | ForcastType | NetProfitLow | NetProfitHigh | ChangeLow | ChangeHigh | Summary |\n"
         "| --- | --- | --- | --- | --- | --- | --- |\n"
@@ -131,7 +130,7 @@ def test_reserve_success(provider: WeStockProvider) -> None:
     )
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
-        result = provider.reserve("sh600519")
+        result = await provider.reserve("sh600519")
         assert result["forecast_type"] == "预增"
         assert result["profit_lower"] == 500000000
         assert result["profit_upper"] == 550000000
@@ -139,10 +138,10 @@ def test_reserve_success(provider: WeStockProvider) -> None:
         assert result["source"] == "westock"
 
 
-def test_reserve_empty(provider: WeStockProvider) -> None:
+async def test_reserve_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="数据为空", returncode=0)
-        result = provider.reserve("sz000001")
+        result = await provider.reserve("sz000001")
         assert result["symbol"] == "sz000001"
         assert result["source"] == "westock"
 
@@ -151,26 +150,26 @@ def test_reserve_empty(provider: WeStockProvider) -> None:
 # 错误路径：CLI 超时等
 # ═══════════════════════════════════════════════════════════════════
 
-def test_minute_error_returns_empty(provider: WeStockProvider) -> None:
+async def test_minute_error_returns_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.side_effect = OSError("npx not found")
-        assert provider.minute("sh600519") == []
+        assert await provider.minute("sh600519") == []
 
 
-def test_dividend_error_returns_empty(provider: WeStockProvider) -> None:
+async def test_dividend_error_returns_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="", stderr="error", returncode=1)
-        assert provider.dividend("sh600519") == []
+        assert await provider.dividend("sh600519") == []
 
 
-def test_shareholder_error_returns_empty(provider: WeStockProvider) -> None:
+async def test_shareholder_error_returns_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.side_effect = OSError("npx not found")
-        assert provider.shareholder("sh600519") == {}
+        assert await provider.shareholder("sh600519") == {}
 
 
-def test_reserve_error_returns_empty(provider: WeStockProvider) -> None:
+async def test_reserve_error_returns_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.side_effect = OSError("npx not found")
-        result = provider.reserve("sh600519")
+        result = await provider.reserve("sh600519")
         assert result["symbol"] == "sh600519"

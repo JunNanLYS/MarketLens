@@ -7,7 +7,7 @@ from loguru import logger
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
 from backend.storage.database import get_db
-from backend.utils import escape_like
+from backend.utils import build_fund_flow_summary, escape_like
 
 SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut|hf|nf)(\w+)$")
 
@@ -70,7 +70,7 @@ class AssetService:
             result["tags"] = AssetService._tags_to_list(result["tags"])
         return result
 
-    def add_asset(self, data: dict) -> dict:
+    async def add_asset(self, data: dict) -> dict:
         raw_symbol: str = data.get("symbol", "").strip()
         if not raw_symbol:
             raise ValueError("symbol 不能为空")
@@ -88,7 +88,7 @@ class AssetService:
 
         name = data.get("name", "").strip() or None
         if not name:
-            name = self._try_search_name(symbol)
+            name = await self._try_search_name(symbol)
 
         asset_type = data.get("asset_type", "stock") or "stock"
         tags = self._tags_to_str(data.get("tags"))
@@ -147,10 +147,10 @@ class AssetService:
         logger.info("已添加追踪标的: {} ({})", symbol, name)
         return self._row_to_dict(dict(row))
 
-    def _try_search_name(self, symbol: str) -> str:
+    async def _try_search_name(self, symbol: str) -> str:
         for provider in self._get_structured_providers():
             try:
-                results = provider.search(symbol)
+                results = await provider.search(symbol)
                 if results:
                     for item in results:
                         if item.get("symbol", "").lower() == symbol:
@@ -270,12 +270,12 @@ class AssetService:
                 result["finance_summary"] = None
 
             fund_rows = conn.execute(
-                """SELECT date, main_net_inflow FROM fund_flows
+                """SELECT date, main_net_inflow, net_inflow_ratio FROM fund_flows
                    WHERE symbol = ?
                    ORDER BY date DESC LIMIT 5""",
                 (result["symbol"],),
             ).fetchall()
-            result["fund_flow_summary"] = self._build_fund_flow_summary(fund_rows)
+            result["fund_flow_summary"] = build_fund_flow_summary(fund_rows)
 
             report_row = conn.execute(
                 """SELECT action, confidence, generated_at
@@ -326,30 +326,6 @@ class AssetService:
             "trend": trend,
         }
         return summary
-
-    @staticmethod
-    def _build_fund_flow_summary(fund_rows: list[dict]) -> dict | None:
-        if not fund_rows:
-            return None
-
-        net_flow_5d = sum(
-            row["main_net_inflow"] for row in fund_rows if row["main_net_inflow"] is not None
-        )
-
-        inflows = [row for row in fund_rows if row["main_net_inflow"] is not None and row["main_net_inflow"] > 0]
-        outflows = [row for row in fund_rows if row["main_net_inflow"] is not None and row["main_net_inflow"] < 0]
-
-        if len(inflows) >= 3:
-            trend = f"连续 {len(inflows)} 日净流入"
-        elif len(outflows) >= 3:
-            trend = f"连续 {len(outflows)} 日净流出"
-        else:
-            trend = "近 5 日资金流向交替"
-
-        return {
-            "net_flow_5d": net_flow_5d,
-            "trend": trend,
-        }
 
     def update_asset(self, asset_id: int, data: dict) -> dict | None:
         updates: dict[str, Any] = {}
@@ -415,7 +391,7 @@ class AssetService:
             logger.info("已{}标的 ID={}", action, asset_id)
         return affected
 
-    def search_assets(
+    async def search_assets(
         self, keyword: str, market: str | None = None
     ) -> list[dict]:
         results: list[dict] = []
@@ -423,7 +399,7 @@ class AssetService:
 
         for provider in self._get_structured_providers():
             try:
-                items = provider.search(keyword)
+                items = await provider.search(keyword)
                 for item in items:
                     sym = item.get("symbol", "")
                     if sym and sym not in seen_symbols:

@@ -10,7 +10,7 @@
 |---|---|---|---|
 | `GET` | `/assets` | 追踪列表（分页/筛选） | 200 |
 | `POST` | `/assets` | 添加标的 | 201, 400, 409 |
-| `POST` | `/assets/search` | 搜索外部标的 | 200, 400 |
+| `GET` | `/assets/search` | 搜索外部标的 | 200, 400 |
 | `GET` | `/assets/{id}` | 标的详情（聚合行情等） | 200, 404 |
 | `PATCH` | `/assets/{id}` | 部分更新（启用/标签/备注） | 200, 404, 422 |
 | `DELETE` | `/assets/{id}` | 删除标的 | 204, 404 |
@@ -61,7 +61,7 @@ GET /api/v1/assets?market=hk&enabled=true&page=1&page_size=10 HTTP/1.1
 | `symbol` | string | 是 | 代码（含市场前缀），如 `hk00700` |
 | `name` | string | 否 | 名称，留空自动补全 |
 | `market` | string | 否 | 市场，留空从代码前缀推断 |
-| `asset_type | string | 否 | 类型：`stock` / `etf` / `index` / `future`，默认 `stock` |
+| `asset_type` | string | 否 | 类型：`stock` / `etf` / `index` / `future`，默认 `stock` |
 | `tags` | string[] | 否 | 标签列表 |
 | `notes` | string | 否 | 备注 |
 
@@ -126,13 +126,10 @@ Location: /api/v1/assets/1
 
 ---
 
-## `POST /assets/search` — 搜索外部标的
+## `GET /assets/search` — 搜索外部标的
 
 ```http
-POST /api/v1/assets/search HTTP/1.1
-Content-Type: application/json
-
-{ "keyword": "腾讯", "market": "hk" }
+GET /api/v1/assets/search?keyword=腾讯&market=hk HTTP/1.1
 ```
 
 <details>

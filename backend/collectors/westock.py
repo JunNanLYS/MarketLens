@@ -1,4 +1,6 @@
+﻿import asyncio
 import re
+import shlex
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -16,6 +18,9 @@ _PERIOD_MAP: dict[str, str] = {
 
 _A_SHARE_PREFIXES: tuple[str, ...] = ("sh", "sz", "bj")
 
+# 行情并发采集上限：避免对下游 CLI 同时发起过多请求
+_QUOTE_CONCURRENCY: int = 5
+
 
 def _parse_markdown_tables(text: str) -> list[list[dict[str, str]]]:
     tables: list[list[dict[str, str]]] = []
@@ -25,20 +30,16 @@ def _parse_markdown_tables(text: str) -> list[list[dict[str, str]]]:
 
     while i < n:
         line = lines[i].strip()
-
         if not line.startswith("|") or _is_separator(line):
             i += 1
             continue
-
         header = [h.strip() for h in line.split("|")[1:-1]]
         if not header:
             i += 1
             continue
-
         if i + 1 < n and _is_separator(lines[i + 1].strip()):
             i += 2
             rows: list[dict[str, str]] = []
-
             while i < n:
                 row_line = lines[i].strip()
                 if not row_line.startswith("|"):
@@ -48,13 +49,10 @@ def _parse_markdown_tables(text: str) -> list[list[dict[str, str]]]:
                     break
                 rows.append(dict(zip(header, cells)))
                 i += 1
-
             if rows:
                 tables.append(rows)
             continue
-
         i += 1
-
     return tables
 
 
@@ -65,7 +63,6 @@ def _is_separator(line: str) -> bool:
 def _detect_error(text: str) -> str | None:
     if not text.strip():
         return "CLI 返回空输出"
-
     patterns: list[tuple[str, str]] = [
         (r"数据为空", "未找到匹配数据"),
         (r"命令\s+\"[^\"]+\"\s+在当前渠道不可用", "该命令在当前渠道不可用"),
@@ -105,25 +102,19 @@ class WeStockProvider(BaseProvider):
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.command: str = self.params.get("command", "npx -y westock-data-clawhub@1.0.4")
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
-
-    @staticmethod
-    def _check_node() -> bool:
-        return shutil.which("node") is not None
-
-    def _run_cli(self, args: str) -> tuple[list[list[dict[str, str]]], str | None]:
-        cmd_parts = self.command.split() + args.split()
-        # Windows: resolve executable via shutil.which for .cmd/.exe extensions
+    async def _run_cli(self, args: str) -> tuple[list[list[dict[str, str]]], str | None]:
+        # 使用 shlex 解析 self.command，正确处理带引号/空格的复杂命令
+        cmd_parts = shlex.split(self.command) + args.split()
         exe = shutil.which(cmd_parts[0])
         if exe:
             cmd_parts[0] = exe
 
+        # 通过 subprocess.run（模块级引用，便于测试 mock）调用 CLI，
+        # 并用 asyncio.to_thread 避免阻塞事件循环
         try:
-            result = subprocess.run(
+            proc = await asyncio.to_thread(
+                subprocess.run,
                 cmd_parts,
-                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
@@ -135,17 +126,17 @@ class WeStockProvider(BaseProvider):
             logger.error("WeStock CLI 异常: cmd={}, error={}", cmd_parts, e)
             return [], str(e)
 
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
 
         error = _detect_error(stdout)
         if error:
             logger.warning("WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, error)
             return [], error
 
-        if result.returncode != 0:
-            msg = stderr.strip() or stdout.strip()[:200] or f"exit code {result.returncode}"
-            logger.warning("WeStock CLI 非零退出: cmd={}, rc={}, msg={}", cmd_parts, result.returncode, msg)
+        if proc.returncode != 0:
+            msg = stderr.strip() or stdout.strip()[:200] or f"exit code {proc.returncode}"
+            logger.warning("WeStock CLI 非零退出: cmd={}, rc={}, msg={}", cmd_parts, proc.returncode, msg)
             return [], msg
 
         tables = _parse_markdown_tables(stdout)
@@ -154,33 +145,37 @@ class WeStockProvider(BaseProvider):
 
         return tables, None
 
-    def search(self, keyword: str) -> list[dict]:
-        tables, err = self._run_cli(f"search {keyword}")
+    async def search(self, keyword: str) -> list[dict]:
+        tables, err = await self._run_cli(f"search {keyword}")
         if err or not tables:
             return []
         rows = tables[0]
         return [
-            {
-                "code": r.get("code", ""),
-                "name": r.get("name", ""),
-                "type": r.get("type", ""),
-            }
+            {"code": r.get("code", ""), "name": r.get("name", ""), "type": r.get("type", "")}
             for r in rows
         ]
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
+        if not symbols:
+            return []
+        semaphore = asyncio.Semaphore(_QUOTE_CONCURRENCY)
+
+        async def _fetch_one(sym: str) -> list[dict]:
+            async with semaphore:
+                tables, err = await self._run_cli(f"kline {sym} --period day --limit 1")
+                if err or not tables:
+                    return []
+                return [self._normalize_quote(row, sym) for row in tables[0]]
+
+        nested = await asyncio.gather(*(_fetch_one(s) for s in symbols))
         results: list[dict] = []
-        for sym in symbols:
-            tables, err = self._run_cli(f"kline {sym} --period day --limit 1")
-            if err or not tables:
-                continue
-            for row in tables[0]:
-                results.append(self._normalize_quote(row, sym))
+        for chunk in nested:
+            results.extend(chunk)
         return results
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         cli_period = _PERIOD_MAP.get(period, "day")
-        tables, err = self._run_cli(f"kline {symbol} --period {cli_period} --limit 60")
+        tables, err = await self._run_cli(f"kline {symbol} --period {cli_period} --limit 60")
         if err or not tables:
             return []
         results: list[dict] = []
@@ -188,29 +183,29 @@ class WeStockProvider(BaseProvider):
             results.append(self._normalize_kline(row, symbol))
         return results
 
-    def finance(self, symbol: str) -> dict:
-        tables, err = self._run_cli(f"finance {symbol}")
+    async def finance(self, symbol: str) -> dict:
+        tables, err = await self._run_cli(f"finance {symbol}")
         if err or not tables:
             return {}
         return self._normalize_finance(tables, symbol)
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         fund_cmd = self._fund_flow_cmd(symbol)
-        tables, err = self._run_cli(f"{fund_cmd} {symbol}")
+        tables, err = await self._run_cli(f"{fund_cmd} {symbol}")
         if err or not tables:
             return {}
         row = tables[0][0] if tables[0] else {}
         return self._normalize_fund_flow(row, symbol)
 
-    def technical(self, symbol: str) -> dict:
-        tables, err = self._run_cli(f"technical {symbol}")
+    async def technical(self, symbol: str) -> dict:
+        tables, err = await self._run_cli(f"technical {symbol}")
         if err or not tables:
             return {}
         row = tables[0][0] if tables[0] else {}
         return self._normalize_technical(row, symbol)
 
-    def fetch_news(self) -> list[dict]:
-        tables, err = self._run_cli("hot news --limit 50")
+    async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
+        tables, err = await self._run_cli("hot news --limit 50")
         if err or not tables:
             return []
         items: list[dict] = []
@@ -245,21 +240,26 @@ class WeStockProvider(BaseProvider):
             })
         return items
 
+    # ------------------------------------------------------------------
+    # 标准化方法（同步）
+    # ------------------------------------------------------------------
+
     def _normalize_quote(self, raw: dict, symbol: str) -> dict:
         last_val = _try_number(raw.get("last", ""))
         open_val = _try_number(raw.get("open", ""))
-        prev_close = None
-        if isinstance(last_val, (int, float)) and isinstance(open_val, (int, float)):
-            prev_close = open_val
+        prev_close = _try_number(raw.get("prev_close", raw.get("pre_close", raw.get("settlement"))))
+        if prev_close is None:
+            change_val = _try_number(raw.get("change", raw.get("chg", "")))
+            if isinstance(last_val, (int, float)) and isinstance(change_val, (int, float)):
+                prev_close = last_val - change_val
         change = None
         if isinstance(prev_close, (int, float)) and isinstance(last_val, (int, float)):
             change = last_val - prev_close
-
         return {
             "symbol": symbol,
             "price": last_val if last_val != "" else None,
             "change": change,
-            "change_pct": _try_number(raw.get("exchange", "")),
+            "change_pct": _try_number(raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))),
             "open": open_val if open_val != "" else None,
             "high": _try_number(raw.get("high", "")),
             "low": _try_number(raw.get("low", "")),
@@ -284,7 +284,7 @@ class WeStockProvider(BaseProvider):
             "close": _try_number(raw.get("last", "")),
             "volume": _try_number(raw.get("volume", "")),
             "amount": _try_number(raw.get("amount", "")),
-            "change_pct": _try_number(raw.get("exchange", "")),
+            "change_pct": _try_number(raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))),
             "source": "westock",
             "collected_at": self._now(),
         }
@@ -388,14 +388,12 @@ class WeStockProvider(BaseProvider):
             return "usfund"
         return "asfund"
 
-
     # ------------------------------------------------------------------
-    # 扩展方法（不在 BaseProvider 接口中，WeStock 特有）
+    # 扩展方法（异步版）
     # ------------------------------------------------------------------
 
-    def minute(self, symbol: str, days: int = 1) -> list[dict]:
-        """获取分时数据。"""
-        tables, err = self._run_cli(f"minute {symbol} --days {days}")
+    async def minute(self, symbol: str, days: int = 1) -> list[dict]:
+        tables, err = await self._run_cli(f"minute {symbol} --days {days}")
         if err or not tables:
             return []
         results: list[dict] = []
@@ -403,9 +401,8 @@ class WeStockProvider(BaseProvider):
             results.append(self._normalize_minute_row(row, symbol))
         return results
 
-    def dividend(self, symbol: str) -> list[dict]:
-        """获取分红记录列表。"""
-        tables, err = self._run_cli(f"dividend {symbol}")
+    async def dividend(self, symbol: str) -> list[dict]:
+        tables, err = await self._run_cli(f"dividend {symbol}")
         if err or not tables:
             return []
         results: list[dict] = []
@@ -413,22 +410,20 @@ class WeStockProvider(BaseProvider):
             results.append(self._normalize_dividend(row, symbol))
         return results
 
-    def shareholder(self, symbol: str) -> dict:
-        """获取股东结构数据。"""
-        tables, err = self._run_cli(f"shareholder {symbol}")
+    async def shareholder(self, symbol: str) -> dict:
+        tables, err = await self._run_cli(f"shareholder {symbol}")
         if err or not tables:
             return {}
         return self._normalize_shareholder(tables, symbol)
 
-    def reserve(self, symbol: str) -> dict:
-        """获取最新业绩预告。"""
-        tables, err = self._run_cli(f"reserve {symbol}")
+    async def reserve(self, symbol: str) -> dict:
+        tables, err = await self._run_cli(f"reserve {symbol}")
         if err or not tables:
             return {"symbol": symbol, "source": "westock", "collected_at": self._now()}
         return self._normalize_reserve(tables, symbol)
 
     # ------------------------------------------------------------------
-    # 标准化方法
+    # 标准化方法（同步）
     # ------------------------------------------------------------------
 
     def _normalize_minute_row(self, raw: dict, symbol: str) -> dict:
@@ -456,7 +451,6 @@ class WeStockProvider(BaseProvider):
         }
 
     def _normalize_shareholder(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
-        """股东结构：返回多表数据（十大股东、股东人数变化等）"""
         result: dict = {
             "symbol": symbol,
             "source": "westock",
@@ -483,11 +477,9 @@ class WeStockProvider(BaseProvider):
                     "avg_shares": _try_number(row.get("avg_shares", row.get("AvgShares", ""))),
                 })
         result["holder_count_history"] = holder_count
-
         return result
 
     def _normalize_reserve(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
-        """业绩预告：返回最新一条预告"""
         if not tables or not tables[0]:
             return {
                 "symbol": symbol,
@@ -507,12 +499,3 @@ class WeStockProvider(BaseProvider):
             "source": "westock",
             "collected_at": self._now(),
         }
-
-        prefix = symbol[:2].lower()
-        if prefix in _A_SHARE_PREFIXES:
-            return "asfund"
-        if prefix == "hk":
-            return "hkfund"
-        if prefix == "us":
-            return "usfund"
-        return "asfund"

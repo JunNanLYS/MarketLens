@@ -1,17 +1,18 @@
+"""规则型 AI 分析引擎 —— 信号评分、风险评估与投资建议生成。"""
 from datetime import datetime, timezone
 
 from loguru import logger
 
 
-# ??????
-SIGNAL_BULLISH_STRONG = 0.3    # ??? > 0.3 ????????buy?
-SIGNAL_BULLISH_WEAK = 0.1      # ??? > 0.1 ??????watch?
-SIGNAL_BEARISH_STRONG = -0.3   # ??? < -0.3 ????????sell?
-SIGNAL_BEARISH_WEAK = -0.1     # ??? < -0.1 ??????watch?
+# 信号评分阈值
+SIGNAL_BULLISH_STRONG = 0.3    # 信号 > 0.3 发出强烈买入信号
+SIGNAL_BULLISH_WEAK = 0.1      # 信号 > 0.1 发出弱买入信号
+SIGNAL_BEARISH_STRONG = -0.3   # 信号 < -0.3 发出强烈卖出信号
+SIGNAL_BEARISH_WEAK = -0.1     # 信号 < -0.1 发出弱卖出信号
 
-RISK_HIGH_THRESHOLD = 0.6      # ??? > 0.6 ??? > 0.2 ? ???
-RISK_MEDIUM_THRESHOLD = 0.3    # ??? > 0.3 ? ??????????
-RISK_BEARISH_MIN = 0.2         # ??????? 0.2 ?????????
+RISK_HIGH_THRESHOLD = 0.6      # 风险 > 0.6 且信号 > 0.2 为高风险
+RISK_MEDIUM_THRESHOLD = 0.3    # 风险 > 0.3 为中高风险警告
+RISK_BEARISH_MIN = 0.2         # 看跌信号超 0.2 触发风险预警
 
 class AIAnalyzer:
     """规则型分析引擎，基于预设规则矩阵对证据包进行分析。"""

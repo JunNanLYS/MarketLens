@@ -1,9 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+﻿from fastapi import APIRouter, HTTPException, Query
 
 from backend.services.news_service import NewsService
 
 router = APIRouter(prefix="/api/v1/news", tags=["news"])
-
 _service = NewsService()
 
 
@@ -17,14 +16,10 @@ def list_news(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
     filters: dict = {}
-    if symbol is not None:
-        filters["symbol"] = symbol
-    if days is not None:
-        filters["days"] = days
-    if sentiment is not None:
-        filters["sentiment"] = sentiment
-    if source is not None:
-        filters["source"] = source
+    if symbol is not None: filters["symbol"] = symbol
+    if days: filters["days"] = days
+    if sentiment is not None: filters["sentiment"] = sentiment
+    if source is not None: filters["source"] = source
     return _service.get_news(filters=filters or None, page=page, page_size=page_size)
 
 
@@ -32,8 +27,6 @@ def list_news(
 def get_news(news_id: int) -> dict:
     result = _service.get_news_by_id(news_id)
     if result is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "NEWS_NOT_FOUND", "detail": f"新闻 ID {news_id} 不存在"},
-        )
+        raise HTTPException(status_code=404, detail={"error": "NEWS_NOT_FOUND", "detail": f"新闻 ID {news_id} 不存在"})
     return result
+

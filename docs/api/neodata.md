@@ -4,7 +4,7 @@
 
 ---
 
-## GET /token-status
+### `GET /token-status`
 
 查看 NeoData 凭证的当前状态，不暴露 token 原文。
 
@@ -26,7 +26,7 @@
 
 ---
 
-## POST /token
+### `POST /token`
 
 保存 NeoData 凭证到本地缓存文件 `~/.workbuddy/.neodata_token`。
 

@@ -24,10 +24,10 @@ class AssetUpdateRequest(BaseModel):
 
 
 @router.post("", status_code=201)
-def create_asset(body: AssetCreateRequest) -> dict:
+async def create_asset(body: AssetCreateRequest) -> dict:
     try:
         data = body.model_dump(exclude_none=True)
-        return _service.add_asset(data)
+        return await _service.add_asset(data)
     except AssetExistsError as e:
         existing = e.existing_asset
         status_label: str = "已启用" if existing.get("enabled") else "已停用"
@@ -110,9 +110,9 @@ def delete_asset(asset_id: int, soft: bool = Query(default=True)) -> None:
 
 
 @router.get("/search")
-def search_assets(
+async def search_assets(
     keyword: str = Query(..., min_length=1),
     market: str | None = Query(default=None),
 ) -> dict:
-    items = _service.search_assets(keyword=keyword, market=market)
+    items = await _service.search_assets(keyword=keyword, market=market)
     return {"items": items, "total": len(items)}

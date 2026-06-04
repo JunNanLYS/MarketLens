@@ -21,10 +21,6 @@
 
 ## `GET /data/quotes/{symbol}` — 最新行情
 
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `force` | boolean | false | 强制实时采集 |
-
 ```http
 GET /api/v1/data/quotes/hk00700 HTTP/1.1
 ```
@@ -50,10 +46,6 @@ GET /api/v1/data/quotes/hk00700 HTTP/1.1
 
 ## `GET /data/quotes/{symbol}/history` — 历史行情
 
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `from` | datetime | — | 起始时间（ISO 8601） |
-| `to` | datetime | — | 结束时间 |
 | `limit` | integer | 100 | 最大 500 |
 
 ```http
@@ -81,10 +73,6 @@ GET /api/v1/data/quotes/hk00700/history?limit=24 HTTP/1.1
 
 ## `GET /data/kline/{symbol}` — 日 K 线
 
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `limit` | integer | 60 | 最大 365 |
-| `from` | date | — | 起始日期 `YYYY-MM-DD` |
 | `to` | date | — | 结束日期 |
 
 ```http
@@ -113,11 +101,6 @@ GET /api/v1/data/kline/hk00700?limit=30 HTTP/1.1
 ---
 
 ## `GET /data/finance/{symbol}` — 财务数据
-
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `period` | string | 最新 | 报告期 `YYYYQN`，如 `2026Q1` |
-| `limit` | integer | 4 | 返回最近 N 期 |
 
 ```http
 GET /api/v1/data/finance/hk00700 HTTP/1.1
@@ -148,10 +131,6 @@ GET /api/v1/data/finance/hk00700 HTTP/1.1
 ---
 
 ## `GET /data/fund-flow/{symbol}` — 资金流向
-
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `days` | integer | 5 | 最大 30 |
 
 ```http
 GET /api/v1/data/fund-flow/hk00700?days=5 HTTP/1.1
@@ -197,7 +176,7 @@ GET /api/v1/data/technical/hk00700 HTTP/1.1
 {
   "symbol": "hk00700", "date": "2026-05-31",
   "ma": { "ma5": 382.5, "ma10": 380.0, "ma20": 378.0, "ma60": 370.0 },
-  "macd": { "dif": 2.8, "dea": 2.1, "histogram": 0.7, "signal": "金叉" },
+  "macd": { "dif": 2.8, "dea": 2.1, "histogram": 0.7 },
   "rsi": { "rsi6": 58.3, "rsi14": 54.7 },
   "boll": { "upper": 392.0, "middle": 378.0, "lower": 364.0, "position": "中轨上方" },
   "volume_ma": { "ma5": 21000000, "ma20": 19500000 },
@@ -211,10 +190,6 @@ GET /api/v1/data/technical/hk00700 HTTP/1.1
 
 ## `GET /data/intraday/{symbol}` — 分时数据
 
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `days` | integer | 1 | 最近 N 日分时（最大 5） |
-
 ```http
 GET /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
 ```
@@ -227,7 +202,6 @@ GET /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
   "symbol": "hk00700",
   "items": [
     {
-      "symbol": "hk00700",
       "time": "09:30",
       "price": 380.0,
       "volume": 1234567,

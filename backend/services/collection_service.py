@@ -10,6 +10,7 @@ from backend.collectors.westock import WeStockProvider
 from backend.config import get_config
 from backend.services.asset_service import AssetService
 from backend.storage.database import get_db
+from backend.utils import build_fund_flow_summary
 
 
 class CollectionService:
@@ -61,10 +62,10 @@ class CollectionService:
             (task_name, status, started_at, finished_at, error_message, affected_assets),
         )
 
-    def _collect_quote_for_symbol(self, conn: sqlite3.Connection, symbol: str) -> dict | None:
+    async def _collect_quote_for_symbol(self, conn: sqlite3.Connection, symbol: str) -> dict | None:
         for provider in self._get_structured_providers():
             try:
-                results = provider.quote([symbol])
+                results = await provider.quote([symbol])
                 if not results:
                     continue
                 matched = [r for r in results if r.get("symbol") == symbol]
@@ -105,7 +106,7 @@ class CollectionService:
                 continue
         return None
 
-    def collect_quotes(self) -> dict:
+    async def collect_quotes(self) -> dict:
         started_at = self._now_iso()
         assets = self._asset_service.get_active_assets()
         total = len(assets)
@@ -117,7 +118,7 @@ class CollectionService:
             for asset in assets:
                 symbol: str = asset["symbol"]
                 collected = False
-                item = self._collect_quote_for_symbol(conn, symbol)
+                item = await self._collect_quote_for_symbol(conn, symbol)
                 if item is not None:
                     collected = True
 
@@ -134,11 +135,11 @@ class CollectionService:
 
         return {"success": success, "failed": failed, "total": total}
 
-    def collect_quote_single(self, symbol: str) -> dict | None:
+    async def collect_quote_single(self, symbol: str) -> dict | None:
         with get_db() as conn:
-            return self._collect_quote_for_symbol(conn, symbol)
+            return await self._collect_quote_for_symbol(conn, symbol)
 
-    def collect_daily_close(self) -> dict:
+    async def collect_daily_close(self) -> dict:
         started_at = self._now_iso()
         assets = self._asset_service.get_active_assets()
         summary: dict[str, dict[str, int]] = {
@@ -159,7 +160,7 @@ class CollectionService:
                     ("technical", self._collect_technical),
                 ]:
                     try:
-                        result = collect_fn(conn, symbol)
+                        result = await collect_fn(conn, symbol)
                         summary[data_type]["success"] += result["success"]
                         summary[data_type]["failed"] += result["failed"]
                     except Exception as e:
@@ -175,12 +176,12 @@ class CollectionService:
 
         return summary
 
-    def _collect_kline(self, conn: sqlite3.Connection, symbol: str) -> dict:
+    async def _collect_kline(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
             try:
-                items = provider.kline(symbol)
+                items = await provider.kline(symbol)
                 if not items:
                     continue
                 collected_at = self._now_iso()
@@ -213,12 +214,12 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed}
 
-    def _collect_finance(self, conn: sqlite3.Connection, symbol: str) -> dict:
+    async def _collect_finance(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
             try:
-                data = provider.finance(symbol)
+                data = await provider.finance(symbol)
                 if not data:
                     continue
                 collected_at = self._now_iso()
@@ -255,12 +256,12 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed}
 
-    def _collect_fund_flow(self, conn: sqlite3.Connection, symbol: str) -> dict:
+    async def _collect_fund_flow(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
             try:
-                data = provider.fund_flow(symbol)
+                data = await provider.fund_flow(symbol)
                 if not data:
                     continue
                 collected_at = self._now_iso()
@@ -295,12 +296,12 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed}
 
-    def _collect_technical(self, conn: sqlite3.Connection, symbol: str) -> dict:
+    async def _collect_technical(self, conn: sqlite3.Connection, symbol: str) -> dict:
         success = 0
         failed = 0
         for provider in self._get_structured_providers():
             try:
-                data = provider.technical(symbol)
+                data = await provider.technical(symbol)
                 if not data:
                     continue
                 collected_at = self._now_iso()
@@ -344,13 +345,13 @@ class CollectionService:
         return {"success": success, "failed": failed}
 
 
-    def collect_intraday(self, symbol: str, days: int = 1) -> list[dict] | None:
+    async def collect_intraday(self, symbol: str, days: int = 1) -> list[dict] | None:
         """实时采集分时数据。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
-                items = provider.minute(symbol, days=days)
+                items = await provider.minute(symbol, days=days)
                 if items:
                     return items
             except Exception as e:
@@ -358,13 +359,13 @@ class CollectionService:
                 continue
         return None
 
-    def collect_shareholder(self, symbol: str) -> dict | None:
+    async def collect_shareholder(self, symbol: str) -> dict | None:
         """实时采集股东结构数据。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
-                result = provider.shareholder(symbol)
+                result = await provider.shareholder(symbol)
                 if result:
                     return result
             except Exception as e:
@@ -372,13 +373,13 @@ class CollectionService:
                 continue
         return None
 
-    def collect_reserve(self, symbol: str) -> dict | None:
+    async def collect_reserve(self, symbol: str) -> dict | None:
         """实时采集业绩预告。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
-                result = provider.reserve(symbol)
+                result = await provider.reserve(symbol)
                 if result:
                     return result
             except Exception as e:
@@ -386,13 +387,13 @@ class CollectionService:
                 continue
         return None
 
-    def collect_dividend(self, symbol: str) -> list[dict] | None:
+    async def collect_dividend(self, symbol: str) -> list[dict] | None:
         """实时采集分红记录。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
-                items = provider.dividend(symbol)
+                items = await provider.dividend(symbol)
                 if items:
                     return items
             except Exception as e:
@@ -471,33 +472,10 @@ class CollectionService:
                 (symbol, days),
             ).fetchall()
         items = [dict(row) for row in rows]
-        summary = self._build_fund_flow_summary(items)
-        return {"items": items, "summary": summary}
-
-    @staticmethod
-    def _build_fund_flow_summary(items: list[dict]) -> dict:
-        if not items:
-            return {"net_flow_5d": 0, "trend": "无数据", "avg_net_inflow_ratio": 0.0}
-        net_flow_sum = sum(item.get("main_net_inflow") or 0 for item in items)
-        ratios = [
-            item["net_inflow_ratio"]
-            for item in items
-            if item.get("net_inflow_ratio") is not None
-        ]
-        avg_ratio = sum(ratios) / len(ratios) if ratios else 0.0
-        inflows = [item for item in items if (item.get("main_net_inflow") or 0) > 0]
-        outflows = [item for item in items if (item.get("main_net_inflow") or 0) < 0]
-        if len(inflows) >= 3:
-            trend = f"连续 {len(inflows)} 日净流入"
-        elif len(outflows) >= 3:
-            trend = f"连续 {len(outflows)} 日净流出"
-        else:
-            trend = f"近 {len(items)} 日资金流向交替"
-        return {
-            "net_flow_5d": net_flow_sum,
-            "trend": trend,
-            "avg_net_inflow_ratio": round(avg_ratio, 2),
+        summary = build_fund_flow_summary(items) or {
+            "net_flow_5d": 0, "trend": "无数据", "avg_net_inflow_ratio": 0.0
         }
+        return {"items": items, "summary": summary}
 
     def get_technical(self, symbol: str) -> dict | None:
         with get_db() as conn:

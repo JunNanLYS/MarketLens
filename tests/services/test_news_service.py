@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +9,7 @@ import pytest
 from backend.collectors.base import BaseProvider
 from backend.services.news_service import NewsService
 from backend.storage.database import get_db, set_db_path
-from backend.storage.schema import init_db
+from backend.storage.schema import init_db_sync as init_db
 
 
 class FakeRSSProvider(BaseProvider):
@@ -17,25 +17,25 @@ class FakeRSSProvider(BaseProvider):
         super().__init__(name=name)
         self._news_items = news_items or []
 
-    def search(self, keyword: str) -> list[dict]:
+    async def search(self, keyword: str) -> list[dict]:
         return []
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         return []
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         return []
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         return {}
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         return {}
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         return {}
 
-    def fetch_news(self) -> list[dict]:
+    async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         return self._news_items
 
 
@@ -43,22 +43,22 @@ class FailingNeoDataProvider(BaseProvider):
     def __init__(self, name: str = "failing_neodata", optional: bool = True) -> None:
         super().__init__(name=name, optional=optional)
 
-    def search(self, keyword: str) -> list[dict]:
+    async def search(self, keyword: str) -> list[dict]:
         raise ConnectionError("NeoData 服务不可用")
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         return []
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         return []
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         return {}
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         return {}
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         return {}
 
 
@@ -100,42 +100,42 @@ def _make_news_item(
     }
 
 
-def test_collect_news_success() -> None:
+async def test_collect_news_success() -> None:
     news_items = [
         _make_news_item(title="市场大涨", url="https://example.com/1"),
         _make_news_item(title="科技股回调", url="https://example.com/2"),
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
-    result = service.collect_news()
+    result = await service.collect_news()
     assert result["collected"] == 2
     assert result["skipped"] == 0
 
 
-def test_collect_news_dedup_by_url() -> None:
+async def test_collect_news_dedup_by_url() -> None:
     news_items = [
         _make_news_item(title="市场大涨", url="https://example.com/dup"),
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
 
-    result1 = service.collect_news()
+    result1 = await service.collect_news()
     assert result1["collected"] == 1
     assert result1["skipped"] == 0
 
-    result2 = service.collect_news()
+    result2 = await service.collect_news()
     assert result2["collected"] == 0
     assert result2["skipped"] == 1
 
 
-def test_collect_news_match_symbol_by_name() -> None:
+async def test_collect_news_match_symbol_by_name() -> None:
     _insert_asset("hk00700", "腾讯控股")
     news_items = [
         _make_news_item(title="腾讯控股发布Q1财报", url="https://example.com/tencent"),
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
-    service.collect_news()
+    await service.collect_news()
 
     with get_db() as conn:
         row = conn.execute("SELECT related_symbols FROM news_items WHERE url = ?", ("https://example.com/tencent",)).fetchone()
@@ -144,7 +144,7 @@ def test_collect_news_match_symbol_by_name() -> None:
     assert "hk00700" in symbols
 
 
-def test_collect_news_match_multiple_symbols() -> None:
+async def test_collect_news_match_multiple_symbols() -> None:
     _insert_asset("hk00700", "腾讯控股")
     _insert_asset("sh600519", "贵州茅台")
     news_items = [
@@ -155,7 +155,7 @@ def test_collect_news_match_multiple_symbols() -> None:
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
-    service.collect_news()
+    await service.collect_news()
 
     with get_db() as conn:
         row = conn.execute("SELECT related_symbols FROM news_items WHERE url = ?", ("https://example.com/multi",)).fetchone()
@@ -165,7 +165,7 @@ def test_collect_news_match_multiple_symbols() -> None:
     assert "sh600519" in symbols
 
 
-def test_collect_news_neodata_fallback_to_rss() -> None:
+async def test_collect_news_neodata_fallback_to_rss() -> None:
     rss_items = [
         _make_news_item(title="RSS新闻", url="https://example.com/rss-only"),
     ]
@@ -173,15 +173,15 @@ def test_collect_news_neodata_fallback_to_rss() -> None:
     rss_provider = FakeRSSProvider(name="sina_rss", news_items=rss_items)
     service = NewsService(news_providers=[failing_neodata, rss_provider])
 
-    result = service.collect_news()
+    result = await service.collect_news()
     assert result["collected"] == 1
     assert result["skipped"] == 0
 
 
-def test_collect_news_neodata_failure_no_crash() -> None:
+async def test_collect_news_neodata_failure_no_crash() -> None:
     failing_neodata = FailingNeoDataProvider(name="neodata", optional=True)
     service = NewsService(news_providers=[failing_neodata])
-    result = service.collect_news()
+    result = await service.collect_news()
     assert result["collected"] == 0
 
 
@@ -361,13 +361,13 @@ def test_get_news_empty() -> None:
     assert result["page_info"]["total"] == 0
 
 
-def test_collect_news_run_logs() -> None:
+async def test_collect_news_run_logs() -> None:
     news_items = [
         _make_news_item(title="日志测试新闻", url="https://example.com/log"),
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
-    service.collect_news()
+    await service.collect_news()
 
     with get_db() as conn:
         row = conn.execute(
@@ -403,13 +403,13 @@ def test_match_symbols_by_content() -> None:
     assert "hk00700" in matched
 
 
-def test_collect_news_default_sentiment_and_importance() -> None:
+async def test_collect_news_default_sentiment_and_importance() -> None:
     news_items = [
         _make_news_item(title="默认值测试", url="https://example.com/default"),
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
-    service.collect_news()
+    await service.collect_news()
 
     with get_db() as conn:
         row = conn.execute("SELECT sentiment, importance FROM news_items WHERE url = ?", ("https://example.com/default",)).fetchone()
@@ -418,13 +418,13 @@ def test_collect_news_default_sentiment_and_importance() -> None:
     assert row["importance"] == "normal"
 
 
-def test_collect_news_raw_data_saved() -> None:
+async def test_collect_news_raw_data_saved() -> None:
     news_items = [
         _make_news_item(title="原始数据测试", url="https://example.com/raw"),
     ]
     provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
     service = NewsService(news_providers=[provider])
-    service.collect_news()
+    await service.collect_news()
 
     with get_db() as conn:
         row = conn.execute(
@@ -434,3 +434,120 @@ def test_collect_news_raw_data_saved() -> None:
     assert row["source"] == "fake_rss"
     raw = json.loads(row["raw_json"])
     assert raw["title"] == "原始数据测试"
+
+
+async def test_evidence_builder_news_fields_consumable_by_ai_analyzer(tmp_path: Path) -> None:
+    """验证 evidence_builder._build_news 输出的字段名与 ai_analyzer 消费的字段名一致。"""
+    from backend.services.evidence_builder import EvidenceBuilder
+    from backend.services.ai_analyzer import AIAnalyzer
+    from backend.storage.database import set_db_path as set_db, aget_db as aget
+    from backend.storage.schema import init_db_sync
+
+    db_path = str(tmp_path / "test.db")
+    set_db(db_path)
+    init_db_sync(db_path)
+
+    # 插入已追踪标的
+    with aget() as conn:
+        conn.execute(
+            "INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled) VALUES (?, ?, ?, ?, 1)",
+            ("hk00700", "腾讯控股", "hk", "stock"),
+        )
+
+    # 插入不同情感的新闻数据
+    sentiments = ["positive", "positive", "positive", "positive", "negative", "neutral"]
+    with aget() as conn:
+        for i, sentiment in enumerate(sentiments):
+            conn.execute(
+                """INSERT INTO news_items (title, source, url, sentiment, importance,
+                   related_symbols, published_at, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"测试新闻 {i}",
+                    "test_rss",
+                    f"https://example.com/news/{i}",
+                    sentiment,
+                    "normal",
+                    json.dumps(["hk00700"]),
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+    # 通过 EvidenceBuilder 构建 news 数据
+    evidence = await EvidenceBuilder.build("hk00700")
+    news_data = evidence["news"]
+
+    assert news_data is not None
+    # 验证字段名与 ai_analyzer 期望一致
+    assert "total_count" in news_data, "缺少 total_count 字段"
+    assert "positive_count" in news_data, "缺少 positive_count 字段"
+    assert "negative_count" in news_data, "缺少 negative_count 字段"
+    assert "latest" in news_data, "缺少 latest 字段"
+
+    # 验证 ai_analyzer 可以正确消费 evidence_builder 的输出（不报错且返回有效结果）
+    result = AIAnalyzer.analyze(evidence)
+    assert isinstance(result, dict)
+    assert "action" in result
+    assert "confidence" in result
+
+    set_db(None)
+
+
+async def test_evidence_builder_news_fields_consumable_by_ai_analyzer(tmp_path: Path) -> None:
+    """验证 evidence_builder._build_news 输出的字段名与 ai_analyzer 消费的字段名一致。"""
+    from backend.services.evidence_builder import EvidenceBuilder
+    from backend.services.ai_analyzer import AIAnalyzer
+    from backend.storage.database import set_db_path as set_db, get_db, get_connection_sync
+    from backend.storage.schema import init_db_sync as init_db_local
+    import sqlite3
+
+    db_path = str(tmp_path / "test.db")
+    set_db(db_path)
+    init_db_local(db_path)
+
+    # 插入已追踪标的
+    with get_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled) VALUES (?, ?, ?, ?, 1)",
+            ("hk00700", "腾讯控股", "hk", "stock"),
+        )
+
+    # 插入不同情感的新闻数据
+    sentiments = ["positive", "positive", "positive", "positive", "negative", "neutral"]
+    with get_db(db_path) as conn:
+        for i, sentiment in enumerate(sentiments):
+            conn.execute(
+                """INSERT INTO news_items (title, source, url, sentiment, importance,
+                   related_symbols, published_at, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"测试新闻 {i}",
+                    "test_rss",
+                    f"https://example.com/news/{i}",
+                    sentiment,
+                    "normal",
+                    json.dumps(["hk00700"]),
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+    # 通过 EvidenceBuilder 构建 news 数据（EvidenceBuilder 内部使用 async 连接）
+    evidence = await EvidenceBuilder.build("hk00700", conn=None)
+    news_data = evidence["news"]
+
+    assert news_data is not None, "news 数据不应为 None"
+    # 验证字段名与 ai_analyzer 期望一致
+    assert "total_count" in news_data, f"缺少 total_count 字段，实际字段: {list(news_data.keys())}"
+    assert "positive_count" in news_data, f"缺少 positive_count 字段"
+    assert "negative_count" in news_data, f"缺少 negative_count 字段"
+    assert "latest" in news_data, f"缺少 latest 字段"
+
+    # 验证 ai_analyzer 可以正确消费 evidence_builder 的输出
+    result = AIAnalyzer.analyze(evidence)
+    assert isinstance(result, dict)
+    assert "action" in result
+    assert "confidence" in result
+
+    set_db(None)

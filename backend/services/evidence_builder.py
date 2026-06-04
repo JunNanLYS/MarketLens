@@ -1,263 +1,353 @@
-import sqlite3
-from datetime import datetime, timedelta, timezone
-
-import pandas as pd
-from loguru import logger
+﻿"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
 
 from backend.config import get_config
-from backend.storage.database import get_db
+from backend.storage.database import aget_db
 
 
 class EvidenceBuilder:
-    """为 AI 分析准备结构化输入数据，确保分析基于真实采集数据。"""
 
     @staticmethod
-    def build(symbol: str, conn: sqlite3.Connection | None = None) -> dict:
-        if conn is not None:
-            quote = EvidenceBuilder._build_quote(conn, symbol)
-            kline = EvidenceBuilder._build_kline(conn, symbol)
-            fund_flows = EvidenceBuilder._build_fund_flows(conn, symbol)
-            finance = EvidenceBuilder._build_finance(conn, symbol)
-            news = EvidenceBuilder._build_news(conn, symbol)
-            technical = EvidenceBuilder._build_technical(conn, symbol)
-        else:
-            with get_db() as conn:
-                quote = EvidenceBuilder._build_quote(conn, symbol)
-                kline = EvidenceBuilder._build_kline(conn, symbol)
-                fund_flows = EvidenceBuilder._build_fund_flows(conn, symbol)
-                finance = EvidenceBuilder._build_finance(conn, symbol)
-                news = EvidenceBuilder._build_news(conn, symbol)
-                technical = EvidenceBuilder._build_technical(conn, symbol)
-        data_sources = EvidenceBuilder._collect_data_sources(
-            symbol, quote, kline, fund_flows, finance, news, technical
-        )
-        EvidenceBuilder._strip_internal_fields(quote, kline, finance, news, technical)
-        evidence = {
-            "symbol": symbol,
-            "quote": quote,
-            "kline": kline,
-            "fund_flows": fund_flows,
-            "finance": finance,
-            "news": news,
-            "technical": technical,
-            "data_sources": data_sources,
-        }
-        logger.info("证据包组装完成: symbol={}, 数据源数={}", symbol, len(data_sources))
-        return evidence
-
-    @staticmethod
-    def _strip_internal_fields(
-        quote: dict | None,
-        kline: list[dict],
-        finance: dict | None,
-        news: dict | None,
-        technical: dict | None,
-    ) -> None:
-        if quote is not None:
-            quote.pop("_source", None)
-            quote.pop("_collected_at", None)
-        if kline:
-            kline[-1].pop("_source", None)
-            kline[-1].pop("_collected_at", None)
-        if finance is not None:
-            finance.pop("_source", None)
-            finance.pop("_collected_at", None)
-        if news is not None:
-            news.pop("_source", None)
-            news.pop("_collected_at", None)
-        if technical is not None:
-            technical.pop("_source", None)
-            technical.pop("_collected_at", None)
-
-    @staticmethod
-    def _get_config_limit(key: str, default: int) -> int:
-        config = get_config()
-        return int(config.get("evidence", {}).get(key, default))
-
-    @staticmethod
-    def _build_quote(conn: sqlite3.Connection, symbol: str) -> dict | None:
-        row = conn.execute(
-                """SELECT price, change, change_pct, volume, source, collected_at
-                   FROM market_quotes WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT 1""",
-                (symbol,),
-            ).fetchone()
-        if row is None:
-            return None
-        result = dict(row)
-        result["_source"] = result["source"]
-        result["_collected_at"] = result["collected_at"]
-        return result
-
-    @staticmethod
-    def _build_kline(conn: sqlite3.Connection, symbol: str) -> list[dict]:
-        rows = conn.execute(
-                """SELECT date, open, high, low, close, volume, source, collected_at
-                   FROM kline_daily WHERE symbol = ?
-                   ORDER BY date DESC LIMIT ?""",
-                (symbol, EvidenceBuilder._get_config_limit("kline_limit", 60)),
-            ).fetchall()
-        if not rows:
-            return []
-        latest_source = rows[0]["source"] if rows else None
-        latest_collected_at = rows[0]["collected_at"] if rows else None
-        items = [dict(r) for r in reversed(rows)]
-        df = pd.DataFrame(items)
-        for window in (5, 10, 20, 60):
-            col = f"ma{window}"
-            df[col] = df["close"].rolling(window=window, min_periods=window).mean()
-        result = df.to_dict(orient="records")
-        for item in result:
-            for key in ["ma5", "ma10", "ma20", "ma60"]:
-                val = item.get(key)
-                if pd.isna(val):
-                    item[key] = None
-                else:
-                    item[key] = round(float(val), 4)
-            item.pop("source", None)
-            item.pop("collected_at", None)
-        if result:
-            result[-1]["_source"] = latest_source
-            result[-1]["_collected_at"] = latest_collected_at
-        return result
-
-    @staticmethod
-    def _build_fund_flows(conn: sqlite3.Connection, symbol: str) -> list[dict]:
-        rows = conn.execute(
-                """SELECT date, main_net_inflow, net_inflow_ratio, source, collected_at
-                   FROM fund_flows WHERE symbol = ?
-                   ORDER BY date DESC LIMIT ?""",
-                (symbol, EvidenceBuilder._get_config_limit("fund_flow_limit", 5)),
-            ).fetchall()
-        if not rows:
-            return []
-        return [dict(r) for r in rows]
-
-    @staticmethod
-    def _build_finance(conn: sqlite3.Connection, symbol: str) -> dict | None:
-        row = conn.execute(
-                """SELECT report_period, revenue, revenue_yoy, net_profit,
-                          net_profit_yoy, eps, roe, debt_ratio, gross_margin, net_margin,
-                          source, collected_at
-                   FROM financial_reports WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT ?""",
-                (symbol, EvidenceBuilder._get_config_limit("finance_limit", 2)),
-            ).fetchone()
-        if row is None:
-            return None
-        result = dict(row)
-        result["_source"] = result["source"]
-        result["_collected_at"] = result["collected_at"]
-        return result
-
-    @staticmethod
-    def _build_news(conn: sqlite3.Connection, symbol: str) -> dict | None:
-        config = get_config()
-        news_days = config.get("evidence", {}).get("news_days", 7)
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=news_days)).isoformat()
-        rows = conn.execute(
-                """SELECT title, sentiment, published_at, source, collected_at
-                   FROM news_items
-                   WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?) AND published_at >= ?
-                   ORDER BY published_at DESC""",
-                (symbol, cutoff),
-            ).fetchall()
-        if not rows:
-            return None
-        items = [dict(r) for r in rows]
-        positive_count = sum(1 for i in items if i.get("sentiment") == "positive")
-        negative_count = sum(1 for i in items if i.get("sentiment") == "negative")
-        neutral_count = sum(1 for i in items if i.get("sentiment") == "neutral")
-        total_count = len(items)
+    def _evidence_limits() -> dict:
+        """从配置文件获取证据查询的行数限制。"""
+        cfg = get_config().get("evidence", {})
         return {
-            "items": items,
-            "positive_count": positive_count,
-            "negative_count": negative_count,
-            "neutral_count": neutral_count,
-            "total_count": total_count,
-            "_source": items[0].get("source") if items else None,
-            "_collected_at": items[0].get("collected_at") if items else None,
+            "kline_limit": cfg.get("kline_limit", 60),
+            "fund_flow_limit": cfg.get("fund_flow_limit", 5),
+            "finance_limit": cfg.get("finance_limit", 2),
+            "news_days": cfg.get("news_days", 7),
         }
+    @staticmethod
+    async def build(symbol: str, conn=None) -> dict:
+        close_conn = conn is None
+        if conn is None:
+            from backend.storage.database import aget_connection
+            conn = await aget_connection()
+
+        try:
+            quote = await EvidenceBuilder._build_quote(conn, symbol)
+            klines = await EvidenceBuilder._build_kline(conn, symbol)
+            fund_flows = await EvidenceBuilder._build_fund_flows(conn, symbol)
+            finance = await EvidenceBuilder._build_finance(conn, symbol)
+            news = await EvidenceBuilder._build_news(conn, symbol)
+            technical = await EvidenceBuilder._build_technical(conn, symbol)
+
+            data_sources = []
+            if quote:
+                data_sources.append({"type": "quote", "source": quote.get("source", ""), "collected_at": quote.get("collected_at", "")})
+            if klines:
+                data_sources.append({"type": "kline", "source": klines[0].get("source", ""), "collected_at": klines[0].get("collected_at", "")})
+            if fund_flows:
+                data_sources.append({"type": "fund_flow", "source": fund_flows[0].get("source", ""), "collected_at": fund_flows[0].get("collected_at", "")})
+            if finance:
+                data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
+            if news:
+                data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
+            if technical:
+                data_sources.append({"type": "technical", "source": technical.get("source", ""), "collected_at": technical.get("collected_at", "")})
+
+            return {
+                "symbol": symbol,
+                "quote": quote,
+                "kline": klines,
+                "fund_flows": fund_flows,
+                "finance": finance,
+                "news": news,
+                "technical": technical,
+                "data_sources": data_sources,
+            }
+        finally:
+            if close_conn:
+                await conn.close()
+
 
     @staticmethod
-    def _build_technical(conn: sqlite3.Connection, symbol: str) -> dict | None:
-        rows = conn.execute(
-                """SELECT symbol, date, ma5, ma10, ma20, ma60,
-                          macd_dif, macd_dea, macd_histogram,
-                          rsi6, rsi14,
-                          boll_upper, boll_middle, boll_lower,
-                          source, collected_at
-                   FROM technical_indicators WHERE symbol = ?
-                   ORDER BY date DESC LIMIT 2""",
-                (symbol,),
-            ).fetchall()
+    async def build_multi(symbols: list[str]) -> dict[str, dict]:
+        """批量构建多个标的的证据包，用 WHERE IN 减少查询次数。"""
+        if not symbols:
+            return {}
+        from backend.storage.database import aget_connection
+        conn = await aget_connection()
+        try:
+            result: dict[str, dict] = {}
+            # 批量查询各表
+            placeholders = ",".join("?" for _ in symbols)
+            params = list(symbols)
+
+            # quotes
+            quotes_map: dict[str, dict] = {}
+            cursor = await conn.execute(
+                f"""SELECT * FROM market_quotes
+                    WHERE symbol IN ({placeholders})
+                    AND collected_at IN (
+                        SELECT MAX(collected_at) FROM market_quotes
+                        WHERE symbol IN ({placeholders})
+                        GROUP BY symbol
+                    )""",
+                params * 2,
+            )
+            for row in await cursor.fetchall():
+                quotes_map[row["symbol"]] = dict(row)
+
+            # klines
+            cursor = await conn.execute(
+                f"""SELECT * FROM kline_daily
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, date DESC""",
+                params,
+            )
+            klines_by_symbol: dict[str, list[dict]] = {}
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                if sym not in klines_by_symbol:
+                    klines_by_symbol[sym] = []
+                klines_by_symbol[sym].append(r)
+                if len(klines_by_symbol[sym]) >= 60:
+                    continue  # already have enough for this symbol
+
+            # fund_flows
+            cursor = await conn.execute(
+                f"""SELECT * FROM fund_flows
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, date DESC""",
+                params,
+            )
+            flows_by_symbol: dict[str, list[dict]] = {}
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                if sym not in flows_by_symbol:
+                    flows_by_symbol[sym] = []
+                flows_by_symbol[sym].append(r)
+                if len(flows_by_symbol[sym]) >= 5:
+                    continue
+
+            # finance
+            cursor = await conn.execute(
+                f"""SELECT * FROM financial_reports
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, collected_at DESC""",
+                params,
+            )
+            fin_by_symbol: dict[str, list[dict]] = {}
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                if sym not in fin_by_symbol:
+                    fin_by_symbol[sym] = []
+                fin_by_symbol[sym].append(r)
+
+            # news
+            # (news uses LIKE, can't batch easily; keep per-symbol for news)
+            # technical
+            cursor = await conn.execute(
+                f"""SELECT * FROM technical_indicators
+                    WHERE symbol IN ({placeholders})
+                    AND date IN (
+                        SELECT MAX(date) FROM technical_indicators
+                        WHERE symbol IN ({placeholders})
+                        GROUP BY symbol
+                    )""",
+                params * 2,
+            )
+            tech_map: dict[str, dict] = {}
+            for row in await cursor.fetchall():
+                tech_map[row["symbol"]] = dict(row)
+
+            # Assemble per symbol
+            for symbol in symbols:
+                quote = quotes_map.get(symbol)
+                klines = list(reversed(klines_by_symbol.get(symbol, [])[:60]))
+                # 计算移动平均线（滑动窗口 O(n)）
+                closes_k = [item["close"] for item in klines]
+                ma_windows = (5, 10, 20, 60)
+                running_sums: dict[int, float] = {w: 0.0 for w in ma_windows}
+                for i, item in enumerate(klines):
+                    c = closes_k[i]
+                    for w in ma_windows:
+                        running_sums[w] += c
+                        if i >= w:
+                            running_sums[w] -= closes_k[i - w]
+                        if i >= w - 1:
+                            item[f"ma{w}"] = round(running_sums[w] / w, 4)
+                        else:
+                            item[f"ma{w}"] = None
+                flows = list(reversed(flows_by_symbol.get(symbol, [])[:5]))
+                fin_rows = fin_by_symbol.get(symbol, [])
+                finance = None
+                if fin_rows:
+                    latest = fin_rows[0]
+                    if len(fin_rows) >= 2:
+                        prev = fin_rows[1]
+                        latest["prev_revenue"] = prev.get("revenue")
+                        latest["prev_net_profit"] = prev.get("net_profit")
+                        latest["prev_eps"] = prev.get("eps")
+                        latest["prev_roe"] = prev.get("roe")
+                    finance = latest
+
+                # news by symbol
+                news = None
+                cursor = await conn.execute(
+                    """SELECT * FROM news_items
+                       WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?)
+                       AND published_at >= datetime("now", "-7 days")
+                       ORDER BY published_at DESC""",
+                    (symbol,),
+                )
+                news_rows = [dict(r) for r in await cursor.fetchall()]
+                if news_rows:
+                    sentiments = [item.get("sentiment", "neutral") for item in news_rows]
+                    positive = sentiments.count("positive")
+                    negative = sentiments.count("negative")
+                    neutral = sentiments.count("neutral")
+                    news = {
+                        "positive_count": positive,
+                        "negative_count": negative,
+                        "neutral_count": neutral,
+                        "total_count": len(news_rows),
+                        "total": len(news_rows),
+                        "latest": news_rows[:5],
+                    }
+
+                data_sources = []
+                if quote:
+                    data_sources.append({"type": "quote", "source": quote.get("source", ""), "collected_at": quote.get("collected_at", "")})
+                if klines:
+                    data_sources.append({"type": "kline", "source": klines[0].get("source", ""), "collected_at": klines[0].get("collected_at", "")})
+                if flows:
+                    data_sources.append({"type": "fund_flow", "source": flows[0].get("source", ""), "collected_at": flows[0].get("collected_at", "")})
+                if finance:
+                    data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
+                if news:
+                    data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
+
+                result[symbol] = {
+                    "symbol": symbol,
+                    "quote": quote,
+                    "kline": klines,
+                    "fund_flows": flows,
+                    "finance": finance,
+                    "news": news,
+                    "technical": tech_map.get(symbol),
+                    "data_sources": data_sources,
+                }
+            return result
+        finally:
+            await conn.close()
+
+    @staticmethod
+    async def _build_quote(conn, symbol: str) -> dict | None:
+        cursor = await conn.execute(
+            """SELECT * FROM market_quotes WHERE symbol = ?
+               ORDER BY collected_at DESC LIMIT 1""",
+            (symbol,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    @staticmethod
+    async def _build_kline(conn, symbol: str) -> list[dict]:
+        limits = EvidenceBuilder._evidence_limits()
+        cursor = await conn.execute(
+            """SELECT * FROM kline_daily WHERE symbol = ?
+               ORDER BY date DESC LIMIT ?""",
+            (symbol, limits["kline_limit"]),
+        )
+        rows = await cursor.fetchall()
+        items = [dict(row) for row in rows]
+        items.reverse()  # 按日期升序
+        # 计算移动平均线（滑动窗口 O(n)）
+        closes = [item["close"] for item in items]
+        ma_windows = (5, 10, 20, 60)
+        # 维护每个窗口的 running_sum，避免每次重新求和
+        running_sums: dict[int, float] = {w: 0.0 for w in ma_windows}
+        for i, item in enumerate(items):
+            c = closes[i]
+            for w in ma_windows:
+                running_sums[w] += c
+                if i >= w:
+                    # 滑出最早一格
+                    running_sums[w] -= closes[i - w]
+                if i >= w - 1:
+                    item[f"ma{w}"] = round(running_sums[w] / w, 4)
+                else:
+                    item[f"ma{w}"] = None
+        return items
+
+    @staticmethod
+    async def _build_fund_flows(conn, symbol: str) -> list[dict]:
+        limits = EvidenceBuilder._evidence_limits()
+        cursor = await conn.execute(
+            """SELECT * FROM fund_flows WHERE symbol = ?
+               ORDER BY date DESC LIMIT ?""",
+            (symbol, limits["fund_flow_limit"]),
+        )
+        rows = await cursor.fetchall()
+        items = [dict(row) for row in rows]
+        items.reverse()
+        return items
+
+    @staticmethod
+    async def _build_finance(conn, symbol: str) -> dict | None:
+        limits = EvidenceBuilder._evidence_limits()
+        cursor = await conn.execute(
+            """SELECT * FROM financial_reports WHERE symbol = ?
+               ORDER BY collected_at DESC LIMIT ?""",
+            (symbol, limits["finance_limit"]),
+        )
+        rows = await cursor.fetchall()
         if not rows:
             return None
         latest = dict(rows[0])
-        result: dict = {
-            "ma5": latest.get("ma5"),
-            "ma10": latest.get("ma10"),
-            "ma20": latest.get("ma20"),
-            "ma60": latest.get("ma60"),
-            "macd_dif": latest.get("macd_dif"),
-            "macd_dea": latest.get("macd_dea"),
-            "macd_histogram": latest.get("macd_histogram"),
-            "rsi6": latest.get("rsi6"),
-            "rsi14": latest.get("rsi14"),
-            "boll_upper": latest.get("boll_upper"),
-            "boll_middle": latest.get("boll_middle"),
-            "boll_lower": latest.get("boll_lower"),
-            "_source": latest.get("source"),
-            "_collected_at": latest.get("collected_at"),
-        }
         if len(rows) >= 2:
             prev = dict(rows[1])
-            result["prev_macd_histogram"] = prev.get("macd_histogram")
-        else:
-            result["prev_macd_histogram"] = None
-        return result
+            latest["prev_revenue"] = prev.get("revenue")
+            latest["prev_net_profit"] = prev.get("net_profit")
+            latest["prev_eps"] = prev.get("eps")
+            latest["prev_roe"] = prev.get("roe")
+        return latest
 
     @staticmethod
-    def _collect_data_sources(
-        symbol: str,
-        quote: dict | None,
-        kline: list[dict],
-        fund_flows: list[dict],
-        finance: dict | None,
-        news: dict | None,
-        technical: dict | None,
-    ) -> list[dict]:
-        sources: list[dict] = []
-        if quote is not None:
-            src = quote.get("_source")
-            cat = quote.get("_collected_at")
-            if src is not None:
-                sources.append({"source": src, "type": "market_quotes", "collected_at": cat})
-        if kline:
-            last = kline[-1]
-            src = last.get("_source")
-            cat = last.get("_collected_at")
-            if src is not None:
-                sources.append({"source": src, "type": "kline_daily", "collected_at": cat})
-        if fund_flows:
-            first = fund_flows[0]
-            src = first.get("_source") or first.get("source")
-            cat = first.get("_collected_at") or first.get("collected_at")
-            if src is not None:
-                sources.append({"source": src, "type": "fund_flows", "collected_at": cat})
-        if finance is not None:
-            src = finance.get("_source")
-            cat = finance.get("_collected_at")
-            if src is not None:
-                sources.append({"source": src, "type": "financial_reports", "collected_at": cat})
-        if news is not None:
-            src = news.get("_source")
-            cat = news.get("_collected_at")
-            if src is not None:
-                sources.append({"source": src, "type": "news", "collected_at": cat})
-        if technical is not None:
-            src = technical.get("_source")
-            cat = technical.get("_collected_at")
-            if src is not None:
-                sources.append({"source": src, "type": "technical_indicators", "collected_at": cat})
-        return sources
+    async def _build_news(conn, symbol: str) -> dict | None:
+        limits = EvidenceBuilder._evidence_limits()
+        cursor = await conn.execute(
+            """SELECT * FROM news_items
+               WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?)
+               AND published_at >= datetime('now', ?)
+               ORDER BY published_at DESC""",
+            (symbol, f"-{limits['news_days']} days"),
+        )
+        rows = await cursor.fetchall()
+        items = [dict(row) for row in rows]
+        if not items:
+            return None
+        sentiments = [item.get("sentiment", "neutral") for item in items]
+        positive = sentiments.count("positive")
+        negative = sentiments.count("negative")
+        neutral = sentiments.count("neutral")
+        return {
+            "total_count": len(items),
+            "positive_count": positive,
+            "negative_count": negative,
+            "neutral_count": neutral,
+            "latest": items[:5],
+        }
+
+    @staticmethod
+    async def _build_technical(conn, symbol: str) -> dict | None:
+        cursor = await conn.execute(
+            """SELECT * FROM technical_indicators WHERE symbol = ?
+               ORDER BY date DESC LIMIT 2""",
+            (symbol,),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return None
+        latest = dict(rows[0])
+        if len(rows) >= 2:
+            prev = dict(rows[1])
+            latest["prev_macd_histogram"] = prev.get("macd_histogram")
+        return latest
+

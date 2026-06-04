@@ -1,4 +1,4 @@
-# 投资组合管理 API
+﻿# 投资组合管理 API
 
 > 基准路径: `/api/v1` | 返回上级: [API 概述](../api.md)
 
@@ -12,12 +12,12 @@
 | `GET` | `/accounts` | 账户列表 | 200 |
 | `GET` | `/accounts/{account_id}` | 账户详情 | 200, 404 |
 | `PATCH` | `/accounts/{account_id}` | 更新账户 | 200, 404, 409 |
-| `DELETE` | `/accounts/{account_id}` | 删除账户（软删除） | 200, 404 |
+| `DELETE` | `/accounts/{account_id}` | 删除账户（软删除） | 204, 404 |
 | `POST` | `/transactions` | 录入交易 | 201, 400, 404 |
 | `GET` | `/transactions` | 交易历史（分页/筛选） | 200 |
 | `GET` | `/transactions/{transaction_id}` | 交易详情 | 200, 404 |
 | `PATCH` | `/transactions/{transaction_id}` | 更新交易 | 200, 400, 404 |
-| `DELETE` | `/transactions/{transaction_id}` | 删除交易（软删除） | 200, 400, 404 |
+| `DELETE` | `/transactions/{transaction_id}` | 删除交易（软删除） | 204, 400, 404 |
 | `GET` | `/positions` | 持仓总览 | 200 |
 | `GET` | `/positions/realized-pnl` | 已实现盈亏汇总 | 200 |
 
@@ -88,7 +88,11 @@
 
 ### `DELETE /accounts/{account_id}` — 删除账户
 
-软删除，设置 `deleted_at`。关联交易记录保留。
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `soft` | bool | `true` | `true` 仅软删除（设置 `deleted_at`），`false` 物理删除 |
+
+软删除（默认），设置 `deleted_at`。关联交易记录保留。
 
 ---
 

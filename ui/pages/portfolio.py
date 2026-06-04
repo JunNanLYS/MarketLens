@@ -173,10 +173,10 @@ def _render_transactions_tab() -> None:
                 with tc5:
                     st.text(f"日期: {tx.get('trade_date', '-')}")
                 with tc6:
-                    if st.button("✏️", key=f"edit_tx_{tx.get('id', '')}"):
+                    if st.button("✏️", key=f"edit_tx_{tx.get('id', '')}", help="编辑该交易"):
                         st.session_state[f"edit_tx_{tx.get('id', '')}"] = True
                         st.rerun()
-                    if st.button("🗑️", key=f"del_tx_{tx.get('id', '')}"):
+                    if st.button("🗑️", key=f"del_tx_{tx.get('id', '')}", help="删除该交易"):
                         st.session_state[f"confirm_del_tx_{tx.get('id', '')}"] = True
                         st.rerun()
 
@@ -276,9 +276,11 @@ def _render_transactions_tab() -> None:
                 if tx_notes.strip():
                     data["notes"] = tx_notes.strip()
                 result_tx: dict[str, Any] = create_transaction(data)
-                if "id" in result_tx:
-                    st.success("交易录入成功")
-                    st.rerun()
+                if "error" in result_tx or "id" not in result_tx:
+                    st.error(result_tx.get("detail", "交易录入失败"))
+                    return
+                st.success("交易录入成功")
+                st.rerun()
 
 
 def _render_accounts_tab() -> None:
@@ -329,7 +331,10 @@ def _render_accounts_tab() -> None:
                                         upd["broker"] = new_broker.strip()
                                     if new_notes.strip():
                                         upd["notes"] = new_notes.strip()
-                                    update_account(acc_id, upd)
+                                    result_upd_acc: dict[str, Any] = update_account(acc_id, upd)
+                                    if "error" in result_upd_acc or "id" not in result_upd_acc:
+                                        st.error(result_upd_acc.get("detail", "更新失败"))
+                                        return
                                     st.session_state.pop(f"edit_acc_{acc_id}", None)
                                     st.success("已更新")
                                     st.rerun()
@@ -381,9 +386,11 @@ def _render_accounts_tab() -> None:
                 if acc_notes.strip():
                     data["notes"] = acc_notes.strip()
                 result_acc: dict[str, Any] = create_account(data)
-                if "id" in result_acc:
-                    st.success(f"账户「{acc_name.strip()}」创建成功")
-                    st.rerun()
+                if "error" in result_acc or "id" not in result_acc:
+                    st.error(result_acc.get("detail", "账户创建失败"))
+                    return
+                st.success(f"账户「{acc_name.strip()}」创建成功")
+                st.rerun()
 
 
 def render() -> None:

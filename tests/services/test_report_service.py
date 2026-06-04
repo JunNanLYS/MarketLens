@@ -1,23 +1,28 @@
-import json
+﻿import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from backend.config import get_config
 from backend.services.report_service import ReportService
 from backend.storage.database import get_db, set_db_path
-from backend.storage.schema import init_db
+from backend.storage.schema import init_db_sync as init_db
 
 
 @pytest.fixture
-def tmp_db(tmp_path: Path) -> Path:
+async def tmp_db(tmp_path: Path):
     db_path = str(tmp_path / "test.db")
     set_db_path(db_path)
     init_db(db_path)
-    return Path(db_path)
+    try:
+        yield Path(db_path)
+    finally:
+        set_db_path(None)
 
 
-def _seed_full_data(symbol: str = "hk00700") -> None:
+async def _seed_full_data(symbol: str = "hk00700") -> None:
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         conn.execute(
@@ -87,9 +92,9 @@ def _seed_full_data(symbol: str = "hk00700") -> None:
 class TestReportServiceGenerate:
     """生成报告成功。"""
 
-    def test_generate_report(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        result = ReportService.generate_reports(symbols=["hk00700"])
+    async def test_generate_report(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        result = await ReportService.generate_reports(symbols=["hk00700"])
         assert result["generated"] == 1
         assert result["skipped"] == 0
 
@@ -107,12 +112,12 @@ class TestReportServiceGenerate:
 class TestReportServiceIdempotent:
     """报告幂等（同日不重复生成）。"""
 
-    def test_idempotent(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        result1 = ReportService.generate_reports(symbols=["hk00700"])
+    async def test_idempotent(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        result1 = await ReportService.generate_reports(symbols=["hk00700"])
         assert result1["generated"] == 1
 
-        result2 = ReportService.generate_reports(symbols=["hk00700"])
+        result2 = await ReportService.generate_reports(symbols=["hk00700"])
         assert result2["generated"] == 0
         assert result2["skipped"] == 1
 
@@ -126,11 +131,11 @@ class TestReportServiceIdempotent:
 class TestReportServiceForce:
     """force=True 时覆盖已有报告。"""
 
-    def test_force_overwrite(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        ReportService.generate_reports(symbols=["hk00700"])
+    async def test_force_overwrite(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        await ReportService.generate_reports(symbols=["hk00700"])
 
-        result = ReportService.generate_reports(symbols=["hk00700"], force=True)
+        result = await ReportService.generate_reports(symbols=["hk00700"], force=True)
         assert result["generated"] == 1
 
         with get_db() as conn:
@@ -143,17 +148,17 @@ class TestReportServiceForce:
 class TestReportServiceList:
     """查询报告列表。"""
 
-    def test_list_reports(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        ReportService.generate_reports(symbols=["hk00700"])
+    async def test_list_reports(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        await ReportService.generate_reports(symbols=["hk00700"])
 
         result = ReportService.get_reports()
         assert len(result["items"]) == 1
         assert result["page_info"]["total"] == 1
 
-    def test_list_with_filter(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        ReportService.generate_reports(symbols=["hk00700"])
+    async def test_list_with_filter(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        await ReportService.generate_reports(symbols=["hk00700"])
 
         result = ReportService.get_reports(filters={"action": "buy"})
         total = result["page_info"]["total"]
@@ -163,9 +168,9 @@ class TestReportServiceList:
 class TestReportServiceLatest:
     """查询最新报告。"""
 
-    def test_get_latest_report(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        ReportService.generate_reports(symbols=["hk00700"])
+    async def test_get_latest_report(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        await ReportService.generate_reports(symbols=["hk00700"])
 
         report = ReportService.get_latest_report("hk00700")
         assert report is not None
@@ -184,9 +189,9 @@ class TestReportServiceLatest:
 class TestReportServiceHistory:
     """查询历史报告。"""
 
-    def test_get_history(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        ReportService.generate_reports(symbols=["hk00700"])
+    async def test_get_history(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        await ReportService.generate_reports(symbols=["hk00700"])
 
         history = ReportService.get_report_history("hk00700")
         assert len(history) == 1
@@ -196,13 +201,15 @@ class TestReportServiceHistory:
         history = ReportService.get_report_history("hk00001")
         assert len(history) == 0
 
-    def test_history_with_date_filter(self, tmp_db: Path) -> None:
-        _seed_full_data()
-        ReportService.generate_reports(symbols=["hk00700"])
+    async def test_history_with_date_filter(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        await ReportService.generate_reports(symbols=["hk00700"])
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        tz_name = get_config().get("scheduler", {}).get("timezone", "Asia/Shanghai")
+        today = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
         history = ReportService.get_report_history("hk00700", from_date=today, to_date=today)
         assert len(history) == 1
 
         history = ReportService.get_report_history("hk00700", from_date="2020-01-01", to_date="2020-12-31")
         assert len(history) == 0
+

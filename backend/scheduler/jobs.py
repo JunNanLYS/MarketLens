@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+﻿import asyncio
+from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -16,6 +17,7 @@ TASK_DESCRIPTIONS: dict[str, str] = {
     "daily_close": "日收盘数据采集",
     "news": "新闻采集",
     "ai_report": "AI 分析报告",
+    "cleanup": "过期数据清理",
 }
 
 TASK_SCHEDULE_DESCRIPTIONS: dict[str, str] = {
@@ -23,15 +25,37 @@ TASK_SCHEDULE_DESCRIPTIONS: dict[str, str] = {
     "daily_close": "交易日 16:00",
     "news": "每 60 分钟",
     "ai_report": "每日 20:00",
+    "cleanup": "每日 3:30",
 }
 
-VALID_TASK_NAMES: set[str] = {"quote", "daily_close", "news", "ai_report"}
+VALID_TASK_NAMES: set[str] = {"quote", "daily_close", "news", "ai_report", "cleanup"}
+
+
+# 模块级懒加载单例，避免每个 tick 重建 Service 实例和内部 httpx 客户端。
+# 每次 tick 仍以 asyncio.run() 创建独立事件循环，确保不会与 FastAPI 主线程
+# 的事件循环发生冲突（仅复用 Service 对象本身，不复用 loop/connection）。
+_collection_service: CollectionService | None = None
+_news_service: NewsService | None = None
+
+
+def _get_collection_service() -> CollectionService:
+    global _collection_service
+    if _collection_service is None:
+        _collection_service = CollectionService()
+    return _collection_service
+
+
+def _get_news_service() -> NewsService:
+    global _news_service
+    if _news_service is None:
+        _news_service = NewsService()
+    return _news_service
 
 
 def _run_quote() -> None:
     try:
         logger.info("定时任务触发: quote")
-        CollectionService().collect_quotes()
+        asyncio.run(_get_collection_service().collect_quotes())
     except Exception:
         logger.exception("定时任务执行异常: quote")
 
@@ -39,7 +63,7 @@ def _run_quote() -> None:
 def _run_daily_close() -> None:
     try:
         logger.info("定时任务触发: daily_close")
-        CollectionService().collect_daily_close()
+        asyncio.run(_get_collection_service().collect_daily_close())
     except Exception:
         logger.exception("定时任务执行异常: daily_close")
 
@@ -47,7 +71,7 @@ def _run_daily_close() -> None:
 def _run_news() -> None:
     try:
         logger.info("定时任务触发: news")
-        NewsService().collect_news()
+        asyncio.run(_get_news_service().collect_news())
     except Exception:
         logger.exception("定时任务执行异常: news")
 
@@ -55,9 +79,23 @@ def _run_news() -> None:
 def _run_ai_report() -> None:
     try:
         logger.info("定时任务触发: ai_report")
-        ReportService.generate_reports()
+        asyncio.run(ReportService.generate_reports())
     except Exception:
         logger.exception("定时任务执行异常: ai_report")
+
+
+def _run_cleanup() -> None:
+    try:
+        logger.info("定时任务触发: cleanup")
+        with get_db() as conn:
+            cursor = conn.execute(
+                "DELETE FROM raw_data WHERE collected_at < datetime('now', '-30 days')"
+            )
+            deleted = cursor.rowcount
+            if deleted > 0:
+                logger.info("清理了 {} 条过期原始数据", deleted)
+    except Exception:
+        logger.exception("定时任务执行异常: cleanup")
 
 
 _TASK_FUNCTIONS: dict[str, object] = {
@@ -65,12 +103,15 @@ _TASK_FUNCTIONS: dict[str, object] = {
     "daily_close": _run_daily_close,
     "news": _run_news,
     "ai_report": _run_ai_report,
+    "cleanup": _run_cleanup,
 }
 
 
 class SchedulerManager:
+    """APScheduler ????????????????????????????????"""
 
     def __init__(self) -> None:
+        """???????? config.yaml ??????????"""
         config = get_config()
         scheduler_cfg: dict = config.get("scheduler", {})
         tz: str = scheduler_cfg.get("timezone", "Asia/Shanghai")
@@ -78,6 +119,7 @@ class SchedulerManager:
         self._tasks_cfg: dict = scheduler_cfg.get("tasks", {})
 
     def register_jobs(self) -> None:
+        """?????????quote?daily_close?news?ai_report??"""
         quote_cfg: dict = self._tasks_cfg.get("quote", {})
         quote_interval: int = quote_cfg.get("interval", 15)
         self._scheduler.add_job(
@@ -118,6 +160,16 @@ class SchedulerManager:
             replace_existing=True,
         )
 
+        cleanup_cfg: dict = self._tasks_cfg.get("cleanup", {})
+        cleanup_cron: str = cleanup_cfg.get("cron", "30 3 * * *")
+        self._scheduler.add_job(
+            _run_cleanup,
+            trigger=CronTrigger.from_crontab(cleanup_cron),
+            id="cleanup",
+            name=TASK_DESCRIPTIONS["cleanup"],
+            replace_existing=True,
+        )
+
         logger.info("已注册 {} 个定时任务", len(VALID_TASK_NAMES))
 
     def _get_schedule_description(self, task_name: str) -> str:
@@ -141,39 +193,63 @@ class SchedulerManager:
         return TASK_SCHEDULE_DESCRIPTIONS.get(task_name, "")
 
     def start(self) -> None:
+        """???????????"""
         self.register_jobs()
         self._scheduler.start()
         logger.info("调度器已启动")
 
     def shutdown(self) -> None:
+        """???????????????"""
         self._scheduler.shutdown(wait=False)
         logger.info("调度器已关闭")
 
     def trigger_task(self, task_name: str) -> bool:
+        """?????????
+
+        Args:
+            task_name: ?????quote / daily_close / news / ai_report??
+
+        Returns:
+            ?????????????? False??
+        """
         if task_name not in VALID_TASK_NAMES:
             logger.warning("无效的任务名: {}", task_name)
             return False
         func = _TASK_FUNCTIONS[task_name]
-        self._scheduler.add_job(
-            func,
-            id=f"{task_name}_manual_{datetime.now(timezone.utc).timestamp()}",
-            name=f"手动触发: {TASK_DESCRIPTIONS[task_name]}",
-        )
+        try:
+            func()
+        except Exception:
+            logger.exception("手动触发任务失败: {}", task_name)
+            return False
         logger.info("已手动触发任务: {}", task_name)
         return True
 
     def get_task_status(self) -> list[dict]:
+        """????????????????
+
+        Returns:
+            ?????????????????????????????
+        """
         result: list[dict] = []
+        task_names: list[str] = sorted(VALID_TASK_NAMES)
+        placeholders = ",".join(["?"] * len(task_names))
         with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT task_name, status, started_at, finished_at,
+                           error_message, affected_assets
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY task_name ORDER BY started_at DESC
+                        ) as rn
+                        FROM run_logs
+                        WHERE task_name IN ({placeholders})
+                    ) WHERE rn = 1""",
+                task_names,
+            ).fetchall()
+            latest_rows: dict[str, object] = {row["task_name"]: row for row in rows}
+
             for task_name in VALID_TASK_NAMES:
-                row = conn.execute(
-                    """SELECT task_name, status, started_at, finished_at,
-                              error_message, affected_assets
-                       FROM run_logs
-                       WHERE task_name = ?
-                       ORDER BY started_at DESC LIMIT 1""",
-                    (task_name,),
-                ).fetchone()
+                row = latest_rows.get(task_name)
 
                 last_run_at: str | None = None
                 last_status: str | None = None
@@ -228,44 +304,21 @@ class SchedulerManager:
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
-        conditions: list[str] = []
-        params: list[str | int] = []
-        if task_name is not None:
-            conditions.append("task_name = ?")
-            params.append(task_name)
-        if status is not None:
-            conditions.append("status = ?")
-            params.append(status)
+        """查询任务运行日志，委托 database.query_run_logs 实现。
 
-        where_clause: str = ""
-        if conditions:
-            where_clause = "WHERE " + " AND ".join(conditions)
+        Args:
+            task_name: 按任务名过滤
+            status: 按状态过滤（success / failure）
+            page: 页码
+            page_size: 每页数量
 
-        with get_db() as conn:
-            count_row = conn.execute(
-                f"SELECT COUNT(*) as cnt FROM run_logs {where_clause}",
-                params,
-            ).fetchone()
-            total: int = count_row["cnt"] if count_row else 0
+        Returns:
+            含 items 和 page_info 的字典
+        """
+        from backend.storage.database import query_run_logs
+        return query_run_logs(
+            task_name=task_name, status=status, page=page, page_size=page_size,
+        )
 
-            offset: int = (page - 1) * page_size
-            rows = conn.execute(
-                f"""SELECT id, task_name, status, started_at, finished_at,
-                           error_message, affected_assets
-                    FROM run_logs
-                    {where_clause}
-                    ORDER BY started_at DESC
-                    LIMIT ? OFFSET ?""",
-                params + [page_size, offset],
-            ).fetchall()
 
-        items: list[dict] = [dict(row) for row in rows]
-        return {
-            "items": items,
-            "page_info": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
-            },
-        }
+

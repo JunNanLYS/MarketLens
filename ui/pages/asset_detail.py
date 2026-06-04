@@ -154,8 +154,12 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
 def render() -> None:
     st.header("标的详情")
 
-    assets_result: dict[str, Any] = get_assets(page_size=100)
-    asset_items: list[dict[str, Any]] = assets_result.get("items", [])
+    @st.cache_data(ttl=30)
+    def _get_assets_cached() -> list[dict[str, Any]]:
+        assets_result: dict[str, Any] = get_assets(page_size=100)
+        return assets_result.get("items", [])
+
+    asset_items: list[dict[str, Any]] = _get_assets_cached()
 
     if not asset_items:
         st.info("暂无追踪标的，请先在「追踪标的」页面添加")

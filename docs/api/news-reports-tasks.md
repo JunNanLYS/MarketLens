@@ -65,7 +65,7 @@ GET /api/v1/news/1 HTTP/1.1
 | `GET` | `/reports` | 报告列表 | 200 |
 | `GET` | `/reports/{symbol}` | 指定标的最新报告 | 200, 404 |
 | `GET` | `/reports/{symbol}/history` | 指定标的历史报告 | 200, 404 |
-| `POST` | `/reports/generate` | 手动生成报告 | 202, 400 |
+| `POST` | `/reports/generate` | 手动生成报告 | 200, 400 |
 
 ### `GET /reports` — 报告列表
 
@@ -131,7 +131,9 @@ Content-Type: application/json
 { "symbols": ["hk00700", "sh600519"], "force": false }
 ```
 
-→ `202 Accepted`：`{ "status": "accepted", "targets": 2, "estimated_seconds": 10 }`
+→ `200 OK`：`{ "status": "accepted", "generated": 2, "skipped": 0 }`
+
+> `status: "accepted"` 表示请求已被接收并同步执行完成。UI 通过判断 `status == "accepted"` 显示成功提示。
 
 ---
 

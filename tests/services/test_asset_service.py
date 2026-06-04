@@ -1,13 +1,13 @@
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from backend.collectors.base import BaseProvider
 from backend.services.asset_service import AssetService
-from backend.storage.database import set_db_path
-from backend.storage.schema import init_db
+from backend.storage.database import aget_db, set_db_path
+from backend.storage.schema import init_db_sync as init_db
 
 
 class FakeProvider(BaseProvider):
@@ -15,22 +15,22 @@ class FakeProvider(BaseProvider):
         super().__init__(name=name)
         self._search_results = search_results or []
 
-    def search(self, keyword: str) -> list[dict]:
+    async def search(self, keyword: str) -> list[dict]:
         return self._search_results
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         return []
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         return []
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         return {}
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         return {}
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         return {}
 
 
@@ -55,8 +55,8 @@ def service(fake_providers: dict[str, list[BaseProvider]]) -> AssetService:
     return AssetService(providers=fake_providers)
 
 
-def test_add_asset_success(service: AssetService) -> None:
-    result = service.add_asset({"symbol": "hk00700"})
+async def test_add_asset_success(service: AssetService) -> None:
+    result = await service.add_asset({"symbol": "hk00700"})
     assert result["symbol"] == "hk00700"
     assert result["market"] == "hk"
     assert result["enabled"] is True or result["enabled"] == 1
@@ -64,8 +64,8 @@ def test_add_asset_success(service: AssetService) -> None:
     assert "id" in result
 
 
-def test_add_asset_with_name_and_tags(service: AssetService) -> None:
-    result = service.add_asset({
+async def test_add_asset_with_name_and_tags(service: AssetService) -> None:
+    result = await service.add_asset({
         "symbol": "sh600519",
         "name": "贵州茅台",
         "tags": ["白酒", "A股"],
@@ -77,45 +77,45 @@ def test_add_asset_with_name_and_tags(service: AssetService) -> None:
     assert result["market"] == "sh"
 
 
-def test_add_asset_infer_market_us(service: AssetService) -> None:
-    result = service.add_asset({"symbol": "usAAPL"})
+async def test_add_asset_infer_market_us(service: AssetService) -> None:
+    result = await service.add_asset({"symbol": "usAAPL"})
     assert result["market"] == "us"
 
 
-def test_add_asset_infer_market_fut(service: AssetService) -> None:
-    result = service.add_asset({"symbol": "futrb2501"})
+async def test_add_asset_infer_market_fut(service: AssetService) -> None:
+    result = await service.add_asset({"symbol": "futrb2501"})
     assert result["market"] == "fut"
 
 
-def test_add_asset_duplicate(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700"})
+async def test_add_asset_duplicate(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700"})
     with pytest.raises(ValueError, match="已在追踪列表"):
-        service.add_asset({"symbol": "hk00700"})
+        await service.add_asset({"symbol": "hk00700"})
 
 
-def test_add_asset_invalid_symbol(service: AssetService) -> None:
+async def test_add_asset_invalid_symbol(service: AssetService) -> None:
     with pytest.raises(ValueError, match="无法识别"):
-        service.add_asset({"symbol": "xyz999"})
+        await service.add_asset({"symbol": "xyz999"})
 
 
-def test_add_asset_empty_symbol(service: AssetService) -> None:
+async def test_add_asset_empty_symbol(service: AssetService) -> None:
     with pytest.raises(ValueError):
-        service.add_asset({"symbol": ""})
+        await service.add_asset({"symbol": ""})
 
 
-def test_add_asset_auto_search_name() -> None:
+async def test_add_asset_auto_search_name() -> None:
     fake = FakeProvider(
         name="fake",
         search_results=[{"symbol": "hk00700", "name": "腾讯控股", "market": "hk"}],
     )
     svc = AssetService(providers={"structured": [fake], "news": []})
-    result = svc.add_asset({"symbol": "hk00700"})
+    result = await svc.add_asset({"symbol": "hk00700"})
     assert result["name"] == "腾讯控股"
 
 
-def test_get_assets_default_enabled_only(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
-    service.add_asset({"symbol": "sh600519", "name": "贵州茅台"})
+async def test_get_assets_default_enabled_only(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+    await service.add_asset({"symbol": "sh600519", "name": "贵州茅台"})
     service.delete_asset(1, soft=True)
 
     result = service.get_assets()
@@ -123,8 +123,8 @@ def test_get_assets_default_enabled_only(service: AssetService) -> None:
     assert result["items"][0]["symbol"] == "sh600519"
 
 
-def test_get_assets_with_enabled_false(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_assets_with_enabled_false(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     service.delete_asset(1, soft=True)
 
     result = service.get_assets(filters={"enabled": False})
@@ -132,9 +132,9 @@ def test_get_assets_with_enabled_false(service: AssetService) -> None:
     assert result["items"][0]["symbol"] == "hk00700"
 
 
-def test_get_assets_pagination(service: AssetService) -> None:
+async def test_get_assets_pagination(service: AssetService) -> None:
     for i in range(5):
-        service.add_asset({"symbol": f"sh6000{i:02d}", "name": f"股票{i}"})
+        await service.add_asset({"symbol": f"sh6000{i:02d}", "name": f"股票{i}"})
 
     result = service.get_assets(page=1, page_size=2)
     assert len(result["items"]) == 2
@@ -143,30 +143,30 @@ def test_get_assets_pagination(service: AssetService) -> None:
     assert result["page_info"]["page"] == 1
 
 
-def test_get_assets_filter_by_market(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
-    service.add_asset({"symbol": "sh600519", "name": "贵州茅台"})
+async def test_get_assets_filter_by_market(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+    await service.add_asset({"symbol": "sh600519", "name": "贵州茅台"})
 
     result = service.get_assets(filters={"market": "hk"})
     assert len(result["items"]) == 1
     assert result["items"][0]["market"] == "hk"
 
 
-def test_get_assets_filter_by_tag(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700", "name": "腾讯控股", "tags": ["互联网"]})
-    service.add_asset({"symbol": "sh600519", "name": "贵州茅台", "tags": ["白酒"]})
+async def test_get_assets_filter_by_tag(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股", "tags": ["互联网"]})
+    await service.add_asset({"symbol": "sh600519", "name": "贵州茅台", "tags": ["白酒"]})
 
     result = service.get_assets(filters={"tag": "互联网"})
     assert len(result["items"]) == 1
     assert result["items"][0]["symbol"] == "hk00700"
 
 
-def test_get_assets_with_quote(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_assets_with_quote(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import get_db
-    with get_db() as conn:
-        conn.execute(
+    from backend.storage.database import aget_db
+    async with aget_db() as conn:
+        await conn.execute(
             """INSERT INTO market_quotes (symbol, price, change_pct, collected_at)
                VALUES (?, ?, ?, datetime('now'))""",
             ("hk00700", 385.0, 1.2),
@@ -178,8 +178,8 @@ def test_get_assets_with_quote(service: AssetService) -> None:
     assert result["items"][0]["latest_change_pct"] == 1.2
 
 
-def test_get_asset_by_id_basic(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_asset_by_id_basic(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     result = service.get_asset_by_id(asset["id"])
     assert result is not None
     assert result["symbol"] == "hk00700"
@@ -191,12 +191,12 @@ def test_get_asset_by_id_basic(service: AssetService) -> None:
     assert result["latest_report"] is None
 
 
-def test_get_asset_by_id_with_quote(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_asset_by_id_with_quote(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import get_db
-    with get_db() as conn:
-        conn.execute(
+    from backend.storage.database import aget_db
+    async with aget_db() as conn:
+        await conn.execute(
             """INSERT INTO market_quotes (symbol, price, change, change_pct, open, high, low, volume, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
             ("hk00700", 385.0, 4.6, 1.2, 382.0, 387.5, 381.0, 23456789),
@@ -208,13 +208,13 @@ def test_get_asset_by_id_with_quote(service: AssetService) -> None:
     assert result["quote"]["price"] == 385.0
 
 
-def test_get_asset_by_id_with_kline(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_asset_by_id_with_kline(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import get_db
-    with get_db() as conn:
+    from backend.storage.database import aget_db
+    async with aget_db() as conn:
         for i in range(60):
-            conn.execute(
+            await conn.execute(
                 """INSERT INTO kline_daily (symbol, date, close, collected_at)
                    VALUES (?, ?, ?, datetime('now'))""",
                 ("hk00700", f"2026-05-{i+1:02d}", 370.0 + i * 0.3),
@@ -229,12 +229,12 @@ def test_get_asset_by_id_with_kline(service: AssetService) -> None:
     assert result["kline_summary"]["trend"] != "数据不足"
 
 
-def test_get_asset_by_id_with_finance(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_asset_by_id_with_finance(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import get_db
-    with get_db() as conn:
-        conn.execute(
+    from backend.storage.database import aget_db
+    async with aget_db() as conn:
+        await conn.execute(
             """INSERT INTO financial_reports (symbol, report_period, revenue_yoy, eps, roe, collected_at)
                VALUES (?, ?, ?, ?, ?, datetime('now'))""",
             ("hk00700", "2026Q1", 8.5, 12.8, 18.2),
@@ -246,13 +246,13 @@ def test_get_asset_by_id_with_finance(service: AssetService) -> None:
     assert result["finance_summary"]["report_period"] == "2026Q1"
 
 
-def test_get_asset_by_id_with_fund_flow(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_asset_by_id_with_fund_flow(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import get_db
-    with get_db() as conn:
+    from backend.storage.database import aget_db
+    async with aget_db() as conn:
         for i in range(5):
-            conn.execute(
+            await conn.execute(
                 """INSERT INTO fund_flows (symbol, date, main_net_inflow, collected_at)
                    VALUES (?, ?, ?, datetime('now'))""",
                 ("hk00700", f"2026-05-{26+i:02d}", 100000000.0),
@@ -264,12 +264,12 @@ def test_get_asset_by_id_with_fund_flow(service: AssetService) -> None:
     assert result["fund_flow_summary"]["net_flow_5d"] == 500000000.0
 
 
-def test_get_asset_by_id_with_ai_report(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_get_asset_by_id_with_ai_report(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import get_db
-    with get_db() as conn:
-        conn.execute(
+    from backend.storage.database import aget_db
+    async with aget_db() as conn:
+        await conn.execute(
             """INSERT INTO ai_reports (symbol, action, confidence, risk_level, generated_at)
                VALUES (?, ?, ?, ?, datetime('now'))""",
             ("hk00700", "watch", 0.52, "medium"),
@@ -281,46 +281,46 @@ def test_get_asset_by_id_with_ai_report(service: AssetService) -> None:
     assert result["latest_report"]["action"] == "watch"
 
 
-def test_get_asset_by_id_not_found(service: AssetService) -> None:
+async def test_get_asset_by_id_not_found(service: AssetService) -> None:
     result = service.get_asset_by_id(999)
     assert result is None
 
 
-def test_update_asset_tags(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_update_asset_tags(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     result = service.update_asset(asset["id"], {"tags": ["互联网", "AI概念"]})
     assert result is not None
     assert result["tags"] == ["互联网", "AI概念"]
 
 
-def test_update_asset_enabled(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_update_asset_enabled(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     result = service.update_asset(asset["id"], {"enabled": False})
     assert result is not None
     assert result["enabled"] == 0 or result["enabled"] is False
 
 
-def test_update_asset_notes(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_update_asset_notes(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     result = service.update_asset(asset["id"], {"notes": "增加备注"})
     assert result is not None
     assert result["notes"] == "增加备注"
 
 
-def test_update_asset_not_found(service: AssetService) -> None:
+async def test_update_asset_not_found(service: AssetService) -> None:
     result = service.update_asset(999, {"notes": "test"})
     assert result is None
 
 
-def test_update_asset_empty_data(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_update_asset_empty_data(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     result = service.update_asset(asset["id"], {})
     assert result is not None
     assert result["symbol"] == "hk00700"
 
 
-def test_delete_asset_soft(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_delete_asset_soft(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     success = service.delete_asset(asset["id"], soft=True)
     assert success is True
 
@@ -329,8 +329,8 @@ def test_delete_asset_soft(service: AssetService) -> None:
     assert result["enabled"] == 0 or result["enabled"] is False
 
 
-def test_delete_asset_hard(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_delete_asset_hard(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     success = service.delete_asset(asset["id"], soft=False)
     assert success is True
 
@@ -338,19 +338,19 @@ def test_delete_asset_hard(service: AssetService) -> None:
     assert result is None
 
 
-def test_delete_asset_not_found(service: AssetService) -> None:
+async def test_delete_asset_not_found(service: AssetService) -> None:
     success = service.delete_asset(999, soft=True)
     assert success is False
 
 
-def test_delete_asset_soft_already_disabled(service: AssetService) -> None:
-    asset = service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+async def test_delete_asset_soft_already_disabled(service: AssetService) -> None:
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
     service.delete_asset(asset["id"], soft=True)
     success = service.delete_asset(asset["id"], soft=True)
     assert success is False
 
 
-def test_search_assets(service: AssetService) -> None:
+async def test_search_assets(service: AssetService) -> None:
     fake = FakeProvider(
         name="fake",
         search_results=[
@@ -359,12 +359,12 @@ def test_search_assets(service: AssetService) -> None:
         ],
     )
     svc = AssetService(providers={"structured": [fake], "news": []})
-    results = svc.search_assets("腾讯")
+    results = await svc.search_assets("腾讯")
     assert len(results) == 2
     assert results[0]["source"] == "fake"
 
 
-def test_search_assets_with_market_filter() -> None:
+async def test_search_assets_with_market_filter() -> None:
     fake = FakeProvider(
         name="fake",
         search_results=[
@@ -373,13 +373,13 @@ def test_search_assets_with_market_filter() -> None:
         ],
     )
     svc = AssetService(providers={"structured": [fake], "news": []})
-    results = svc.search_assets("腾讯", market="hk")
+    results = await svc.search_assets("腾讯", market="hk")
     assert len(results) == 1
     assert results[0]["market"] == "hk"
 
 
-def test_search_assets_provider_error() -> None:
-    failing = MagicMock(spec=BaseProvider)
+async def test_search_assets_provider_error() -> None:
+    failing = AsyncMock(spec=BaseProvider)
     failing.name = "failing"
     failing.search.side_effect = Exception("连接超时")
 
@@ -388,12 +388,12 @@ def test_search_assets_provider_error() -> None:
         search_results=[{"symbol": "hk00700", "name": "腾讯控股", "market": "hk"}],
     )
     svc = AssetService(providers={"structured": [failing, fake], "news": []})
-    results = svc.search_assets("腾讯")
+    results = await svc.search_assets("腾讯")
     assert len(results) == 1
     assert results[0]["source"] == "backup"
 
 
-def test_search_assets_dedup() -> None:
+async def test_search_assets_dedup() -> None:
     fake1 = FakeProvider(
         name="source1",
         search_results=[{"symbol": "hk00700", "name": "腾讯控股", "market": "hk"}],
@@ -403,15 +403,15 @@ def test_search_assets_dedup() -> None:
         search_results=[{"symbol": "hk00700", "name": "腾讯控股", "market": "hk"}],
     )
     svc = AssetService(providers={"structured": [fake1, fake2], "news": []})
-    results = svc.search_assets("腾讯")
+    results = await svc.search_assets("腾讯")
     assert len(results) == 1
     assert results[0]["source"] == "source1"
 
 
-def test_get_active_assets(service: AssetService) -> None:
-    service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
-    service.add_asset({"symbol": "sh600519", "name": "贵州茅台"})
-    service.add_asset({"symbol": "usAAPL", "name": "Apple"})
+async def test_get_active_assets(service: AssetService) -> None:
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+    await service.add_asset({"symbol": "sh600519", "name": "贵州茅台"})
+    await service.add_asset({"symbol": "usAAPL", "name": "Apple"})
     service.delete_asset(2, soft=True)
 
     result = service.get_active_assets()
@@ -422,16 +422,16 @@ def test_get_active_assets(service: AssetService) -> None:
     assert "sh600519" not in symbols
 
 
-def test_add_asset_sz_market(service: AssetService) -> None:
-    result = service.add_asset({"symbol": "sz000001", "name": "平安银行"})
+async def test_add_asset_sz_market(service: AssetService) -> None:
+    result = await service.add_asset({"symbol": "sz000001", "name": "平安银行"})
     assert result["market"] == "sz"
 
 
-def test_add_asset_default_asset_type(service: AssetService) -> None:
-    result = service.add_asset({"symbol": "hk00700"})
+async def test_add_asset_default_asset_type(service: AssetService) -> None:
+    result = await service.add_asset({"symbol": "hk00700"})
     assert result["asset_type"] == "stock"
 
 
-def test_add_asset_custom_asset_type(service: AssetService) -> None:
-    result = service.add_asset({"symbol": "hk02800", "asset_type": "etf"})
+async def test_add_asset_custom_asset_type(service: AssetService) -> None:
+    result = await service.add_asset({"symbol": "hk02800", "asset_type": "etf"})
     assert result["asset_type"] == "etf"

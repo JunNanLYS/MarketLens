@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -8,7 +8,7 @@ import pytest
 from backend.collectors.base import BaseProvider
 from backend.services.collection_service import CollectionService
 from backend.storage.database import get_db, set_db_path
-from backend.storage.schema import init_db
+from backend.storage.schema import init_db_sync as init_db
 
 
 class MockProvider(BaseProvider):
@@ -31,30 +31,30 @@ class MockProvider(BaseProvider):
         self._technical_data = technical_data or {}
         self._fail_symbols = fail_symbols or set()
 
-    def search(self, keyword: str) -> list[dict]:
+    async def search(self, keyword: str) -> list[dict]:
         return []
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         if any(s in self._fail_symbols for s in symbols):
             raise RuntimeError("Provider 采集失败")
         return [q for q in self._quote_data if q.get("symbol") in symbols]
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         if symbol in self._fail_symbols:
             raise RuntimeError("Provider 采集失败")
         return self._kline_data
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         if symbol in self._fail_symbols:
             raise RuntimeError("Provider 采集失败")
         return self._finance_data
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         if symbol in self._fail_symbols:
             raise RuntimeError("Provider 采集失败")
         return self._fund_flow_data
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         if symbol in self._fail_symbols:
             raise RuntimeError("Provider 采集失败")
         return self._technical_data
@@ -194,15 +194,15 @@ def service(mock_provider: MockProvider) -> CollectionService:
     return CollectionService(providers={"structured": [mock_provider], "news": []})
 
 
-def test_collect_quotes_success(service: CollectionService) -> None:
+async def test_collect_quotes_success(service: CollectionService) -> None:
     _insert_assets("sh600519", "hk00700")
-    result = service.collect_quotes()
+    result = await service.collect_quotes()
     assert result["success"] == 2
     assert result["failed"] == 0
     assert result["total"] == 2
 
 
-def test_collect_quotes_single_failure_does_not_affect_others() -> None:
+async def test_collect_quotes_single_failure_does_not_affect_others() -> None:
     _insert_assets("sh600519", "hk00700", "sz000001")
     fail_provider = MockProvider(
         name="mock",
@@ -210,24 +210,24 @@ def test_collect_quotes_single_failure_does_not_affect_others() -> None:
         fail_symbols={"sz000001"},
     )
     svc = CollectionService(providers={"structured": [fail_provider], "news": []})
-    result = svc.collect_quotes()
+    result = await svc.collect_quotes()
     assert result["success"] == 2
     assert result["failed"] == 1
     assert result["total"] == 3
 
 
-def test_collect_daily_close_success(service: CollectionService) -> None:
+async def test_collect_daily_close_success(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    result = service.collect_daily_close()
+    result = await service.collect_daily_close()
     assert result["kline"]["success"] > 0
     assert result["finance"]["success"] > 0
     assert result["fund_flow"]["success"] > 0
     assert result["technical"]["success"] > 0
 
 
-def test_collect_quotes_saves_raw_data(service: CollectionService) -> None:
+async def test_collect_quotes_saves_raw_data(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_quotes()
+    await service.collect_quotes()
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM raw_data WHERE data_type = 'quote' AND symbol = 'sh600519'"
@@ -240,9 +240,9 @@ def test_collect_quotes_saves_raw_data(service: CollectionService) -> None:
     assert parsed["price"] == 1800.0
 
 
-def test_collect_daily_close_saves_raw_data(service: CollectionService) -> None:
+async def test_collect_daily_close_saves_raw_data(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
+    await service.collect_daily_close()
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM raw_data WHERE symbol = 'sh600519'"
@@ -254,9 +254,9 @@ def test_collect_daily_close_saves_raw_data(service: CollectionService) -> None:
     assert "technical" in types
 
 
-def test_get_quote(service: CollectionService) -> None:
+async def test_get_quote(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_quotes()
+    await service.collect_quotes()
     quote = service.get_quote("sh600519")
     assert quote is not None
     assert quote["symbol"] == "sh600519"
@@ -265,17 +265,17 @@ def test_get_quote(service: CollectionService) -> None:
     assert quote["collected_at"] is not None
 
 
-def test_get_quote_history(service: CollectionService) -> None:
+async def test_get_quote_history(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_quotes()
+    await service.collect_quotes()
     history = service.get_quote_history("sh600519", limit=10)
     assert len(history) >= 1
     assert history[0]["symbol"] == "sh600519"
 
 
-def test_get_quote_history_with_time_range(service: CollectionService) -> None:
+async def test_get_quote_history_with_time_range(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_quotes()
+    await service.collect_quotes()
     history = service.get_quote_history(
         "sh600519",
         from_dt="2026-05-31T00:00:00+00:00",
@@ -284,27 +284,27 @@ def test_get_quote_history_with_time_range(service: CollectionService) -> None:
     assert len(history) >= 1
 
 
-def test_get_kline(service: CollectionService) -> None:
+async def test_get_kline(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
+    await service.collect_daily_close()
     kline = service.get_kline("sh600519", limit=10)
     assert len(kline) >= 1
     assert kline[0]["symbol"] == "sh600519"
     assert kline[0]["date"] is not None
 
 
-def test_get_finance(service: CollectionService) -> None:
+async def test_get_finance(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
+    await service.collect_daily_close()
     finance = service.get_finance("sh600519", limit=4)
     assert len(finance) >= 1
     assert finance[0]["symbol"] == "sh600519"
     assert finance[0]["report_period"] == "2026Q1"
 
 
-def test_get_fund_flow_with_summary(service: CollectionService) -> None:
+async def test_get_fund_flow_with_summary(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
+    await service.collect_daily_close()
     result = service.get_fund_flow("sh600519", days=5)
     assert "items" in result
     assert "summary" in result
@@ -315,9 +315,9 @@ def test_get_fund_flow_with_summary(service: CollectionService) -> None:
     assert "avg_net_inflow_ratio" in summary
 
 
-def test_get_technical(service: CollectionService) -> None:
+async def test_get_technical(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
+    await service.collect_daily_close()
     tech = service.get_technical("sh600519")
     assert tech is not None
     assert tech["symbol"] == "sh600519"
@@ -356,9 +356,9 @@ def test_get_technical_no_data(service: CollectionService) -> None:
     assert result is None
 
 
-def test_collect_quotes_writes_run_log(service: CollectionService) -> None:
+async def test_collect_quotes_writes_run_log(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_quotes()
+    await service.collect_quotes()
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM run_logs WHERE task_name = 'quote'"
@@ -371,9 +371,9 @@ def test_collect_quotes_writes_run_log(service: CollectionService) -> None:
     assert log["finished_at"] is not None
 
 
-def test_collect_daily_close_writes_run_log(service: CollectionService) -> None:
+async def test_collect_daily_close_writes_run_log(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
+    await service.collect_daily_close()
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM run_logs WHERE task_name = 'daily_close'"
@@ -384,7 +384,7 @@ def test_collect_daily_close_writes_run_log(service: CollectionService) -> None:
     assert log["affected_assets"] == 1
 
 
-def test_collect_quotes_run_log_with_failure() -> None:
+async def test_collect_quotes_run_log_with_failure() -> None:
     _insert_assets("sh600519", "sz000001")
     fail_provider = MockProvider(
         name="mock",
@@ -392,7 +392,7 @@ def test_collect_quotes_run_log_with_failure() -> None:
         fail_symbols={"sz000001"},
     )
     svc = CollectionService(providers={"structured": [fail_provider], "news": []})
-    svc.collect_quotes()
+    await svc.collect_quotes()
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM run_logs WHERE task_name = 'quote'"
@@ -403,27 +403,31 @@ def test_collect_quotes_run_log_with_failure() -> None:
     assert "sz000001" in log["error_message"]
 
 
-def test_collect_quote_single(service: CollectionService) -> None:
+async def test_collect_quote_single(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    result = service.collect_quote_single("sh600519")
+    result = await service.collect_quote_single("sh600519")
     assert result is not None
     assert result["symbol"] == "sh600519"
     assert result["price"] == 1800.0
 
 
-def test_collect_quote_single_no_provider() -> None:
+async def test_collect_quote_single_no_provider() -> None:
     empty_provider = MockProvider(name="empty", quote_data=[])
     svc = CollectionService(providers={"structured": [empty_provider], "news": []})
-    result = svc.collect_quote_single("sh600519")
+    result = await svc.collect_quote_single("sh600519")
     assert result is None
 
 
-def test_kline_idempotent(service: CollectionService) -> None:
+async def test_kline_idempotent(service: CollectionService) -> None:
     _insert_assets("sh600519")
-    service.collect_daily_close()
-    service.collect_daily_close()
+    await service.collect_daily_close()
+    await service.collect_daily_close()
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM kline_daily WHERE symbol = 'sh600519' AND date = '2026-05-30'"
         ).fetchall()
     assert len(rows) == 1
+
+
+
+

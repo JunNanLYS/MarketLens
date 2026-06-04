@@ -22,18 +22,24 @@ class NewsService:
             providers_map = create_providers(config)
             self._providers = providers_map.get("news", [])
 
-    def collect_news(self) -> dict[str, int]:
+    async def collect_news(self) -> dict[str, int]:
         started_at = datetime.now(timezone.utc).isoformat()
         collected = 0
         skipped = 0
         all_items: list[dict] = []
 
+        with get_db() as conn:
+            tracked_symbol_rows = conn.execute(
+                "SELECT symbol, name FROM tracked_assets WHERE enabled = 1"
+            ).fetchall()
+        tracked_symbols = [f"{r['name']}({r['symbol']})" for r in tracked_symbol_rows]
+
         for provider in self._providers:
             try:
                 if hasattr(provider, "fetch_news"):
-                    items = provider.fetch_news()
+                    items = await provider.fetch_news(tracked_symbols)
                 else:
-                    items = provider.search("")
+                    items = await provider.search("")
                 all_items.extend(items)
                 logger.info("Provider {} 返回 {} 条新闻", provider.name, len(items))
             except Exception:
@@ -49,16 +55,21 @@ class NewsService:
 
             affected_symbols_set: set[str] = set()
 
+            # 预取最近一批已有 URL，避免逐条查询（N+1 问题）。
+            # 仅取最近 5000 条以防止全表扫描导致内存膨胀；新增新闻的发布时间
+            # 一定晚于这些记录，因此覆盖了实际去重需求。
+            existing_urls: set[str] = set()
+            url_rows = conn.execute(
+                "SELECT url FROM news_items WHERE url IS NOT NULL "
+                "ORDER BY id DESC LIMIT 5000"
+            ).fetchall()
+            existing_urls = {r["url"] for r in url_rows}
+
             for item in all_items:
-                url = item.get("url", "")
-                if url:
-                    existing = conn.execute(
-                        "SELECT id FROM news_items WHERE url = ?",
-                        (url,),
-                    ).fetchone()
-                    if existing is not None:
-                        skipped += 1
-                        continue
+                url = (item.get("url", "") or "").strip() or None
+                if url and url in existing_urls:
+                    skipped += 1
+                    continue
 
                 related_symbols = self._match_symbols_with_conn(
                     conn,
@@ -74,7 +85,7 @@ class NewsService:
                 news_data = {
                     "title": item.get("title", ""),
                     "source": item.get("source", ""),
-                    "url": url or None,
+                    "url": url,
                     "content": item.get("content"),
                     "summary": item.get("summary"),
                     "published_at": item.get("published_at"),
@@ -85,7 +96,6 @@ class NewsService:
                 }
 
                 try:
-                    conn.execute("SAVEPOINT news_item")
                     conn.execute(
                         """INSERT INTO news_items
                            (title, source, url, content, summary, published_at,
@@ -105,6 +115,8 @@ class NewsService:
                         ),
                     )
                     collected += 1
+                    if url:
+                        existing_urls.add(url)
 
                     if url:
                         raw_json = json.dumps(item, ensure_ascii=False, default=str)
@@ -113,9 +125,7 @@ class NewsService:
                                VALUES (?, ?, ?, ?, ?)""",
                             ("news", news_data["source"], "news", raw_json, now),
                         )
-                    conn.execute("RELEASE news_item")
                 except Exception:
-                    conn.execute("ROLLBACK TO news_item")
                     logger.exception("新闻入库失败: title={}", news_data["title"])
                     skipped += 1
 
@@ -220,7 +230,7 @@ class NewsService:
         count_sql = f"SELECT COUNT(*) FROM news_items {where_clause}"
         data_sql = (
             f"SELECT * FROM news_items {where_clause} "
-            "ORDER BY published_at DESC NULLS LAST "
+            "ORDER BY published_at IS NULL, published_at DESC "
             "LIMIT ? OFFSET ?"
         )
 

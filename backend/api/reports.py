@@ -14,7 +14,7 @@ class GenerateRequest(BaseModel):
 
 
 @router.post("/generate", status_code=200)
-def generate_reports(body: GenerateRequest) -> dict:
+async def generate_reports(body: GenerateRequest) -> dict:
     symbols = body.symbols
     force = body.force
     targets = len(symbols) if symbols else 0
@@ -22,7 +22,7 @@ def generate_reports(body: GenerateRequest) -> dict:
         from backend.services.report_service import ReportService as RS
         active = RS._get_active_symbols()
         targets = len(active)
-    result = _service.generate_reports(symbols=symbols, force=force)
+    result = await _service.generate_reports(symbols=symbols, force=force)
     return {
         "status": "completed",
         "generated": result["generated"],

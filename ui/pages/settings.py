@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -11,7 +12,7 @@ def render() -> None:
     st.subheader("数据源状态")
     try:
         import yaml
-        config_path = "config.yaml"
+        config_path: Path = Path(__file__).resolve().parents[2] / "config.yaml"
         with open(config_path, "r", encoding="utf-8") as f:
             config: dict[str, Any] = yaml.safe_load(f)
         data_sources: list[dict[str, Any]] = config.get("data_sources", [])

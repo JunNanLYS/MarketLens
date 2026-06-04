@@ -1,4 +1,5 @@
-from contextlib import contextmanager
+import threading
+from contextlib import asynccontextmanager, contextmanager
 from typing import Generator
 
 import sqlite3
@@ -8,14 +9,16 @@ from loguru import logger
 from backend.config import get_config, get_data_dir
 
 _db_path_override: str | None = None
+_db_path_lock = threading.Lock()
 
 
 def set_db_path(path: str | None) -> None:
     global _db_path_override
-    _db_path_override = path
+    with _db_path_lock:
+        _db_path_override = path
 
 
-def get_connection(db_path: str | None = None) -> sqlite3.Connection:
+def get_connection_sync(db_path: str | None = None) -> sqlite3.Connection:
     if db_path is None:
         db_path = _db_path_override
     if db_path is None:
@@ -31,7 +34,7 @@ def get_connection(db_path: str | None = None) -> sqlite3.Connection:
 
 @contextmanager
 def get_db(db_path: str | None = None) -> Generator[sqlite3.Connection, None, None]:
-    conn = get_connection(db_path)
+    conn = get_connection_sync(db_path)
     try:
         yield conn
         conn.commit()
@@ -41,6 +44,48 @@ def get_db(db_path: str | None = None) -> Generator[sqlite3.Connection, None, No
         raise
     finally:
         conn.close()
+        logger.debug("数据库连接已关闭")
+
+
+import aiosqlite
+from typing import AsyncGenerator
+
+async def aget_connection(db_path: str | None = None) -> aiosqlite.Connection:
+    """异步获取数据库连接。"""
+    effective = db_path
+    if effective is None:
+        with _db_path_lock:
+            effective = _db_path_override
+    if effective is None:
+        config = get_config()
+        effective = str(get_data_dir() / config["database"]["path"])
+    conn = await aiosqlite.connect(effective)
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA foreign_keys=ON")
+    conn.row_factory = aiosqlite.Row
+    logger.debug("异步数据库连接已建立: {}", effective)
+    return conn
+
+
+@asynccontextmanager
+async def aget_db(db_path: str | None = None) -> AsyncGenerator[aiosqlite.Connection, None]:
+    """异步数据库上下文管理器。"""
+    conn = await aget_connection(db_path)
+    try:
+        yield conn
+        await conn.commit()
+    except Exception:
+        try:
+            await conn.rollback()
+        except Exception:
+            logger.warning("回滚操作失败，连接可能已断开")
+        logger.exception("数据库操作异常，已回滚")
+        raise
+    finally:
+        try:
+            await conn.close()
+        except Exception:
+            logger.warning("关闭连接时发生异常")
         logger.debug("数据库连接已关闭")
 
 

@@ -1,7 +1,6 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 import pytest
-
 from backend.services.ai_analyzer import AIAnalyzer
 
 
@@ -23,7 +22,7 @@ def _make_kline(ma5_last: float, ma20_last: float, ma60_last: float | None = Non
 class TestAIAnalyzerBullish:
     """多头信号。"""
 
-    def test_bullish_alignment_with_inflow_and_golden_cross(self) -> None:
+    async def test_bullish_alignment_with_inflow_and_golden_cross(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0, "change": 5.0, "change_pct": 1.33, "volume": 1000000, "collected_at": "..."},
@@ -57,7 +56,7 @@ class TestAIAnalyzerBullish:
 class TestAIAnalyzerBearish:
     """空头信号。"""
 
-    def test_bearish_alignment_with_outflow_and_death_cross(self) -> None:
+    async def test_bearish_alignment_with_outflow_and_death_cross(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 350.0, "change": -5.0, "change_pct": -1.4, "volume": 1000000, "collected_at": "..."},
@@ -88,7 +87,7 @@ class TestAIAnalyzerBearish:
 class TestAIAnalyzerInsufficient:
     """证据不足时输出 action=watch, confidence=0。"""
 
-    def test_no_quote_no_kline(self) -> None:
+    async def test_no_quote_no_kline(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": None,
@@ -108,7 +107,7 @@ class TestAIAnalyzerInsufficient:
         assert result["bearish_reasons"] == []
         assert result["key_risks"] == []
 
-    def test_only_quote_no_kline(self) -> None:
+    async def test_only_quote_no_kline(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0},
@@ -126,7 +125,7 @@ class TestAIAnalyzerInsufficient:
 class TestAIAnalyzerRSI:
     """RSI 超买超卖。"""
 
-    def test_rsi_oversold(self) -> None:
+    async def test_rsi_oversold(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 300.0},
@@ -140,7 +139,7 @@ class TestAIAnalyzerRSI:
         result = AIAnalyzer.analyze(evidence)
         assert any("超卖" in r for r in result["bullish_reasons"])
 
-    def test_rsi_overbought(self) -> None:
+    async def test_rsi_overbought(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 400.0},
@@ -158,7 +157,7 @@ class TestAIAnalyzerRSI:
 class TestAIAnalyzerNews:
     """新闻情绪影响。"""
 
-    def test_positive_news(self) -> None:
+    async def test_positive_news(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0},
@@ -178,7 +177,7 @@ class TestAIAnalyzerNews:
         result = AIAnalyzer.analyze(evidence)
         assert any("正面新闻占比" in r for r in result["bullish_reasons"])
 
-    def test_negative_news(self) -> None:
+    async def test_negative_news(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0},
@@ -202,7 +201,7 @@ class TestAIAnalyzerNews:
 class TestAIAnalyzerFinance:
     """财务指标影响。"""
 
-    def test_roe_positive_revenue(self) -> None:
+    async def test_roe_positive_revenue(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0},
@@ -216,7 +215,7 @@ class TestAIAnalyzerFinance:
         result = AIAnalyzer.analyze(evidence)
         assert any("ROE" in r and "营收正增长" in r for r in result["bullish_reasons"])
 
-    def test_net_profit_decline(self) -> None:
+    async def test_net_profit_decline(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0},
@@ -234,7 +233,7 @@ class TestAIAnalyzerFinance:
 class TestAIAnalyzerSchema:
     """输出 JSON 格式校验（字段完整性）。"""
 
-    def test_output_schema(self) -> None:
+    async def test_output_schema(self) -> None:
         evidence = {
             "symbol": "hk00700",
             "quote": {"price": 380.0},
@@ -268,7 +267,7 @@ class TestAIAnalyzerSchema:
 class TestAIAnalyzerDataUsed:
     """data_used 字段正确。"""
 
-    def test_data_used_from_evidence(self) -> None:
+    async def test_data_used_from_evidence(self) -> None:
         data_sources = [
             {"source": "westock", "type": "kline_daily", "collected_at": "2026-05-31T16:05:00+08:00"},
             {"source": "sina_rss", "type": "news", "collected_at": "2026-05-31T17:00:00+08:00"},

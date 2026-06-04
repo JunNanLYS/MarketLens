@@ -1,10 +1,4 @@
-﻿"""腾讯新闻 HTTP 提供者。
-
-通过腾讯新闻公开的热榜 API 获取热点新闻，无需 API Key。
-API: https://r.inews.qq.com/gw/event/hot_ranking_list
-"""
-
-import json
+﻿import json
 from datetime import datetime, timezone
 
 import httpx
@@ -14,7 +8,7 @@ from backend.collectors.base import BaseProvider
 
 
 class TencentNewsHTTPProvider(BaseProvider):
-    """腾讯新闻热榜提供者，使用公开 HTTP API 获取热点新闻（无需 API Key）。"""
+    """腾讯新闻热榜提供者，使用公开 HTTP API 获取热点新闻（异步版）。"""
 
     _API_URL: str = "https://r.inews.qq.com/gw/event/hot_ranking_list"
 
@@ -27,40 +21,53 @@ class TencentNewsHTTPProvider(BaseProvider):
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.max_items: int = int(params.get("max_items", 50)) if params else 50
+        # 懒加载 httpx.AsyncClient：见 rss.py 同类注释
+        self._client: httpx.AsyncClient | None = None
+        self._client_headers: dict[str, str] = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+        }
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+    async def _get_client(self) -> httpx.AsyncClient:
+        """首次使用时创建 httpx 客户端，后续复用。"""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+                headers=self._client_headers,
+            )
+        return self._client
 
-    def search(self, keyword: str) -> list[dict]:
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+
+    async def search(self, keyword: str) -> list[dict]:
         return []
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         return []
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         return []
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         return {}
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         return {}
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         return {}
 
-    def fetch_news(self) -> list[dict]:
+    async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         try:
-            resp = httpx.get(
+            client = await self._get_client()
+            resp = await client.get(
                 self._API_URL,
                 params={"page_size": self.max_items},
-                timeout=self.timeout,
-                follow_redirects=True,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json",
-                },
             )
             resp.raise_for_status()
             return self._parse_response(resp.json())
@@ -95,7 +102,6 @@ class TencentNewsHTTPProvider(BaseProvider):
                 if not isinstance(item, dict):
                     continue
 
-                # 跳过占位/引导条目
                 articletype = item.get("articletype", "0")
                 if articletype == "560":
                     continue
@@ -109,7 +115,6 @@ class TencentNewsHTTPProvider(BaseProvider):
                 abstract = item.get("abstract") or item.get("nlpAbstract") or ""
                 source = item.get("source") or item.get("chlname") or "腾讯新闻"
 
-                # 发布时间
                 ts = item.get("timestamp")
                 published_at = None
                 if ts:
@@ -120,10 +125,8 @@ class TencentNewsHTTPProvider(BaseProvider):
                 if not published_at:
                     published_at = item.get("time")
 
-                # 重要性：基于热榜排名
                 hot_event = item.get("hotEvent", {})
                 ranking = hot_event.get("ranking") or item.get("ranking", 99)
-                hot_score = hot_event.get("hotScore", 0)
                 try:
                     ranking = int(ranking)
                 except (ValueError, TypeError):

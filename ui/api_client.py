@@ -7,10 +7,9 @@ import streamlit as st
 _BASE_URL: str = os.environ.get("MARKETLENS_API_URL", "http://localhost:8000/api/v1")
 
 
+@st.cache_resource
 def _get_client() -> httpx.Client:
-    if "http_client" not in st.session_state:
-        st.session_state.http_client = httpx.Client(base_url=_BASE_URL, timeout=30.0)
-    return st.session_state.http_client
+    return httpx.Client(base_url=_BASE_URL, timeout=30.0)
 
 
 def _handle_response(response: httpx.Response) -> dict[str, Any] | list[Any]:

@@ -1,22 +1,34 @@
 import sqlite3
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
+from backend.config import get_config
 from backend.services.ai_analyzer import AIAnalyzer
 from backend.services.evidence_builder import EvidenceBuilder
-from backend.storage.database import get_db
+from backend.storage.database import get_db, aget_db
 
 
 class ReportService:
+    """AI ????????????????? AI ?????????????????"""
     """AI 报告生成与查询服务。"""
 
     @staticmethod
-    def generate_reports(
+    async def generate_reports(
         symbols: list[str] | None = None,
         force: bool = False,
     ) -> dict:
+        """??????? AI ?????
+
+        Args:
+            symbols: ?????None ?????????
+            force: ???????????
+
+        Returns:
+            ?? generated ? skipped ??????
+        """
         started_at = datetime.now(timezone.utc).isoformat()
         if not symbols:
             symbols = ReportService._get_active_symbols()
@@ -26,13 +38,13 @@ class ReportService:
 
         for symbol in symbols:
             try:
-                with get_db() as conn:
-                    if not force and ReportService._has_today_report(conn, symbol):
+                async with aget_db() as conn:
+                    if not force and await ReportService._has_today_report(conn, symbol):
                         skipped += 1
                         continue
-                    evidence = EvidenceBuilder.build(symbol, conn=conn)
+                    evidence = await EvidenceBuilder.build(symbol, conn=conn)
                     result = AIAnalyzer.analyze(evidence)
-                    ReportService._save_report(conn, symbol, result, force)
+                    await ReportService._save_report(conn, symbol, result, force)
                     generated += 1
             except Exception as e:
                 logger.exception("生成报告失败: {}", symbol)
@@ -150,26 +162,33 @@ class ReportService:
         return [r["symbol"] for r in rows]
 
     @staticmethod
-    def _has_today_report(conn: sqlite3.Connection, symbol: str) -> bool:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        row = conn.execute(
+    async def _has_today_report(conn, symbol: str) -> bool:
+        tz_name = get_config().get("scheduler", {}).get("timezone", "Asia/Shanghai")
+        today = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+        cursor = await conn.execute(
             """SELECT id FROM ai_reports
                WHERE symbol = ? AND date(generated_at) = ?
                LIMIT 1""",
             (symbol, today),
-        ).fetchone()
+        )
+        row = await cursor.fetchone()
         return row is not None
 
     @staticmethod
-    def _save_report(conn: sqlite3.Connection, symbol: str, result: dict, force: bool) -> None:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    async def _save_report(conn, symbol: str, result: dict, force: bool) -> None:
+        tz_name = get_config().get("scheduler", {}).get("timezone", "Asia/Shanghai")
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        today = now.strftime("%Y-%m-%d")
+        # 以调度器时区存储 naive datetime，确保 date(generated_at) 与 today 一致
+        generated_at = now.replace(tzinfo=None).isoformat()
         if force:
-            conn.execute(
+            await conn.execute(
                 """DELETE FROM ai_reports
                    WHERE symbol = ? AND date(generated_at) = ?""",
                 (symbol, today),
             )
-        conn.execute(
+        await conn.execute(
             """INSERT INTO ai_reports
                (symbol, action, confidence, risk_level, summary,
                 bullish_reasons, bearish_reasons, key_risks, data_used, generated_at)
@@ -184,7 +203,7 @@ class ReportService:
                 json.dumps(result["bearish_reasons"], ensure_ascii=False),
                 json.dumps(result["key_risks"], ensure_ascii=False),
                 json.dumps(result["data_used"], ensure_ascii=False),
-                result["generated_at"],
+                generated_at,
             ),
         )
 

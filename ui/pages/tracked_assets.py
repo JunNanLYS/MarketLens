@@ -5,14 +5,14 @@ import streamlit as st
 from ui.api_client import get_assets, create_asset, update_asset, delete_asset, search_assets
 
 MARKET_OPTIONS: dict[str, str] = {
-    "??": "",
-    "A ? (sh)": "sh",
-    "A ? (sz)": "sz",
-    "?? (hk)": "hk",
-    "?? (us)": "us",
-    "?? (fut)": "fut",
-    "???? (hf)": "hf",
-    "???? (nf)": "nf",
+    "全部": "",
+    "A 股（上证）": "sh",
+    "A 股（深证）": "sz",
+    "港股": "hk",
+    "美股": "us",
+    "期货": "fut",
+    "商品期货 (hf)": "hf",
+    "金融期货 (nf)": "nf",
 }
 
 ASSET_TYPE_OPTIONS: dict[str, str] = {

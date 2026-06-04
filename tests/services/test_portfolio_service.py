@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from backend.services.portfolio_service import PortfolioService
-from backend.storage.database import set_db_path
-from backend.storage.schema import init_db
+from backend.storage.database import aget_db, set_db_path
+from backend.storage.schema import init_db_sync as init_db
 
 
 @pytest.fixture(autouse=True)
@@ -30,26 +30,25 @@ def sample_account(svc: PortfolioService) -> dict:
 
 
 @pytest.fixture
-def sample_asset() -> None:
-    from backend.storage.database import get_db
+async def sample_asset() -> None:
+    from backend.storage.database import aget_db
 
-def __insert(table: str, data: dict) -> int:
-    with get_db() as conn:
+async def __insert(table: str, data: dict) -> int:
+    async with aget_db() as conn:
         keys = list(data.keys())
         cols = ', '.join(keys)
         placeholders = ', '.join(['?'] * len(keys))
         sql = f'INSERT INTO {table} ({cols}) VALUES ({placeholders})'
-        cursor = conn.execute(sql, list(data.values()))
+        cursor = await conn.execute(sql, list(data.values()))
         return cursor.lastrowid
 
-
-    _insert(
+    await __insert(
         "tracked_assets",
         {"symbol": "hk00700", "name": "腾讯控股", "market": "hk"},
     )
 
 
-def test_create_account_success(svc: PortfolioService) -> None:
+async def test_create_account_success(svc: PortfolioService) -> None:
     account: dict = svc.create_account({"name": "华泰", "currency": "CNY"})
     assert account["id"] is not None
     assert account["name"] == "华泰"
@@ -57,27 +56,27 @@ def test_create_account_success(svc: PortfolioService) -> None:
     assert account["deleted_at"] is None
 
 
-def test_create_account_duplicate_name_fails(svc: PortfolioService) -> None:
+async def test_create_account_duplicate_name_fails(svc: PortfolioService) -> None:
     svc.create_account({"name": "富途"})
     with pytest.raises(ValueError, match="已存在"):
         svc.create_account({"name": "富途"})
 
 
-def test_create_account_empty_name_fails(svc: PortfolioService) -> None:
+async def test_create_account_empty_name_fails(svc: PortfolioService) -> None:
     with pytest.raises(ValueError, match="不能为空"):
         svc.create_account({"name": ""})
     with pytest.raises(ValueError, match="不能为空"):
         svc.create_account({"name": "   "})
 
 
-def test_get_accounts(svc: PortfolioService) -> None:
+async def test_get_accounts(svc: PortfolioService) -> None:
     svc.create_account({"name": "富途"})
     svc.create_account({"name": "华泰"})
     accounts: list[dict] = svc.get_accounts()
     assert len(accounts) == 2
 
 
-def test_get_accounts_exclude_deleted(svc: PortfolioService) -> None:
+async def test_get_accounts_exclude_deleted(svc: PortfolioService) -> None:
     svc.create_account({"name": "富途"})
     acct: dict = svc.create_account({"name": "华泰"})
     svc.delete_account(acct["id"])
@@ -86,7 +85,7 @@ def test_get_accounts_exclude_deleted(svc: PortfolioService) -> None:
     assert accounts[0]["name"] == "富途"
 
 
-def test_get_accounts_include_deleted(svc: PortfolioService) -> None:
+async def test_get_accounts_include_deleted(svc: PortfolioService) -> None:
     svc.create_account({"name": "富途"})
     acct: dict = svc.create_account({"name": "华泰"})
     svc.delete_account(acct["id"])
@@ -94,18 +93,18 @@ def test_get_accounts_include_deleted(svc: PortfolioService) -> None:
     assert len(accounts) == 2
 
 
-def test_get_account_by_id(svc: PortfolioService) -> None:
+async def test_get_account_by_id(svc: PortfolioService) -> None:
     created: dict = svc.create_account({"name": "富途"})
     found: dict | None = svc.get_account_by_id(created["id"])
     assert found is not None
     assert found["name"] == "富途"
 
 
-def test_get_account_by_id_not_found(svc: PortfolioService) -> None:
+async def test_get_account_by_id_not_found(svc: PortfolioService) -> None:
     assert svc.get_account_by_id(999) is None
 
 
-def test_update_account(svc: PortfolioService) -> None:
+async def test_update_account(svc: PortfolioService) -> None:
     created: dict = svc.create_account({"name": "富途"})
     updated: dict | None = svc.update_account(
         created["id"], {"name": "富途国际", "notes": "港股账户"}
@@ -115,18 +114,18 @@ def test_update_account(svc: PortfolioService) -> None:
     assert updated["notes"] == "港股账户"
 
 
-def test_update_account_duplicate_name(svc: PortfolioService) -> None:
+async def test_update_account_duplicate_name(svc: PortfolioService) -> None:
     svc.create_account({"name": "华泰"})
     created: dict = svc.create_account({"name": "富途"})
     with pytest.raises(ValueError, match="已存在"):
         svc.update_account(created["id"], {"name": "华泰"})
 
 
-def test_update_account_not_found(svc: PortfolioService) -> None:
+async def test_update_account_not_found(svc: PortfolioService) -> None:
     assert svc.update_account(999, {"name": "新名称"}) is None
 
 
-def test_delete_account_soft(svc: PortfolioService) -> None:
+async def test_delete_account_soft(svc: PortfolioService) -> None:
     created: dict = svc.create_account({"name": "富途"})
     assert svc.delete_account(created["id"]) is True
     found: dict | None = svc.get_account_by_id(created["id"])
@@ -134,11 +133,11 @@ def test_delete_account_soft(svc: PortfolioService) -> None:
     assert found["deleted_at"] is not None
 
 
-def test_delete_account_not_found(svc: PortfolioService) -> None:
+async def test_delete_account_not_found(svc: PortfolioService) -> None:
     assert svc.delete_account(999) is False
 
 
-def test_create_buy_transaction(
+async def test_create_buy_transaction(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     tx: dict = svc.create_transaction(
@@ -159,7 +158,7 @@ def test_create_buy_transaction(
     assert tx["fee"] == 0.0
 
 
-def test_create_transaction_account_not_found(svc: PortfolioService) -> None:
+async def test_create_transaction_account_not_found(svc: PortfolioService) -> None:
     with pytest.raises(ValueError, match="账户不存在"):
         svc.create_transaction(
             {
@@ -173,7 +172,7 @@ def test_create_transaction_account_not_found(svc: PortfolioService) -> None:
         )
 
 
-def test_create_transaction_invalid_type(
+async def test_create_transaction_invalid_type(
     svc: PortfolioService, sample_account: dict
 ) -> None:
     with pytest.raises(ValueError, match="无效的交易类型"):
@@ -189,7 +188,7 @@ def test_create_transaction_invalid_type(
         )
 
 
-def test_create_transaction_quantity_zero(
+async def test_create_transaction_quantity_zero(
     svc: PortfolioService, sample_account: dict
 ) -> None:
     with pytest.raises(ValueError, match="数量必须大于 0"):
@@ -205,7 +204,7 @@ def test_create_transaction_quantity_zero(
         )
 
 
-def test_create_sell_transaction(
+async def test_create_sell_transaction(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -234,7 +233,7 @@ def test_create_sell_transaction(
     assert tx["fee"] == 15.0
 
 
-def test_sell_exceeds_holding(
+async def test_sell_exceeds_holding(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -260,7 +259,7 @@ def test_sell_exceeds_holding(
         )
 
 
-def test_positions_weighted_avg_cost(
+async def test_positions_weighted_avg_cost(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -290,7 +289,7 @@ def test_positions_weighted_avg_cost(
     assert pos["avg_cost"] == 350.0
 
 
-def test_positions_sell_does_not_change_avg(
+async def test_positions_sell_does_not_change_avg(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -320,7 +319,7 @@ def test_positions_sell_does_not_change_avg(
     assert pos["avg_cost"] == 300.0
 
 
-def test_positions_unrealized_pnl(
+async def test_positions_unrealized_pnl(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -333,19 +332,18 @@ def test_positions_unrealized_pnl(
             "trade_date": "2026-05-01",
         }
     )
-    from backend.storage.database import get_db
+    from backend.storage.database import aget_db
 
-def __insert(table: str, data: dict) -> int:
-    with get_db() as conn:
+async def __insert(table: str, data: dict) -> int:
+    async with aget_db() as conn:
         keys = list(data.keys())
         cols = ', '.join(keys)
         placeholders = ', '.join(['?'] * len(keys))
         sql = f'INSERT INTO {table} ({cols}) VALUES ({placeholders})'
-        cursor = conn.execute(sql, list(data.values()))
+        cursor = await conn.execute(sql, list(data.values()))
         return cursor.lastrowid
 
-
-    _insert(
+    await __insert(
         "market_quotes",
         {
             "symbol": "hk00700",
@@ -362,7 +360,7 @@ def __insert(table: str, data: dict) -> int:
     assert pos["unrealized_pnl_pct"] == pytest.approx(14.29, abs=0.01)
 
 
-def test_positions_no_quote(
+async def test_positions_no_quote(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -383,7 +381,7 @@ def test_positions_no_quote(
     assert pos["unrealized_pnl"] is None
 
 
-def test_positions_filter_by_account(
+async def test_positions_filter_by_account(
     svc: PortfolioService, sample_asset: None
 ) -> None:
     acct1: dict = svc.create_account({"name": "富途", "currency": "HKD"})
@@ -414,7 +412,7 @@ def test_positions_filter_by_account(
     assert positions[0]["total_qty"] == 100
 
 
-def test_realized_pnl(
+async def test_realized_pnl(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -446,7 +444,7 @@ def test_realized_pnl(
     assert r["realized_pnl"] == pytest.approx(9985.0)
 
 
-def test_realized_pnl_with_filter(
+async def test_realized_pnl_with_filter(
     svc: PortfolioService, sample_asset: None
 ) -> None:
     acct1: dict = svc.create_account({"name": "富途", "currency": "HKD"})
@@ -475,7 +473,7 @@ def test_realized_pnl_with_filter(
     assert len(results) == 0
 
 
-def test_get_transactions_pagination(
+async def test_get_transactions_pagination(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     for i in range(5):
@@ -495,7 +493,7 @@ def test_get_transactions_pagination(
     assert result["page_info"]["total_pages"] == 2
 
 
-def test_get_transactions_filter_by_type(
+async def test_get_transactions_filter_by_type(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -523,7 +521,7 @@ def test_get_transactions_filter_by_type(
     assert result["items"][0]["type"] == "sell"
 
 
-def test_get_transactions_filter_by_date_range(
+async def test_get_transactions_filter_by_date_range(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -553,7 +551,7 @@ def test_get_transactions_filter_by_date_range(
     assert result["items"][0]["trade_date"] == "2026-05-20"
 
 
-def test_get_transaction_by_id(
+async def test_get_transaction_by_id(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     tx: dict = svc.create_transaction(
@@ -571,11 +569,11 @@ def test_get_transaction_by_id(
     assert found["id"] == tx["id"]
 
 
-def test_get_transaction_by_id_not_found(svc: PortfolioService) -> None:
+async def test_get_transaction_by_id_not_found(svc: PortfolioService) -> None:
     assert svc.get_transaction_by_id(999) is None
 
 
-def test_update_transaction(
+async def test_update_transaction(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     tx: dict = svc.create_transaction(
@@ -596,11 +594,11 @@ def test_update_transaction(
     assert updated["price"] == 385.0
 
 
-def test_update_transaction_not_found(svc: PortfolioService) -> None:
+async def test_update_transaction_not_found(svc: PortfolioService) -> None:
     assert svc.update_transaction(999, {"quantity": 150}) is None
 
 
-def test_update_sell_transaction_holding_check(
+async def test_update_sell_transaction_holding_check(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -627,7 +625,7 @@ def test_update_sell_transaction_holding_check(
         svc.update_transaction(tx["id"], {"quantity": 150})
 
 
-def test_delete_transaction_soft(
+async def test_delete_transaction_soft(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     tx: dict = svc.create_transaction(
@@ -646,7 +644,7 @@ def test_delete_transaction_soft(
     assert found["deleted_at"] is not None
 
 
-def test_delete_buy_transaction_prevents_negative_holding(
+async def test_delete_buy_transaction_prevents_negative_holding(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -703,11 +701,11 @@ def test_delete_buy_transaction_prevents_negative_holding(
         svc.delete_transaction(buy_tx["id"])
 
 
-def test_delete_transaction_not_found(svc: PortfolioService) -> None:
+async def test_delete_transaction_not_found(svc: PortfolioService) -> None:
     assert svc.delete_transaction(999) is False
 
 
-def test_dividend_transaction(
+async def test_dividend_transaction(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -737,7 +735,7 @@ def test_dividend_transaction(
     assert positions[0]["avg_cost"] == 380.0
 
 
-def test_split_transaction(
+async def test_split_transaction(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(
@@ -767,7 +765,7 @@ def test_split_transaction(
     assert positions[0]["avg_cost"] == 380.0
 
 
-def test_positions_fully_sold_excluded(
+async def test_positions_fully_sold_excluded(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
     svc.create_transaction(

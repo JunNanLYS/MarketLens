@@ -1,4 +1,6 @@
-from backend.storage.database import get_db
+﻿"""数据库 schema 初始化。"""
+
+from backend.storage.database import aget_db
 
 TABLE_DDLS: list[str] = [
     """
@@ -124,8 +126,7 @@ TABLE_DDLS: list[str] = [
         sentiment TEXT,
         importance TEXT,
         related_symbols TEXT,
-        collected_at TIMESTAMP NOT NULL,
-        UNIQUE(url)
+        collected_at TIMESTAMP NOT NULL
     )
     """,
     """
@@ -194,7 +195,6 @@ TABLE_DDLS: list[str] = [
     """,
 ]
 
-
 INDEX_DDLS: list[str] = [
     """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_reports_symbol_date
@@ -228,16 +228,39 @@ INDEX_DDLS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_transactions_account_symbol
     ON transactions(account_id, symbol, trade_date, created_at)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tracked_assets_enabled
+    ON tracked_assets(enabled)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_news_items_url
+    ON news_items(url)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique
+    ON news_items(url) WHERE url IS NOT NULL AND url != ''
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_transactions_deleted_at
+    ON transactions(deleted_at)
+    """,
 ]
 
 
-def init_db(db_path: str | None = None) -> None:
+async def init_db(db_path: str | None = None) -> None:
+    """初始化数据库表与索引（异步版）。"""
+    async with aget_db(db_path) as conn:
+        for ddl in TABLE_DDLS:
+            await conn.execute(ddl)
+        for ddl in INDEX_DDLS:
+            await conn.execute(ddl)
+
+
+def init_db_sync(db_path: str | None = None) -> None:
+    """初始化数据库表与索引（同步版，供测试 fixture 使用）。"""
+    from backend.storage.database import get_db
     with get_db(db_path) as conn:
         for ddl in TABLE_DDLS:
             conn.execute(ddl)
         for ddl in INDEX_DDLS:
             conn.execute(ddl)
-
-
-if __name__ == "__main__":
-    init_db()

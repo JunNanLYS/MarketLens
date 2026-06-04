@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.scheduler.jobs import SchedulerManager, VALID_TASK_NAMES
 from backend.storage.database import get_db, set_db_path
-from backend.storage.schema import init_db
+from backend.storage.schema import init_db_sync as init_db
 
 
 @pytest.fixture(autouse=True)

@@ -1,6 +1,6 @@
+﻿import email.utils
 import feedparser
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
 
 import httpx
 from loguru import logger
@@ -9,14 +9,12 @@ from backend.collectors.base import BaseProvider
 
 
 class RSSProvider(BaseProvider):
-    """通用 RSS 新闻采集提供者，通过 HTTP GET 获取 RSS feed 并解析。"""
+    """通用 RSS 新闻采集提供者（异步版）。"""
 
-    # 常见 RSS 命名空间 URI 映射（用于带前缀的标签查找）
     _NAMESPACES: dict[str, str] = {
         "content": "http://purl.org/rss/1.0/modules/content/",
         "dc": "http://purl.org/dc/elements/1.1/",
         "atom": "http://www.w3.org/2005/Atom",
-
     }
 
     def __init__(
@@ -28,35 +26,50 @@ class RSSProvider(BaseProvider):
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.url: str = self.params.get("url", "")
+        # 懒加载 httpx.AsyncClient：避免 __init__ 阶段在 Windows + Python 3.13 上
+        # 因 SSL/连接池初始化阻塞 3.8s+。首次 await 使用时再创建。
+        self._client: httpx.AsyncClient | None = None
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+    async def _get_client(self) -> httpx.AsyncClient:
+        """首次使用时创建 httpx 客户端，后续复用。"""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+            )
+        return self._client
 
-    def search(self, keyword: str) -> list[dict]:
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+
+    async def search(self, keyword: str) -> list[dict]:
         return []
 
-    def quote(self, symbols: list[str]) -> list[dict]:
+    async def quote(self, symbols: list[str]) -> list[dict]:
         return []
 
-    def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         return []
 
-    def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict:
         return {}
 
-    def fund_flow(self, symbol: str) -> dict:
+    async def fund_flow(self, symbol: str) -> dict:
         return {}
 
-    def technical(self, symbol: str) -> dict:
+    async def technical(self, symbol: str) -> dict:
         return {}
 
-    def fetch_news(self) -> list[dict]:
+    async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         if not self.url:
             logger.warning("RSS 源 URL 未配置: provider={}", self.name)
             return []
         try:
-            resp = httpx.get(self.url, timeout=self.timeout, follow_redirects=True)
+            client = await self._get_client()
+            resp = await client.get(self.url)
             resp.raise_for_status()
             return self._parse_rss(resp.text)
         except httpx.TimeoutException:
@@ -70,19 +83,26 @@ class RSSProvider(BaseProvider):
             return []
 
     def _parse_rss(self, text: str) -> list[dict]:
-        # 优先用 feedparser 解析（容错性好，能处理非标准 RSS/Atom）
         items = self._parse_with_feedparser(text)
         if items:
             return items
-        # 回退：xml.etree.ElementTree
         return self._parse_with_etree(text)
+
+    @staticmethod
+    def _normalize_date(raw: str) -> str:
+        """将 RSS 日期字符串转换为 ISO 8601 格式，解析失败则返回原字符串。"""
+        if not raw:
+            return raw
+        try:
+            dt = email.utils.parsedate_to_datetime(raw)
+            return dt.isoformat()
+        except Exception:
+            return raw
 
     def _parse_with_etree(self, text: str) -> list[dict]:
         results: list[dict] = []
         try:
-            # 注册常见命名空间以支持带前缀的标签查找
-            for prefix, uri in RSSProvider._NAMESPACES.items():
-                ET.register_namespace(prefix, uri)
+            # 命名空间前缀已在模块导入时一次性注册，此处不再重复调用
             root = ET.fromstring(text)
         except ET.ParseError as e:
             logger.error("RSS XML 解析失败: provider={}, error={}", self.name, e)
@@ -104,7 +124,7 @@ class RSSProvider(BaseProvider):
                 "title": title,
                 "source": self.name,
                 "url": link,
-                "published_at": published_at,
+                "published_at": self._normalize_date(published_at),
                 "summary": summary,
                 "content": content,
                 "collected_at": self._now(),
@@ -112,7 +132,6 @@ class RSSProvider(BaseProvider):
         return results
 
     def _parse_with_feedparser(self, text: str) -> list[dict]:
-        """使用 feedparser 解析 RSS/Atom，容错性优于 xml.etree。"""
         results: list[dict] = []
         try:
             d = feedparser.parse(text)
@@ -138,7 +157,7 @@ class RSSProvider(BaseProvider):
                 "title": title,
                 "source": self.name,
                 "url": link,
-                "published_at": published_at,
+                "published_at": self._normalize_date(published_at),
                 "summary": summary,
                 "content": content,
                 "collected_at": self._now(),
@@ -147,12 +166,10 @@ class RSSProvider(BaseProvider):
 
     @staticmethod
     def _get_text(element: ET.Element, tag: str) -> str:
-        # 尝试直接查找（不带命名空间）
         child = element.find(tag)
         if child is not None and child.text:
             return child.text.strip()
 
-        # 尝试命名空间查找（prefix:localname 格式）
         if ":" in tag:
             prefix, local_name = tag.split(":", 1)
             ns_uri = RSSProvider._NAMESPACES.get(prefix)
@@ -161,9 +178,13 @@ class RSSProvider(BaseProvider):
                 if child is not None and child.text:
                     return child.text.strip()
 
-            # 回退：遍历子元素匹配本地名（兼容未注册命名空间的情况）
             for child in element:
                 child_tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
                 if child_tag == local_name and child.text:
                     return child.text.strip()
         return ""
+
+
+# 模块级一次性注册 XML 命名空间前缀，避免每次 fetch_news 重复调用
+for _prefix, _uri in RSSProvider._NAMESPACES.items():
+    ET.register_namespace(_prefix, _uri)
