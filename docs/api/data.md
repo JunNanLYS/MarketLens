@@ -1,6 +1,6 @@
 # 市场数据 API
 
-> 基准路径: `/api/v1/data` | 返回上级: [API 概述](../api.md)
+> 基准路径: `/api/v1/data` | 返回上级: [API 概述](/docs/api.md)
 
 ---
 
@@ -9,11 +9,16 @@
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
 | `GET` | `/data/quotes/{symbol}` | 最新行情 | 200, 404 |
+| `POST` | `/data/quotes/{symbol}/refresh` | 手动刷新行情 | 200, 502 |
 | `GET` | `/data/quotes/{symbol}/history` | 历史行情序列 | 200, 404 |
 | `GET` | `/data/kline/{symbol}` | 日 K 线 | 200, 404 |
 | `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 404 |
 | `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 404 |
 | `GET` | `/data/technical/{symbol}` | 技术指标 | 200, 404 |
+| `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 502 |
+| `POST` | `/data/shareholder/{symbol}` | 股东结构采集 | 200, 502 |
+| `POST` | `/data/dividend/{symbol}` | 分红数据采集 | 200, 502 |
+| `POST` | `/data/reserve/{symbol}` | 业绩预告采集 | 200, 502 |
 
 > 所有数据均包含 `source` 和 `collected_at` 字段以支持追溯。
 
@@ -39,6 +44,37 @@ GET /api/v1/data/quotes/hk00700 HTTP/1.1
   "source": "westock",
   "collected_at": "2026-05-31T15:30:00+08:00"
 }
+```
+</details>
+
+---
+
+## `POST /data/quotes/{symbol}/refresh` — 手动刷新行情
+
+```http
+POST /api/v1/data/quotes/hk00700/refresh HTTP/1.1
+```
+
+<details>
+<summary>响应 200</summary>
+
+```json
+{
+  "symbol": "hk00700",
+  "price": 385.0, "change": 4.6, "change_pct": 1.2,
+  "open": 382.0, "high": 387.5, "low": 381.0, "prev_close": 380.4,
+  "volume": 23456789, "amount": 9034567890.0,
+  "source": "westock",
+  "collected_at": "2026-06-04T10:00:00+08:00"
+}
+```
+</details>
+
+<details>
+<summary>错误 502 — 数据源刷新失败</summary>
+
+```json
+{ "error": "REFRESH_FAILED", "detail": "标的 'hk00700' 数据刷新失败" }
 ```
 </details>
 
@@ -188,10 +224,14 @@ GET /api/v1/data/technical/hk00700 HTTP/1.1
 
 ---
 
-## `GET /data/intraday/{symbol}` — 分时数据
+## `POST /data/intraday/{symbol}` — 分时数据
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `days` | integer | 1 | 取值范围 1-5 |
 
 ```http
-GET /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
+POST /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
 ```
 
 <details>
@@ -214,14 +254,22 @@ GET /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
 ```
 </details>
 
+<details>
+<summary>错误 502 — 数据源采集失败</summary>
+
+```json
+{ "error": "COLLECT_FAILED", "detail": "标的 'hk00700' 分时数据采集失败" }
+```
+</details>
+
 > 分时数据实时采集，不落库缓存。
 
 ---
 
-## `GET /data/shareholder/{symbol}` — 股东结构
+## `POST /data/shareholder/{symbol}` — 股东结构
 
 ```http
-GET /api/v1/data/shareholder/sh600519 HTTP/1.1
+POST /api/v1/data/shareholder/sh600519 HTTP/1.1
 ```
 
 <details>
@@ -252,14 +300,22 @@ GET /api/v1/data/shareholder/sh600519 HTTP/1.1
 ```
 </details>
 
+<details>
+<summary>错误 502 — 数据源采集失败</summary>
+
+```json
+{ "error": "COLLECT_FAILED", "detail": "标的 'sh600519' 股东结构数据采集失败" }
+```
+</details>
+
 > 股东结构数据实时采集，不落库缓存。包含十大股东列表和股东人数变化历史。
 
 ---
 
-## `GET /data/reserve/{symbol}` — 业绩预告
+## `POST /data/reserve/{symbol}` — 业绩预告
 
 ```http
-GET /api/v1/data/reserve/sz000001 HTTP/1.1
+POST /api/v1/data/reserve/sz000001 HTTP/1.1
 ```
 
 <details>
@@ -281,4 +337,53 @@ GET /api/v1/data/reserve/sz000001 HTTP/1.1
 ```
 </details>
 
+<details>
+<summary>错误 502 — 数据源采集失败</summary>
+
+```json
+{ "error": "COLLECT_FAILED", "detail": "标的 'sz000001' 业绩预告采集失败" }
+```
+</details>
+
 > 业绩预告数据实时采集，返回最新一条预告。
+
+---
+
+## `POST /data/dividend/{symbol}` — 分红数据
+
+```http
+POST /api/v1/data/dividend/sh600519 HTTP/1.1
+```
+
+<details>
+<summary>响应 200</summary>
+
+```json
+{
+  "symbol": "sh600519",
+  "items": [
+    {
+      "report_period": "2025",
+      "record_date": "2026-01-15",
+      "ex_date": "2026-01-16",
+      "pay_date": "2026-01-20",
+      "dividend_per_share": 30.88,
+      "bonus_shares": 0.0,
+      "source": "westock",
+      "collected_at": "2026-06-02T10:00:00+08:00"
+    }
+  ],
+  "total": 1
+}
+```
+</details>
+
+<details>
+<summary>错误 502 — 数据源采集失败</summary>
+
+```json
+{ "error": "COLLECT_FAILED", "detail": "标的 'sh600519' 分红数据采集失败" }
+```
+</details>
+
+> 分红数据实时采集，按报告期倒序返回历史分红记录。

@@ -2,7 +2,7 @@
 
 ## 新闻
 
-> 基准路径: `/api/v1/news` | 返回上级: [API 概述](../api.md)
+> 基准路径: `/api/v1/news` | 返回上级: [API 概述](/docs/api.md)
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
@@ -58,7 +58,7 @@ GET /api/v1/news/1 HTTP/1.1
 
 ## AI 报告
 
-> 基准路径: `/api/v1/reports` | 返回上级: [API 概述](../api.md)
+> 基准路径: `/api/v1/reports` | 返回上级: [API 概述](/docs/api.md)
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
@@ -131,15 +131,15 @@ Content-Type: application/json
 { "symbols": ["hk00700", "sh600519"], "force": false }
 ```
 
-→ `200 OK`：`{ "status": "accepted", "generated": 2, "skipped": 0 }`
+→ `200 OK`：`{ "status": "completed", "generated": 2, "skipped": 0 }`
 
-> `status: "accepted"` 表示请求已被接收并同步执行完成。UI 通过判断 `status == "accepted"` 显示成功提示。
+> `status: "completed"` 表示同步执行已结束；`generated` 是实际生成数，`skipped` 是因已存在当日报告而跳过的数。UI 据此显示成功提示。
 
 ---
 
 ## 任务管理
 
-> 基准路径: `/api/v1/tasks` | 返回上级: [API 概述](../api.md)
+> 基准路径: `/api/v1/tasks` | 返回上级: [API 概述](/docs/api.md)
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
@@ -195,10 +195,12 @@ POST /api/v1/tasks/trigger/quote HTTP/1.1
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `task_name` | string | — | 筛选任务 |
-| `status` | string | — | `success` / `failure` |
+| `status` | string | — | `success`：成功完成；`failure`：异常终止 |
 | `days` | integer | 7 | 最近 N 天 |
 | `page` / `page_size` | int | 1 / 20 | 分页 |
 
 ```http
-GET /api/v1/tasks/logs?task_name=quote&status=failure&days=7 HTTP/1.1
+GET /api/v1/tasks/logs?task_name=quote&status=success&days=7 HTTP/1.1
 ```
+
+> 注：`run_logs.status` 字段当前仅持久化 `success` / `failure` 两种终态（写入端在 `collection_service.py:132/172`、`news_service.py:133`、`report_service.py:54`）。UI 的「running」选项在当前数据库 schema 下不会命中任何记录。
