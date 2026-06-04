@@ -5,19 +5,19 @@ from backend.storage.database import get_db, get_connection_sync
 
 
 class PortfolioService:
-    """????????????? CRUD??????????????????"""
+    """账户与交易的 CRUD 服务，封装软删除、持仓计算与已实现盈亏。"""
 
     def create_account(self, data: dict) -> dict:
-        """??????
+        """创建账户。
 
         Args:
-            data: ?? name?broker?currency?notes ????
+            data: 包含 name、broker、currency、notes 字段的字典。
 
         Returns:
-            ??????????
+            新建账户的完整记录。
 
         Raises:
-            ValueError: ???????????
+            ValueError: 名称为空或重复时抛出。
         """
         name: str = data.get("name", "").strip()
         if not name:
@@ -44,13 +44,13 @@ class PortfolioService:
             return dict(row)
 
     def get_accounts(self, include_deleted: bool = False) -> list[dict]:
-        """???????
+        """获取账户列表。
 
         Args:
-            include_deleted: ????????????
+            include_deleted: 是否包含已软删除的账户。
 
         Returns:
-            ?????????
+            按创建时间排序的账户列表。
         """
         with get_db() as conn:
             if include_deleted:
@@ -64,13 +64,13 @@ class PortfolioService:
             return [dict(row) for row in rows]
 
     def get_account_by_id(self, account_id: int) -> dict | None:
-        """? ID ???????
+        """按 ID 查询单个账户。
 
         Args:
-            account_id: ?? ID?
+            account_id: 账户 ID。
 
         Returns:
-            ????????????? None?
+            找到则返回账户字典；否则返回 None。
         """
         with get_db() as conn:
             row = conn.execute(
@@ -81,17 +81,17 @@ class PortfolioService:
             return dict(row)
 
     def update_account(self, account_id: int, data: dict) -> dict | None:
-        """???????
+        """更新账户字段。
 
         Args:
-            account_id: ?? ID?
-            data: ?????????name?broker?currency?notes??
+            account_id: 账户 ID。
+            data: 待更新字段，支持 name、broker、currency、notes。
 
         Returns:
-            ??????????????????? None?
+            更新后的账户字典；账户不存在返回 None。
 
         Raises:
-            ValueError: ??????????
+            ValueError: 名称为空或重复时抛出。
         """
         with get_db() as conn:
             existing = conn.execute(
@@ -129,13 +129,13 @@ class PortfolioService:
             return dict(row)
 
     def delete_account(self, account_id: int) -> bool:
-        """???????? deleted_at??
+        """软删除账户（设置 deleted_at）。
 
         Args:
-            account_id: ?? ID?
+            account_id: 账户 ID。
 
         Returns:
-            ?????????????? False??
+            软删除成功返回 True；账户不存在或已删除返回 False。
         """
         with get_db() as conn:
             existing = conn.execute(
@@ -152,16 +152,16 @@ class PortfolioService:
             return True
 
     def create_transaction(self, data: dict) -> dict:
-        """????????
+        """创建一条交易记录。
 
         Args:
-            data: ?? account_id?symbol?type?quantity?price ???????
+            data: 包含 account_id、symbol、type、quantity、price 等必填字段。
 
         Returns:
-            ??????????
+            新建交易的完整记录。
 
         Raises:
-            ValueError: ?????????????
+            ValueError: 字段非法、卖出超额等场景抛出。
         """
         account_id: int = data["account_id"]
         symbol: str = data["symbol"].strip()
@@ -258,15 +258,15 @@ class PortfolioService:
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
-        """?????????
+        """分页查询交易记录。
 
         Args:
-            filters: ???????account_id?symbol?type?date_from?date_to??
-            page: ???
-            page_size: ?????
+            filters: 过滤条件，可包含 account_id、symbol、type、date_from、date_to。
+            page: 页码（从 1 开始）。
+            page_size: 每页条数。
 
         Returns:
-            ?? items ? page_info ????
+            包含 items 与 page_info 的字典。
         """
         conditions: list[str] = ["t.deleted_at IS NULL"]
         params: list = []
@@ -314,13 +314,13 @@ class PortfolioService:
         }
 
     def get_transaction_by_id(self, transaction_id: int) -> dict | None:
-        """? ID ???????
+        """按 ID 查询单条交易。
 
         Args:
-            transaction_id: ?? ID?
+            transaction_id: 交易 ID。
 
         Returns:
-            ????????????? None?
+            找到则返回交易字典；否则返回 None。
         """
         with get_db() as conn:
             row = conn.execute(
@@ -333,17 +333,17 @@ class PortfolioService:
     def update_transaction(
         self, transaction_id: int, data: dict
     ) -> dict | None:
-        """??????????????????
+        """更新交易字段，更新后会校验当前持仓不为负。
 
         Args:
-            transaction_id: ?? ID?
-            data: ?????????
+            transaction_id: 交易 ID。
+            data: 待更新字段字典。
 
         Returns:
-            ??????????????????? None?
+            更新后的交易字典；交易不存在返回 None。
 
         Raises:
-            ValueError: ????????
+            ValueError: 持仓为负等场景抛出。
         """
         conn = get_connection_sync()
         try:
@@ -353,6 +353,13 @@ class PortfolioService:
             ).fetchone()
             if existing is None:
                 return None
+
+            cursor = conn.execute(
+                "SELECT 1 FROM accounts WHERE id = ? AND deleted_at IS NULL",
+                (existing["account_id"],),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("账户已被删除，无法更新该交易")
 
             sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
             params: list = []
@@ -393,16 +400,16 @@ class PortfolioService:
             conn.close()
 
     def delete_transaction(self, transaction_id: int) -> bool:
-        """???????????????????
+        """软删除单条交易，删除后校验持仓不为负。
 
         Args:
-            transaction_id: ?? ID?
+            transaction_id: 交易 ID。
 
         Returns:
-            ?????????????? False??
+            软删除成功返回 True；交易不存在返回 False。
 
         Raises:
-            ValueError: ????????
+            ValueError: 持仓为负等场景抛出。
         """
         with get_db() as conn:
             existing = conn.execute(
@@ -414,6 +421,13 @@ class PortfolioService:
 
             account_id: int = existing["account_id"]
             symbol: str = existing["symbol"]
+
+            cursor = conn.execute(
+                "SELECT 1 FROM accounts WHERE id = ? AND deleted_at IS NULL",
+                (account_id,),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("账户已被删除，无法删除该交易")
 
             conn.execute(
                 "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -438,13 +452,13 @@ class PortfolioService:
     def get_positions(
         self, account_id: int | None = None
     ) -> list[dict]:
-        """?????????????
+        """查询当前持仓列表。
 
         Args:
-            account_id: ??????????
+            account_id: 可选账户 ID 过滤
 
         Returns:
-            ?????????????????????????
+            按账户+标的聚合的持仓列表，关联最新行情与名称。
         """
         with get_db() as conn:
             conditions: list[str] = ["deleted_at IS NULL"]
@@ -464,20 +478,18 @@ class PortfolioService:
                 key: tuple[int, str] = (row["account_id"], row["symbol"])
                 grouped.setdefault(key, []).append(dict(row))
 
-
-        # ????????????? N+1 ??
-        all_symbols = list({str(sym) for (_, sym) in grouped})
-        quotes_map: dict[str, float | None] = {}
-        names_map: dict[str, str | None] = {}
-        if all_symbols:
-            ph = ', '.join(['?'] * len(all_symbols))
-            with get_db() as conn2:
-                qrows = conn2.execute(
+            # 合并到同一 conn：避免重复 connect + PRAGMA
+            quotes_map: dict[str, float | None] = {}
+            names_map: dict[str, str | None] = {}
+            all_symbols = list({str(sym) for (_, sym) in grouped})
+            if all_symbols:
+                ph = ', '.join(['?'] * len(all_symbols))
+                qrows = conn.execute(
                     'SELECT mq.symbol, mq.price FROM market_quotes mq WHERE mq.symbol IN (' + ph + ') AND mq.collected_at = (SELECT MAX(collected_at) FROM market_quotes WHERE symbol = mq.symbol)',
                     all_symbols,
                 ).fetchall()
                 quotes_map = {r['symbol']: r['price'] for r in qrows}
-                arows = conn2.execute(
+                arows = conn.execute(
                     'SELECT symbol, name FROM tracked_assets WHERE symbol IN (' + ph + ')',
                     all_symbols,
                 ).fetchall()
@@ -585,17 +597,20 @@ class PortfolioService:
         self,
         account_id: int | None = None,
         symbol: str | None = None,
+        page: int | None = None,
+        page_size: int = 50,
     ) -> list[dict]:
-        """??????????
+        """查询已实现盈亏。
 
         Args:
-            account_id: ??????????
-            symbol: ??????????
+            account_id: 可选账户 ID 过滤
+            symbol: 可选标的代码过滤
+            page: 分页页码（从 1 开始）；None 表示不分页。
+            page_size: 分页大小，默认 50，上限 200。
 
         Returns:
-            ??????????
+            按账户+标的聚合的已实现盈亏列表。
         """
-        """??????????????????"""
         conditions: list[str] = ["t.deleted_at IS NULL"]
         params: list = []
 
@@ -609,15 +624,46 @@ class PortfolioService:
         where_clause: str = " AND ".join(conditions)
 
         with get_db() as conn:
-            all_rows = conn.execute(
-                f"SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee "
-                f"FROM transactions t WHERE {where_clause} "
-                "ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at",
-                params,
-            ).fetchall()
+            # 分页模式下，按 (account_id, symbol) 聚合在 DB 层完成，避免 Python 端遍历全表。
+            if page is not None:
+                cap = max(1, min(page_size, 200))
+                offset = (max(1, page) - 1) * cap
+                # 先取一页内涉及的所有 (account_id, symbol) 组合
+                group_rows = conn.execute(
+                    f"""
+                    SELECT t.account_id, t.symbol
+                    FROM transactions t
+                    WHERE {where_clause}
+                    GROUP BY t.account_id, t.symbol
+                    ORDER BY t.account_id, t.symbol
+                    LIMIT ? OFFSET ?
+                    """,
+                    params + [cap, offset],
+                ).fetchall()
+                if not group_rows:
+                    return []
+                pair_ph = ", ".join(["(?, ?)"] * len(group_rows))
+                pair_params: list = []
+                for r in group_rows:
+                    pair_params.extend([r["account_id"], r["symbol"]])
+                rows = conn.execute(
+                    f"""SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee
+                        FROM transactions t
+                        WHERE {where_clause}
+                          AND (t.account_id, t.symbol) IN ({pair_ph})
+                        ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at""",
+                    params + pair_params,
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee "
+                    f"FROM transactions t WHERE {where_clause} "
+                    "ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at",
+                    params,
+                ).fetchall()
 
             grouped: dict[tuple[int, str], list[dict]] = {}
-            for row in all_rows:
+            for row in rows:
                 key: tuple[int, str] = (row["account_id"], row["symbol"])
                 grouped.setdefault(key, []).append(dict(row))
 

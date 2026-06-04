@@ -21,6 +21,13 @@ class NewsService:
             config = get_config()
             providers_map = create_providers(config)
             self._providers = providers_map.get("news", [])
+        # 预编译的正则缓存：避免每条新闻 × 每标的 × 重复 re.compile。
+        # 旧实现中 _get_symbol_pattern 在循环内被调用，每次都走 if/return。
+        # 改为初始化即建立 cache，并在调用前一次性 build。
+        self._symbol_patterns: dict[str, re.Pattern] = {}
+        # tags 缓存：row_id -> list[re.Pattern]，由 _match_symbols_with_conn 第一次调用时填充。
+        self._tag_patterns_cache: dict[int, tuple[list[str], list[re.Pattern]]] = {}
+
 
     async def collect_news(self) -> dict[str, int]:
         started_at = datetime.now(timezone.utc).isoformat()
@@ -164,27 +171,29 @@ class NewsService:
             name: str = row["name"] or ""
             tags_str: str | None = row["tags"]
 
+            # symbol 预编译 pattern：缓存避免每次重新 re.compile
             pattern = self._get_symbol_pattern(symbol)
             if pattern.search(text):
                 matched.append(symbol)
                 continue
 
+            # name：单次 in 操作（无法预编译，保持原逻辑）
             if name and name in text:
                 matched.append(symbol)
                 continue
 
+            # tags：使用预编译的 re.Pattern 一次扫描
             if tags_str:
-                tags = [t.strip() for t in tags_str.split(",") if t.strip()]
-                for tag in tags:
-                    if tag and tag in text:
-                        matched.append(symbol)
-                        break
+                tags = self._get_tag_patterns(row, tags_str)
+                if tags:
+                    for pat in tags:
+                        if pat.search(text):
+                            matched.append(symbol)
+                            break
 
         return matched
 
     def _get_symbol_pattern(self, symbol: str) -> re.Pattern:
-        if not hasattr(self, "_symbol_patterns"):
-            self._symbol_patterns: dict[str, re.Pattern] = {}
         pattern = self._symbol_patterns.get(symbol)
         if pattern is None:
             pattern = re.compile(
@@ -192,6 +201,21 @@ class NewsService:
             )
             self._symbol_patterns[symbol] = pattern
         return pattern
+
+    def _get_tag_patterns(self, row, tags_str: str) -> list[re.Pattern]:
+        """预编译 row 对应的 tags 正则列表，缓存以避免重复编译。"""
+        # sqlite3.Row 不支持 .get，按索引访问
+        symbol = row["symbol"] if "symbol" in row.keys() else None
+        cache_key = (symbol, tags_str)
+        cached = self._tag_patterns_cache.get(id(row))
+        if cached is not None and cached[0] == list(cache_key):
+            return cached[1]
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+        compiled: list[re.Pattern] = [
+            re.compile(re.escape(t)) for t in tags if t
+        ]
+        self._tag_patterns_cache[id(row)] = (list(cache_key), compiled)
+        return compiled
 
     def _match_symbols(self, title: str, content: str | None = None) -> list[str]:
         with get_db() as conn:

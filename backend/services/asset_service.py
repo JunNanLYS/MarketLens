@@ -192,19 +192,20 @@ class AssetService:
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         offset = (page - 1) * page_size
 
+        # 使用 CTE + ROW_NUMBER() 取每条标的的最新行情，避免 LEFT JOIN 子查询对每行执行一次
         count_sql = f"SELECT COUNT(*) FROM tracked_assets ta {where_clause}"
         data_sql = f"""
+            WITH latest_quotes AS (
+                SELECT symbol, price, change_pct, collected_at,
+                       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn
+                FROM market_quotes
+            )
             SELECT ta.*,
-                   mq.price AS latest_price,
-                   mq.change_pct AS latest_change_pct,
-                   mq.collected_at AS latest_quote_at
+                   lq.price AS latest_price,
+                   lq.change_pct AS latest_change_pct,
+                   lq.collected_at AS latest_quote_at
             FROM tracked_assets ta
-            LEFT JOIN market_quotes mq ON mq.symbol = ta.symbol
-                AND mq.collected_at = (
-                    SELECT MAX(mq2.collected_at)
-                    FROM market_quotes mq2
-                    WHERE mq2.symbol = ta.symbol
-                )
+            LEFT JOIN latest_quotes lq ON lq.symbol = ta.symbol AND lq.rn = 1
             {where_clause}
             ORDER BY ta.created_at DESC
             LIMIT ? OFFSET ?
@@ -228,82 +229,164 @@ class AssetService:
         }
 
     def get_asset_by_id(self, asset_id: int) -> dict | None:
+        """获取标的详情（合并 6 条独立 SELECT 为 2 条 CTE 查询）。"""
         with get_db() as conn:
-            asset_row = conn.execute(
-                "SELECT * FROM tracked_assets WHERE id = ?", (asset_id,)
+            # CTE 1: 标的 + 行情 + 财务 + 报告（4 张表通过 LEFT JOIN + 窗口函数取最新）
+            row = conn.execute(
+                """
+                WITH
+                latest_quote AS (
+                    SELECT symbol, price, change, change_pct, open, high, low, volume, collected_at,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn
+                    FROM market_quotes
+                ),
+                latest_finance AS (
+                    SELECT symbol, report_period, revenue_yoy, eps, roe,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn
+                    FROM financial_reports
+                ),
+                latest_report AS (
+                    SELECT symbol, action, confidence, generated_at,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY generated_at DESC) AS rn
+                    FROM ai_reports
+                )
+                SELECT ta.*,
+                       lq.price AS q_price, lq.change AS q_change, lq.change_pct AS q_change_pct,
+                       lq.open AS q_open, lq.high AS q_high, lq.low AS q_low,
+                       lq.volume AS q_volume, lq.collected_at AS q_collected_at,
+                       lf.report_period AS f_report_period, lf.revenue_yoy AS f_revenue_yoy,
+                       lf.eps AS f_eps, lf.roe AS f_roe,
+                       lr.action AS r_action, lr.confidence AS r_confidence,
+                       lr.generated_at AS r_generated_at
+                FROM tracked_assets ta
+                LEFT JOIN latest_quote lq ON lq.symbol = ta.symbol AND lq.rn = 1
+                LEFT JOIN latest_finance lf ON lf.symbol = ta.symbol AND lf.rn = 1
+                LEFT JOIN latest_report lr ON lr.symbol = ta.symbol AND lr.rn = 1
+                WHERE ta.id = ?
+                """,
+                (asset_id,),
             ).fetchone()
-            if asset_row is None:
+            if row is None:
                 return None
 
-            result = self._row_to_dict(dict(asset_row))
+            result = self._row_to_dict(dict(row))
+            symbol = result["symbol"]
 
-            quote_row = conn.execute(
-                """SELECT price, change, change_pct, open, high, low, volume, collected_at
-                   FROM market_quotes
-                   WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT 1""",
-                (result["symbol"],),
-            ).fetchone()
-            if quote_row is not None:
-                result["quote"] = dict(quote_row)
+            # 把 joined 字段映射到原有 schema
+            if row["q_price"] is not None or row["q_collected_at"] is not None:
+                result["quote"] = {
+                    "price": row["q_price"],
+                    "change": row["q_change"],
+                    "change_pct": row["q_change_pct"],
+                    "open": row["q_open"],
+                    "high": row["q_high"],
+                    "low": row["q_low"],
+                    "volume": row["q_volume"],
+                    "collected_at": row["q_collected_at"],
+                }
             else:
                 result["quote"] = None
-
-            kline_rows = conn.execute(
-                """SELECT close, date FROM kline_daily
-                   WHERE symbol = ?
-                   ORDER BY date DESC LIMIT 60""",
-                (result["symbol"],),
-            ).fetchall()
-            result["kline_summary"] = self._build_kline_summary(kline_rows)
-
-            finance_row = conn.execute(
-                """SELECT report_period, revenue_yoy, eps, roe
-                   FROM financial_reports
-                   WHERE symbol = ?
-                   ORDER BY collected_at DESC LIMIT 1""",
-                (result["symbol"],),
-            ).fetchone()
-            if finance_row is not None:
-                result["finance_summary"] = dict(finance_row)
+            if row["f_report_period"] is not None:
+                result["finance_summary"] = {
+                    "report_period": row["f_report_period"],
+                    "revenue_yoy": row["f_revenue_yoy"],
+                    "eps": row["f_eps"],
+                    "roe": row["f_roe"],
+                }
             else:
                 result["finance_summary"] = None
-
-            fund_rows = conn.execute(
-                """SELECT date, main_net_inflow, net_inflow_ratio FROM fund_flows
-                   WHERE symbol = ?
-                   ORDER BY date DESC LIMIT 5""",
-                (result["symbol"],),
-            ).fetchall()
-            result["fund_flow_summary"] = build_fund_flow_summary(fund_rows)
-
-            report_row = conn.execute(
-                """SELECT action, confidence, generated_at
-                   FROM ai_reports
-                   WHERE symbol = ?
-                   ORDER BY generated_at DESC LIMIT 1""",
-                (result["symbol"],),
-            ).fetchone()
-            if report_row is not None:
-                result["latest_report"] = dict(report_row)
+            if row["r_action"] is not None:
+                result["latest_report"] = {
+                    "action": row["r_action"],
+                    "confidence": row["r_confidence"],
+                    "generated_at": row["r_generated_at"],
+                }
             else:
                 result["latest_report"] = None
+
+            # CTE 2: K线 + 资金流向（另一条独立查询，2 张表无强关联，分开更清晰）
+            kline_flow_rows = conn.execute(
+                """
+                WITH
+                klines AS (
+                    SELECT symbol, close, date,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+                    FROM kline_daily
+                ),
+                flows AS (
+                    SELECT symbol, date, main_net_inflow, net_inflow_ratio,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+                    FROM fund_flows
+                )
+                SELECT k.symbol AS k_symbol, k.close AS k_close, k.date AS k_date,
+                       f.symbol AS f_symbol, f.date AS f_date,
+                       f.main_net_inflow AS f_main_net_inflow, f.net_inflow_ratio AS f_net_inflow_ratio
+                FROM tracked_assets ta
+                LEFT JOIN klines k ON k.symbol = ta.symbol AND k.rn <= 60
+                LEFT JOIN flows f ON f.symbol = ta.symbol AND f.rn <= 5
+                WHERE ta.id = ?
+                ORDER BY k.date DESC, f.date DESC
+                """,
+                (asset_id,),
+            ).fetchall()
+
+            kline_rows: list[dict] = []
+            fund_rows: list[dict] = []
+            for r in kline_flow_rows:
+                d = dict(r)
+                if d["k_close"] is not None and d["k_date"] is not None:
+                    kline_rows.append({"close": d["k_close"], "date": d["k_date"]})
+                if d["f_main_net_inflow"] is not None and d["f_date"] is not None:
+                    fund_rows.append({
+                        "date": d["f_date"],
+                        "main_net_inflow": d["f_main_net_inflow"],
+                        "net_inflow_ratio": d["f_net_inflow_ratio"],
+                    })
+
+            result["kline_summary"] = self._build_kline_summary(kline_rows)
+            result["fund_flow_summary"] = build_fund_flow_summary(fund_rows)
 
         return result
 
     @staticmethod
     def _build_kline_summary(kline_rows: list[dict]) -> dict | None:
+        """构建 K 线摘要。
+
+        若上游（EvidenceBuilder）已计算 ma5/ma20/ma60 字段，直接复用；否则
+        使用滑动窗口 O(n) 计算，避免每次重新切片求和。
+        """
         if not kline_rows:
             return None
 
-        closes = [row["close"] for row in reversed(kline_rows) if row["close"] is not None]
-        if not closes:
+        # 数据按时间升序（与 EvidenceBuilder 一致）
+        ordered = [row for row in reversed(kline_rows) if row.get("close") is not None]
+        if not ordered:
             return None
 
-        latest_close = closes[-1]
-        ma5 = sum(closes[-5:]) / len(closes[-5:]) if len(closes) >= 5 else None
-        ma20 = sum(closes[-20:]) / len(closes[-20:]) if len(closes) >= 20 else None
-        ma60 = sum(closes[-60:]) / len(closes[-60:]) if len(closes) >= 60 else None
+        latest = ordered[-1]
+        latest_close = latest["close"]
+
+        # 优先使用上游已计算的 ma 字段
+        ma5 = latest.get("ma5")
+        ma20 = latest.get("ma20")
+        ma60 = latest.get("ma60")
+
+        if ma5 is None or ma20 is None or ma60 is None:
+            closes = [row["close"] for row in ordered]
+            # 滑动窗口 O(n) 计算
+            windows = (5, 20, 60)
+            running_sums: dict[int, float] = {w: 0.0 for w in windows}
+            values: dict[int, float | None] = {w: None for w in windows}
+            for i, c in enumerate(closes):
+                for w in windows:
+                    running_sums[w] += c
+                    if i >= w:
+                        running_sums[w] -= closes[i - w]
+                    if i >= w - 1:
+                        values[w] = round(running_sums[w] / w, 4)
+            ma5 = values[5] if ma5 is None else ma5
+            ma20 = values[20] if ma20 is None else ma20
+            ma60 = values[60] if ma60 is None else ma60
 
         trend = "数据不足"
         if ma5 is not None and ma20 is not None and ma60 is not None:

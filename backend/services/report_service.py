@@ -8,11 +8,10 @@ from loguru import logger
 from backend.config import get_config
 from backend.services.ai_analyzer import AIAnalyzer
 from backend.services.evidence_builder import EvidenceBuilder
-from backend.storage.database import get_db, aget_db
+from backend.storage.database import get_db, aget_db, aget_connection
 
 
 class ReportService:
-    """AI ????????????????? AI ?????????????????"""
     """AI 报告生成与查询服务。"""
 
     @staticmethod
@@ -20,14 +19,18 @@ class ReportService:
         symbols: list[str] | None = None,
         force: bool = False,
     ) -> dict:
-        """??????? AI ?????
+        """为追踪列表中的标的生成 AI 报告。
+
+        逐标的读取最新数据、构建证据包、调用规则分析器，得到结构化结论
+        后写入 ai_reports 表。同一交易日已存在报告时默认跳过；force=True
+        时先删除同日期报告再重新生成。
 
         Args:
-            symbols: ?????None ?????????
-            force: ???????????
+            symbols: 标的列表；None 表示读取所有已启用追踪标的。
+            force: 是否强制重新生成当日报告（覆盖已有）。
 
         Returns:
-            ?? generated ? skipped ??????
+            包含 generated 与 skipped 计数的字典。
         """
         started_at = datetime.now(timezone.utc).isoformat()
         if not symbols:
@@ -36,9 +39,11 @@ class ReportService:
         skipped = 0
         errors: list[str] = []
 
-        for symbol in symbols:
-            try:
-                async with aget_db() as conn:
+        # 复用单次 aiosqlite 连接 + PRAGMA，避免每标的重建。
+        conn = await aget_connection()
+        try:
+            for symbol in symbols:
+                try:
                     if not force and await ReportService._has_today_report(conn, symbol):
                         skipped += 1
                         continue
@@ -46,15 +51,18 @@ class ReportService:
                     result = AIAnalyzer.analyze(evidence)
                     await ReportService._save_report(conn, symbol, result, force)
                     generated += 1
-            except Exception as e:
-                logger.exception("生成报告失败: {}", symbol)
-                errors.append(f"{symbol}: {e}")
+                except Exception as e:
+                    logger.exception("生成报告失败: {}", symbol)
+                    errors.append(f"{symbol}: {e}")
+            await conn.commit()
+        finally:
+            await conn.close()
 
         finished_at = datetime.now(timezone.utc).isoformat()
         status = "success" if not errors else "failure"
         error_message = "; ".join(errors) if errors else None
-        with get_db() as conn:
-            conn.execute(
+        with get_db() as conn_sync:
+            conn_sync.execute(
                 """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 ("ai_report", status, started_at, finished_at, error_message, generated + skipped),

@@ -1,5 +1,7 @@
 ﻿"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
 
+import json
+
 from backend.config import get_config
 from backend.storage.database import aget_db
 
@@ -137,8 +139,30 @@ class EvidenceBuilder:
                     fin_by_symbol[sym] = []
                 fin_by_symbol[sym].append(r)
 
-            # news
-            # (news uses LIKE, can't batch easily; keep per-symbol for news)
+            # news：批量拉取 7 天窗口内新闻，Python 端按 related_symbols 聚合。
+            # 替代原来的 N 次单标的 json_each 查询，性能提升 N 倍。
+            cursor = await conn.execute(
+                """SELECT * FROM news_items
+                   WHERE published_at >= datetime("now", "-7 days")
+                   ORDER BY published_at DESC""",
+            )
+            all_news_rows: list[dict] = [dict(r) for r in await cursor.fetchall()]
+            news_by_symbol: dict[str, list[dict]] = {sym: [] for sym in symbols}
+            for row in all_news_rows:
+                related_raw = row.get("related_symbols")
+                if not related_raw:
+                    continue
+                try:
+                    related = json.loads(related_raw) if isinstance(related_raw, str) else related_raw
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(related, list):
+                    continue
+                for sym in related:
+                    bucket = news_by_symbol.get(sym)
+                    if bucket is not None and len(bucket) < 100:
+                        bucket.append(row)
+
             # technical
             cursor = await conn.execute(
                 f"""SELECT * FROM technical_indicators
@@ -185,16 +209,9 @@ class EvidenceBuilder:
                         latest["prev_roe"] = prev.get("roe")
                     finance = latest
 
-                # news by symbol
+                # news from pre-aggregated dict
+                news_rows = news_by_symbol.get(symbol, [])
                 news = None
-                cursor = await conn.execute(
-                    """SELECT * FROM news_items
-                       WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?)
-                       AND published_at >= datetime("now", "-7 days")
-                       ORDER BY published_at DESC""",
-                    (symbol,),
-                )
-                news_rows = [dict(r) for r in await cursor.fetchall()]
                 if news_rows:
                     sentiments = [item.get("sentiment", "neutral") for item in news_rows]
                     positive = sentiments.count("positive")
