@@ -1,5 +1,6 @@
 from loguru import logger
 
+from backend.services.collection_service import _WRITE_LOCK
 from backend.storage.database import get_db, get_connection_sync
 
 
@@ -190,6 +191,9 @@ class PortfolioService:
             if price <= 0:
                 raise ValueError("价格必须大于 0")
 
+            if tx_type == "split" and quantity > 1000:
+                raise ValueError("拆股比例不能超过 1000")
+
             if tx_type == "sell":
                 current_holding: float = self._get_current_holding_from_conn(
                     conn, account_id, symbol
@@ -229,6 +233,9 @@ class PortfolioService:
             elif row["type"] == "sell":
                 total -= row["quantity"]
             elif row["type"] == "split":
+                # 防御性 guard: 历史脏数据中若 quantity <= 0 跳过而非乘入
+                if row["quantity"] <= 0:
+                    continue
                 total *= row["quantity"]
         return total
 
@@ -240,7 +247,8 @@ class PortfolioService:
             if tx["type"] == "buy":
                 new_qty: float = total_qty + tx["quantity"]
                 if new_qty > 0:
-                    avg_cost = (avg_cost * total_qty + tx["price"] * tx["quantity"]) / new_qty
+                    fee: float = tx.get("fee") or 0.0
+                    avg_cost = (avg_cost * total_qty + tx["price"] * tx["quantity"] + fee) / new_qty
                 total_qty = new_qty
             elif tx["type"] == "sell":
                 total_qty -= tx["quantity"]
@@ -344,59 +352,60 @@ class PortfolioService:
         Raises:
             ValueError: 持仓为负等场景抛出。
         """
-        conn = get_connection_sync()
-        try:
-            existing = conn.execute(
-                "SELECT * FROM transactions WHERE id = ? AND deleted_at IS NULL",
-                (transaction_id,),
-            ).fetchone()
-            if existing is None:
-                return None
+        with _WRITE_LOCK:
+            conn = get_connection_sync()
+            try:
+                existing = conn.execute(
+                    "SELECT * FROM transactions WHERE id = ? AND deleted_at IS NULL",
+                    (transaction_id,),
+                ).fetchone()
+                if existing is None:
+                    return None
 
-            cursor = conn.execute(
-                "SELECT 1 FROM accounts WHERE id = ? AND deleted_at IS NULL",
-                (existing["account_id"],),
-            )
-            if cursor.fetchone() is None:
-                raise ValueError("账户已被删除，无法更新该交易")
+                cursor = conn.execute(
+                    "SELECT 1 FROM accounts WHERE id = ? AND deleted_at IS NULL",
+                    (existing["account_id"],),
+                )
+                if cursor.fetchone() is None:
+                    raise ValueError("账户已被删除，无法更新该交易")
 
-            sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
-            params: list = []
-            for field in ("quantity", "price", "fee", "currency", "trade_date", "notes"):
-                if field in data:
-                    sets.append(f"{field} = ?")
-                    params.append(data[field])
-            if len(sets) == 1:
-                return dict(existing)
+                sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
+                params: list = []
+                for field in ("quantity", "price", "fee", "currency", "trade_date", "notes"):
+                    if field in data:
+                        sets.append(f"{field} = ?")
+                        params.append(data[field])
+                if len(sets) == 1:
+                    return dict(existing)
 
-            params.append(transaction_id)
-            conn.execute(
-                f"UPDATE transactions SET {', '.join(sets)} WHERE id = ?", params
-            )
-
-            updated = conn.execute(
-                "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
-            ).fetchone()
-            account_id: int = updated["account_id"]
-            symbol: str = updated["symbol"]
-
-            current_holding: float = self._get_current_holding_from_conn(
-                conn, account_id, symbol
-            )
-            if current_holding < 0:
-                raise ValueError(
-                    f"更新后持仓为负数 ({current_holding})，不允许此操作"
+                params.append(transaction_id)
+                conn.execute(
+                    f"UPDATE transactions SET {', '.join(sets)} WHERE id = ?", params
                 )
 
-            conn.commit()
-            logger.info("更新交易: id={}", transaction_id)
-            return dict(updated)
-        except Exception:
-            conn.rollback()
-            logger.exception("更新交易失败，已回滚: id={}", transaction_id)
-            raise
-        finally:
-            conn.close()
+                updated = conn.execute(
+                    "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+                ).fetchone()
+                account_id: int = updated["account_id"]
+                symbol: str = updated["symbol"]
+
+                current_holding: float = self._get_current_holding_from_conn(
+                    conn, account_id, symbol
+                )
+                if current_holding < 0:
+                    raise ValueError(
+                        f"更新后持仓为负数 ({current_holding})，不允许此操作"
+                    )
+
+                conn.commit()
+                logger.info("更新交易: id={}", transaction_id)
+                return dict(updated)
+            except Exception:
+                conn.rollback()
+                logger.exception("更新交易失败，已回滚: id={}", transaction_id)
+                raise
+            finally:
+                conn.close()
 
     def delete_transaction(self, transaction_id: int) -> bool:
         """软删除单条交易，删除后校验持仓不为负。
@@ -410,43 +419,51 @@ class PortfolioService:
         Raises:
             ValueError: 持仓为负等场景抛出。
         """
-        with get_db() as conn:
-            existing = conn.execute(
-                "SELECT * FROM transactions WHERE id = ? AND deleted_at IS NULL",
-                (transaction_id,),
-            ).fetchone()
-            if existing is None:
-                return False
+        with _WRITE_LOCK:
+            conn = get_connection_sync()
+            try:
+                existing = conn.execute(
+                    "SELECT * FROM transactions WHERE id = ? AND deleted_at IS NULL",
+                    (transaction_id,),
+                ).fetchone()
+                if existing is None:
+                    return False
 
-            account_id: int = existing["account_id"]
-            symbol: str = existing["symbol"]
+                account_id: int = existing["account_id"]
+                symbol: str = existing["symbol"]
 
-            cursor = conn.execute(
-                "SELECT 1 FROM accounts WHERE id = ? AND deleted_at IS NULL",
-                (account_id,),
-            )
-            if cursor.fetchone() is None:
-                raise ValueError("账户已被删除，无法删除该交易")
+                cursor = conn.execute(
+                    "SELECT 1 FROM accounts WHERE id = ? AND deleted_at IS NULL",
+                    (account_id,),
+                )
+                if cursor.fetchone() is None:
+                    raise ValueError("账户已被删除，无法删除该交易")
 
-            conn.execute(
-                "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (transaction_id,),
-            )
-
-            current_holding: float = self._get_current_holding_from_conn(
-                conn, account_id, symbol
-            )
-            if current_holding < 0:
                 conn.execute(
-                    "UPDATE transactions SET deleted_at = NULL WHERE id = ?",
+                    "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (transaction_id,),
                 )
-                raise ValueError(
-                    f"删除后持仓将为负数 ({current_holding})，不允许删除"
-                )
 
-            logger.info("软删除交易: id={}", transaction_id)
-            return True
+                current_holding: float = self._get_current_holding_from_conn(
+                    conn, account_id, symbol
+                )
+                if current_holding < 0:
+                    conn.execute(
+                        "UPDATE transactions SET deleted_at = NULL WHERE id = ?",
+                        (transaction_id,),
+                    )
+                    raise ValueError(
+                        f"删除后持仓将为负数 ({current_holding})，不允许删除"
+                    )
+
+                conn.commit()
+                logger.info("软删除交易: id={}", transaction_id)
+                return True
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
     def get_positions(
         self, account_id: int | None = None
@@ -468,7 +485,7 @@ class PortfolioService:
 
             where_clause: str = " AND ".join(conditions)
             rows = conn.execute(
-                f"SELECT account_id, symbol, type, quantity, price FROM transactions WHERE {where_clause} ORDER BY account_id, symbol, trade_date, created_at",
+                f"SELECT account_id, symbol, type, quantity, price, fee FROM transactions WHERE {where_clause} ORDER BY account_id, symbol, trade_date, created_at",
                 params,
             ).fetchall()
 
@@ -568,8 +585,9 @@ class PortfolioService:
             if tx["type"] == "buy":
                 new_qty: float = total_qty + tx["quantity"]
                 if new_qty > 0:
+                    fee: float = tx.get("fee") or 0.0
                     avg_cost = (
-                        avg_cost * total_qty + tx["price"] * tx["quantity"]
+                        avg_cost * total_qty + tx["price"] * tx["quantity"] + fee
                     ) / new_qty
                 total_qty = new_qty
             elif tx["type"] == "sell":

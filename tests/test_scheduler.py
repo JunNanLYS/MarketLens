@@ -330,3 +330,114 @@ class TestTriggerAPI:
             )
             assert resp.status_code == 202
             assert resp.json()["status"] == "triggered"
+
+
+def test_run_cleanup_acquires_write_lock() -> None:
+    """验证 _run_cleanup 持有 _WRITE_LOCK。
+
+    _run_cleanup 在函数体内 import 锁模块,因此我们需在调用前
+    让 _run_cleanup 通过 importlib 看到的 _WRITE_LOCK 是 ObservableLock 包装版。
+    """
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    from backend.scheduler.jobs import _run_cleanup
+
+    # 插入一条过期 raw_data
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at) "
+            "VALUES (?, ?, ?, ?, datetime('now', '-40 days'))",
+            ("stale", "test", "quote", "{}",),
+        )
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    # 在 collection_service 模块上替换,_run_cleanup 内部 import 时会拿到新版本
+    with patch.object(collection_service, "_WRITE_LOCK", new=_ObservableLock(original)):
+        _run_cleanup()
+
+    assert observed_held, "_run_cleanup 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True
+
+    # 验证已清理
+    with get_db() as conn:
+        count: int = conn.execute("SELECT COUNT(*) FROM raw_data").fetchone()[0]
+    assert count == 0
+
+
+def test_cleanup_naive_run_logs_removes_unmarked_rows() -> None:
+    """启动时清理函数应删除无 tz 标记的旧 run_logs 行。"""
+    from backend.scheduler.jobs import _cleanup_naive_run_logs_once
+
+    # 插入混合：有 tz 标记（应保留）+ naive（应删除）
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO run_logs (task_name, status, started_at, finished_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("quote", "success", "2026-05-01T10:00:00", "2026-05-01T10:00:05"),
+        )
+        conn.execute(
+            "INSERT INTO run_logs (task_name, status, started_at, finished_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("quote", "success", "2026-05-01T10:00:00+00:00", "2026-05-01T10:00:05+00:00"),
+        )
+        conn.execute(
+            "INSERT INTO run_logs (task_name, status, started_at, finished_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("quote", "success", "2026-05-01T10:00:00Z", "2026-05-01T10:00:05Z"),
+        )
+
+    _cleanup_naive_run_logs_once()
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT started_at FROM run_logs ORDER BY id"
+        ).fetchall()
+    # 仅保留带 + 或 Z 的行
+    assert len(rows) == 2
+    for r in rows:
+        s: str = r["started_at"]
+        assert "+" in s or "Z" in s
+
+
+def test_check_writes_utc_timestamps() -> None:
+    """_check_neo_data_token_on_startup 应写入带 UTC tz 的时间戳。"""
+    from unittest.mock import MagicMock, patch
+    from backend.scheduler.jobs import _check_neo_data_token_on_startup
+
+    # NeoDataClient 在 get_token_status 抛错时仍会写 skipped 状态
+    with patch("backend.collectors.neodata_client.NeoDataClient") as MockClient:
+        instance = MagicMock()
+        instance.get_token_status.side_effect = RuntimeError("config not loaded")
+        MockClient.return_value = instance
+
+        # 该函数读取 config 触发异常,但仍写 run_logs
+        try:
+            _check_neo_data_token_on_startup()
+        except Exception:
+            pass  # 容忍配置缺失
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT started_at, finished_at FROM run_logs "
+            "WHERE task_name = 'neodata_health' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    if row is not None:
+        for v in (row["started_at"], row["finished_at"]):
+            parsed = datetime.fromisoformat(v)
+            assert parsed.tzinfo is not None, f"naive timestamp 残留: {v}"

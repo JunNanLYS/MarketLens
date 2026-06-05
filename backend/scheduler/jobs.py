@@ -1,6 +1,6 @@
 ﻿import asyncio
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,6 +12,30 @@ from backend.services.collection_service import CollectionService
 from backend.services.news_service import NewsService
 from backend.services.report_service import ReportService
 from backend.storage.database import get_db
+
+
+def _cleanup_naive_run_logs_once() -> None:
+    """启动时一次性清理: run_logs 表中无 tz 标记的旧条目。
+
+    历史上 jobs.py::_check_neo_data_token_on_startup 用过 naive datetime.now(),
+    其他服务都用 timezone.utc。混合存储会让 get_task_status 计算 duration 时出错
+    (naive - aware 抛 TypeError)。本函数只删缺 tz 标记的行(无 '+' 也无 'Z')。
+    """
+    try:
+        with get_db() as conn:
+            deleted: int = conn.execute(
+                """
+                DELETE FROM run_logs
+                WHERE started_at IS NOT NULL
+                  AND instr(started_at, '+') = 0
+                  AND instr(started_at, 'Z') = 0
+                  AND length(started_at) >= 10
+                """
+            ).rowcount
+            if deleted > 0:
+                logger.info("清理了 {} 条无 tz 标记的 run_logs 旧数据", deleted)
+    except Exception:
+        logger.exception("清理 naive run_logs 失败")
 
 
 # NeoData 启动期健康检查：token 由外部 workbuddy 工具写入，
@@ -28,7 +52,7 @@ def _check_neo_data_token_on_startup() -> None:
     - 无 token  → 记 skipped，error_message 提示去 workbuddy 刷新
     - 异常      → 记 failure，不阻塞应用启动
     """
-    started_at = datetime.now().isoformat()
+    started_at = datetime.now(timezone.utc).isoformat()
     status = "skipped"
     error_message: str | None = None
     affected_assets = 0
@@ -77,7 +101,7 @@ def _check_neo_data_token_on_startup() -> None:
         error_message = f"NeoData 健康检查异常: {e}"
         logger.exception("NeoData 启动健康检查失败")
 
-    finished_at = datetime.now().isoformat()
+    finished_at = datetime.now(timezone.utc).isoformat()
     try:
         with get_db() as conn:
             conn.execute(
@@ -171,13 +195,20 @@ def _run_ai_report() -> None:
 def _run_cleanup() -> None:
     try:
         logger.info("定时任务触发: cleanup")
-        with get_db() as conn:
-            cursor = conn.execute(
-                "DELETE FROM raw_data WHERE collected_at < datetime('now', '-30 days')"
-            )
-            deleted = cursor.rowcount
-            if deleted > 0:
-                logger.info("清理了 {} 条过期原始数据", deleted)
+        from backend.services.collection_service import _WRITE_LOCK
+        from backend.storage.database import get_connection_sync
+        with _WRITE_LOCK:
+            conn = get_connection_sync()
+            try:
+                cursor = conn.execute(
+                    "DELETE FROM raw_data WHERE collected_at < datetime('now', '-30 days')"
+                )
+                deleted = cursor.rowcount
+                conn.commit()
+            finally:
+                conn.close()
+        if deleted > 0:
+            logger.info("清理了 {} 条过期原始数据", deleted)
     except Exception:
         logger.exception("定时任务执行异常: cleanup")
 
@@ -279,6 +310,8 @@ class SchedulerManager:
     def start(self) -> None:
         """注册所有任务后启动调度器。"""
         self.register_jobs()
+        # 启动时清理: run_logs 表中无 tz 标记的旧数据(一次性)。
+        _cleanup_naive_run_logs_once()
         # 启动时一次性健康检查：NeoData token 由外部 workbuddy 工具管理,
         # 应用启动核对一次,结果写 run_logs 供 UI 历史查询。
         # 运行期 token 失效由业务侧 NeoDataProvider 静默降级兜底。

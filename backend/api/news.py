@@ -22,10 +22,14 @@ def list_news(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
     filters: dict = {}
-    if symbol is not None: filters["symbol"] = symbol
-    if days: filters["days"] = days
-    if sentiment is not None: filters["sentiment"] = sentiment
-    if source is not None: filters["source"] = source
+    if symbol is not None:
+        filters["symbol"] = symbol
+    if days:
+        filters["days"] = days
+    if sentiment is not None:
+        filters["sentiment"] = sentiment
+    if source is not None:
+        filters["source"] = source
     return _service.get_news(filters=filters or None, page=page, page_size=page_size)
 
 

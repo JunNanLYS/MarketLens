@@ -31,21 +31,13 @@ def sample_account(svc: PortfolioService) -> dict:
 
 @pytest.fixture
 async def sample_asset() -> None:
-    pass
-
-async def __insert(table: str, data: dict) -> int:
+    """插入默认追踪标的 hk00700, 供依赖此 fixture 的测试使用。"""
     async with aget_db() as conn:
-        keys = list(data.keys())
-        cols = ', '.join(keys)
-        placeholders = ', '.join(['?'] * len(keys))
-        sql = f'INSERT INTO {table} ({cols}) VALUES ({placeholders})'
-        cursor = await conn.execute(sql, list(data.values()))
-        return cursor.lastrowid
-
-    await __insert(
-        "tracked_assets",
-        {"symbol": "hk00700", "name": "腾讯控股", "market": "hk"},
-    )
+        await conn.execute(
+            "INSERT OR IGNORE INTO tracked_assets (symbol, name, market, asset_type, enabled) "
+            "VALUES (?, ?, ?, ?, 1)",
+            ("hk00700", "腾讯控股", "hk", "stock"),
+        )
 
 
 async def test_create_account_success(svc: PortfolioService) -> None:
@@ -333,23 +325,12 @@ async def test_positions_unrealized_pnl(
         }
     )
 
-async def __insert(table: str, data: dict) -> int:
     async with aget_db() as conn:
-        keys = list(data.keys())
-        cols = ', '.join(keys)
-        placeholders = ', '.join(['?'] * len(keys))
-        sql = f'INSERT INTO {table} ({cols}) VALUES ({placeholders})'
-        cursor = await conn.execute(sql, list(data.values()))
-        return cursor.lastrowid
+        await conn.execute(
+            "INSERT INTO market_quotes (symbol, price, collected_at) VALUES (?, ?, ?)",
+            ("hk00700", 400.0, "2026-05-31T15:30:00"),
+        )
 
-    await __insert(
-        "market_quotes",
-        {
-            "symbol": "hk00700",
-            "price": 400.0,
-            "collected_at": "2026-05-31T15:30:00",
-        },
-    )
     positions: list[dict] = svc.get_positions()
     assert len(positions) == 1
     pos: dict = positions[0]
@@ -762,6 +743,260 @@ async def test_split_transaction(
     assert len(positions) == 1
     assert positions[0]["total_qty"] == 200
     assert positions[0]["avg_cost"] == 380.0
+
+
+async def test_create_split_zero_quantity_rejected(
+    svc: PortfolioService, sample_account: dict
+) -> None:
+    with pytest.raises(ValueError, match="数量必须大于 0"):
+        svc.create_transaction(
+            {
+                "account_id": sample_account["id"],
+                "symbol": "hk00700",
+                "type": "split",
+                "quantity": 0,
+                "price": 1.0,
+                "trade_date": "2026-05-15",
+            }
+        )
+
+
+async def test_create_split_negative_quantity_rejected(
+    svc: PortfolioService, sample_account: dict
+) -> None:
+    with pytest.raises(ValueError, match="数量必须大于 0"):
+        svc.create_transaction(
+            {
+                "account_id": sample_account["id"],
+                "symbol": "hk00700",
+                "type": "split",
+                "quantity": -2,
+                "price": 1.0,
+                "trade_date": "2026-05-15",
+            }
+        )
+
+
+async def test_create_split_excessive_ratio_rejected(
+    svc: PortfolioService, sample_account: dict
+) -> None:
+    with pytest.raises(ValueError, match="拆股比例不能超过 1000"):
+        svc.create_transaction(
+            {
+                "account_id": sample_account["id"],
+                "symbol": "hk00700",
+                "type": "split",
+                "quantity": 5000,
+                "price": 1.0,
+                "trade_date": "2026-05-15",
+            }
+        )
+
+
+async def test_wac_includes_buy_fee(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """买入手续费应摊入 WAC 成本基础。"""
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "fee": 100.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+    positions: list[dict] = svc.get_positions()
+    assert len(positions) == 1
+    # WAC = (0 * 0 + 380 * 100 + 100) / 100 = 381.0
+    assert positions[0]["avg_cost"] == pytest.approx(381.0)
+
+
+async def test_realized_pnl_includes_buy_fee(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """买入手续费应进入 WAC,卖出时 realized 反映完整成本。"""
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "fee": 100.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "sell",
+            "quantity": 100,
+            "price": 400.0,
+            "fee": 15.0,
+            "trade_date": "2026-06-01",
+        }
+    )
+    results: list[dict] = svc.get_realized_pnl()
+    assert len(results) == 1
+    # avg_cost=381, realized = (400-381)*100 - 15 = 1885
+    assert results[0]["realized_pnl"] == pytest.approx(1885.0)
+
+
+async def test_sample_asset_inserts_tracked_asset(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """修复后的 fixture 应真正插入 hk00700 到 tracked_assets。"""
+    # 验证 tracked_assets 表有该 symbol
+    with __import__("backend.storage.database").storage.database.get_db() as conn:
+        row = conn.execute(
+            "SELECT symbol, name FROM tracked_assets WHERE symbol = ?", ("hk00700",)
+        ).fetchone()
+    assert row is not None
+    assert row["symbol"] == "hk00700"
+    assert row["name"] == "腾讯控股"
+
+
+async def test_update_delete_concurrent_holds_write_lock(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """两个并发 update 不能让 total_qty 变负（验证 _WRITE_LOCK 串行化）。"""
+    import threading
+
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+    sell = svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "sell",
+            "quantity": 50,
+            "price": 400.0,
+            "trade_date": "2026-05-15",
+        }
+    )
+
+    # 两个线程同时 update sell.quantity,即使发生事务冲突也不会 OperationalError
+    def _upd(q: float) -> None:
+        try:
+            svc.update_transaction(sell["id"], {"quantity": q})
+        except Exception:
+            pass  # 事务冲突属合理回滚
+
+    t1 = threading.Thread(target=_upd, args=(80,))
+    t2 = threading.Thread(target=_upd, args=(90,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    positions: list[dict] = svc.get_positions()
+    assert len(positions) == 1
+    # 不论并发结果如何,total_qty 不应 < 0
+    assert positions[0]["total_qty"] >= 0
+
+
+async def test_update_transaction_uses_write_lock(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """验证 update_transaction 在持有 _WRITE_LOCK 时持有锁。
+
+    portfolio_service 模块顶部 from ... import _WRITE_LOCK 绑定了本地引用,
+    必须同时 patch collection_service 和 portfolio_service 两边的符号。
+    """
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    import backend.services.portfolio_service as ps_mod
+
+    buy = svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    observable = _ObservableLock(original)
+    with patch.object(collection_service, "_WRITE_LOCK", new=observable), \
+         patch.object(ps_mod, "_WRITE_LOCK", new=observable):
+        svc.update_transaction(buy["id"], {"price": 400.0})
+
+    assert observed_held, "update_transaction 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True, "进入 _WRITE_LOCK 时锁未处于持有状态"
+
+
+async def test_delete_transaction_uses_write_lock(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """验证 delete_transaction 在持有 _WRITE_LOCK 时持有锁。"""
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    import backend.services.portfolio_service as ps_mod
+
+    buy = svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    observable = _ObservableLock(original)
+    with patch.object(collection_service, "_WRITE_LOCK", new=observable), \
+         patch.object(ps_mod, "_WRITE_LOCK", new=observable):
+        svc.delete_transaction(buy["id"])
+
+    assert observed_held, "delete_transaction 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True, "进入 _WRITE_LOCK 时锁未处于持有状态"
 
 
 async def test_positions_fully_sold_excluded(

@@ -87,7 +87,6 @@ def _render_quote_section(quote: dict[str, Any]) -> None:
         st.metric("涨跌额", delta)
     with m3:
         if change_pct is not None:
-            color: str = "normal" if change_pct >= 0 else "inverse"
             st.metric("涨跌幅", f"{change_pct:+.2f}%", delta=f"{change_pct:+.2f}%")
         else:
             st.metric("涨跌幅", "-")

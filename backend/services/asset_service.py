@@ -270,7 +270,6 @@ class AssetService:
                 return None
 
             result = self._row_to_dict(dict(row))
-            symbol = result["symbol"]
 
             # 把 joined 字段映射到原有 schema
             if row["q_price"] is not None or row["q_collected_at"] is not None:

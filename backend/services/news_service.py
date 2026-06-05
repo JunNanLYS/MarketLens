@@ -8,8 +8,8 @@ from loguru import logger
 
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
-from backend.storage.database import get_db
-from backend.utils import escape_like
+from backend.services.collection_service import _WRITE_LOCK
+from backend.storage.database import get_connection_sync, get_db
 
 
 class NewsService:
@@ -25,8 +25,9 @@ class NewsService:
         # 旧实现中 _get_symbol_pattern 在循环内被调用，每次都走 if/return。
         # 改为初始化即建立 cache，并在调用前一次性 build。
         self._symbol_patterns: dict[str, re.Pattern] = {}
-        # tags 缓存：row_id -> list[re.Pattern]，由 _match_symbols_with_conn 第一次调用时填充。
-        self._tag_patterns_cache: dict[int, tuple[list[str], list[re.Pattern]]] = {}
+        # tags 缓存：(symbol, tags_str) -> list[re.Pattern]。旧实现用 id(row)
+        # 作为 key,sqlite3.Row 的 id() 在 fetchall 后被 GC 回收,缓存实际从不命中。
+        self._tag_patterns_cache: dict[tuple[str | None, str], list[re.Pattern]] = {}
 
 
     async def collect_news(self) -> dict[str, int]:
@@ -55,101 +56,116 @@ class NewsService:
                     logger.warning("可选数据源 {} 不可用，静默跳过", provider.name)
                 continue
 
-        with get_db() as conn:
-            tracked_assets_rows = conn.execute(
-                "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
-            ).fetchall()
+        with _WRITE_LOCK:
+            conn = get_connection_sync()
+            try:
+                tracked_assets_rows = conn.execute(
+                    "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
+                ).fetchall()
 
-            affected_symbols_set: set[str] = set()
+                affected_symbols_set: set[str] = set()
 
-            # 预取最近一批已有 URL，避免逐条查询（N+1 问题）。
-            # 仅取最近 5000 条以防止全表扫描导致内存膨胀；新增新闻的发布时间
-            # 一定晚于这些记录，因此覆盖了实际去重需求。
-            existing_urls: set[str] = set()
-            url_rows = conn.execute(
-                "SELECT url FROM news_items WHERE url IS NOT NULL "
-                "ORDER BY id DESC LIMIT 5000"
-            ).fetchall()
-            existing_urls = {r["url"] for r in url_rows}
+                # 预取最近一批已有 URL,避免逐条查询(N+1 问题)。
+                # 仅取最近 5000 条以防止全表扫描导致内存膨胀;新增新闻的发布时间
+                # 一定晚于这些记录,因此覆盖了实际去重需求。
+                # DB 层兜底:idx_news_items_url_unique 部分唯一索引保证重复 URL 不可插入。
+                existing_urls: set[str] = set()
+                url_rows = conn.execute(
+                    "SELECT url FROM news_items WHERE url IS NOT NULL "
+                    "ORDER BY id DESC LIMIT 5000"
+                ).fetchall()
+                existing_urls = {r["url"] for r in url_rows}
 
-            for item in all_items:
-                url = (item.get("url", "") or "").strip() or None
-                if url and url in existing_urls:
-                    skipped += 1
-                    continue
+                for item in all_items:
+                    url = (item.get("url", "") or "").strip() or None
+                    if url and url in existing_urls:
+                        skipped += 1
+                        continue
 
-                related_symbols = self._match_symbols_with_conn(
-                    conn,
-                    item.get("title", ""),
-                    item.get("content"),
-                    tracked_assets_rows,
-                )
-                for s in related_symbols:
-                    affected_symbols_set.add(s)
-                related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
+                    related_symbols = self._match_symbols_with_conn(
+                        conn,
+                        item.get("title", ""),
+                        item.get("content"),
+                        tracked_assets_rows,
+                    )
+                    for s in related_symbols:
+                        affected_symbols_set.add(s)
+                    related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
 
-                now = datetime.now(timezone.utc).isoformat()
-                news_data = {
-                    "title": item.get("title", ""),
-                    "source": item.get("source", ""),
-                    "url": url,
-                    "content": item.get("content"),
-                    "summary": item.get("summary"),
-                    "published_at": item.get("published_at"),
-                    "sentiment": item.get("sentiment", "neutral"),
-                    "importance": item.get("importance", "normal"),
-                    "related_symbols": related_symbols_json,
-                    "collected_at": item.get("collected_at", now),
-                }
+                    now = datetime.now(timezone.utc).isoformat()
+                    news_data = {
+                        "title": item.get("title", ""),
+                        "source": item.get("source", ""),
+                        "url": url,
+                        "content": item.get("content"),
+                        "summary": item.get("summary"),
+                        "published_at": item.get("published_at"),
+                        "sentiment": item.get("sentiment", "neutral"),
+                        "importance": item.get("importance", "normal"),
+                        "related_symbols": related_symbols_json,
+                        "collected_at": item.get("collected_at", now),
+                    }
+
+                    try:
+                        # INSERT OR IGNORE: 依赖 idx_news_items_url_unique 部分唯一索引
+                        # (url 非空时);空 URL 允许重复但 unique index 不阻止空值插入。
+                        cursor = conn.execute(
+                            """INSERT OR IGNORE INTO news_items
+                               (title, source, url, content, summary, published_at,
+                                sentiment, importance, related_symbols, collected_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                news_data["title"],
+                                news_data["source"],
+                                news_data["url"],
+                                news_data["content"],
+                                news_data["summary"],
+                                news_data["published_at"],
+                                news_data["sentiment"],
+                                news_data["importance"],
+                                news_data["related_symbols"],
+                                news_data["collected_at"],
+                            ),
+                        )
+                        if cursor.rowcount == 0:
+                            # 重复 URL 已被 partial unique index 拦截
+                            skipped += 1
+                            continue
+                        collected += 1
+                        if url:
+                            existing_urls.add(url)
+
+                        if url:
+                            raw_json = json.dumps(item, ensure_ascii=False, default=str)
+                            conn.execute(
+                                """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
+                                   VALUES (?, ?, ?, ?, ?)""",
+                                ("news", news_data["source"], "news", raw_json, now),
+                            )
+                    except Exception:
+                        logger.exception("新闻入库失败: title={}", news_data["title"])
+                        skipped += 1
+
+                finished_at = datetime.now(timezone.utc).isoformat()
+                status = "success" if collected > 0 or skipped == 0 else "failure"
+                error_message = None
+                if collected == 0 and skipped > 0:
+                    error_message = "所有新闻均被跳过，无新增"
 
                 try:
                     conn.execute(
-                        """INSERT INTO news_items
-                           (title, source, url, content, summary, published_at,
-                            sentiment, importance, related_symbols, collected_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            news_data["title"],
-                            news_data["source"],
-                            news_data["url"],
-                            news_data["content"],
-                            news_data["summary"],
-                            news_data["published_at"],
-                            news_data["sentiment"],
-                            news_data["importance"],
-                            news_data["related_symbols"],
-                            news_data["collected_at"],
-                        ),
+                        """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        ("news", status, started_at, finished_at, error_message, len(affected_symbols_set)),
                     )
-                    collected += 1
-                    if url:
-                        existing_urls.add(url)
-
-                    if url:
-                        raw_json = json.dumps(item, ensure_ascii=False, default=str)
-                        conn.execute(
-                            """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
-                               VALUES (?, ?, ?, ?, ?)""",
-                            ("news", news_data["source"], "news", raw_json, now),
-                        )
                 except Exception:
-                    logger.exception("新闻入库失败: title={}", news_data["title"])
-                    skipped += 1
-
-            finished_at = datetime.now(timezone.utc).isoformat()
-            status = "success" if collected > 0 or skipped == 0 else "failure"
-            error_message = None
-            if collected == 0 and skipped > 0:
-                error_message = "所有新闻均被跳过，无新增"
-
-            try:
-                conn.execute(
-                    """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    ("news", status, started_at, finished_at, error_message, len(affected_symbols_set)),
-                )
+                    logger.exception("写入 run_logs 失败")
+                conn.commit()
             except Exception:
-                logger.exception("写入 run_logs 失败")
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
         logger.info("新闻采集完成: collected={}, skipped={}", collected, skipped)
         return {"collected": collected, "skipped": skipped}
@@ -203,18 +219,18 @@ class NewsService:
         return pattern
 
     def _get_tag_patterns(self, row, tags_str: str) -> list[re.Pattern]:
-        """预编译 row 对应的 tags 正则列表，缓存以避免重复编译。"""
+        """预编译 row 对应的 tags 正则列表,缓存以避免重复编译。"""
         # sqlite3.Row 不支持 .get，按索引访问
         symbol = row["symbol"] if "symbol" in row.keys() else None
         cache_key = (symbol, tags_str)
-        cached = self._tag_patterns_cache.get(id(row))
-        if cached is not None and cached[0] == list(cache_key):
-            return cached[1]
+        cached = self._tag_patterns_cache.get(cache_key)
+        if cached is not None:
+            return cached
         tags = [t.strip() for t in tags_str.split(",") if t.strip()]
         compiled: list[re.Pattern] = [
             re.compile(re.escape(t)) for t in tags if t
         ]
-        self._tag_patterns_cache[id(row)] = (list(cache_key), compiled)
+        self._tag_patterns_cache[cache_key] = compiled
         return compiled
 
     def _match_symbols(self, title: str, content: str | None = None) -> list[str]:

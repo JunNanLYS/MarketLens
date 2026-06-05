@@ -1,8 +1,9 @@
+import sqlite3
 import threading
 from contextlib import asynccontextmanager, contextmanager
-from typing import Generator
+from typing import AsyncGenerator, Generator
 
-import sqlite3
+import aiosqlite
 
 from loguru import logger
 
@@ -49,9 +50,6 @@ def get_db(db_path: str | None = None) -> Generator[sqlite3.Connection, None, No
         conn.close()
         logger.debug("数据库连接已关闭")
 
-
-import aiosqlite
-from typing import AsyncGenerator
 
 async def aget_connection(db_path: str | None = None) -> aiosqlite.Connection:
     """异步获取数据库连接。"""

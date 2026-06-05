@@ -491,3 +491,101 @@ async def test_evidence_builder_news_fields_consumable_by_ai_analyzer_via_aget_d
     assert "confidence" in result
 
     set_db(None)
+
+
+async def test_collect_news_acquires_write_lock() -> None:
+    """验证 collect_news 写块持有 _WRITE_LOCK。
+
+    threading.Lock 是 C 实现,属性只读;用 ObservableLock 包装验证。
+    news_service 顶部 from ... import _WRITE_LOCK 绑定本地引用,
+    必须同时 patch 两边。
+    """
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    import backend.services.news_service as ns_mod
+
+    items = [
+        {
+            "title": "锁测试",
+            "url": "https://example.com/lock-test",
+            "source": "fake",
+        }
+    ]
+    provider = FakeRSSProvider(name="fake_rss_lock", news_items=items)
+    service = NewsService(news_providers=[provider])
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    observable = _ObservableLock(original)
+    with patch.object(collection_service, "_WRITE_LOCK", new=observable), \
+         patch.object(ns_mod, "_WRITE_LOCK", new=observable):
+        await service.collect_news()
+
+    assert observed_held, "collect_news 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True, "collect_news 进入 _WRITE_LOCK 时锁未持有"
+
+
+async def test_collect_news_duplicate_url_uses_or_ignore() -> None:
+    """验证 INSERT OR IGNORE 在 DB 层兜底去重。"""
+    items = [
+        {
+            "title": "重复URL测试",
+            "url": "https://example.com/dup-test",
+            "source": "fake",
+        }
+    ]
+    provider = FakeRSSProvider(name="fake_rss_dup", news_items=items)
+    service = NewsService(news_providers=[provider])
+
+    # 第一次收集
+    r1: dict = await service.collect_news()
+    assert r1["collected"] == 1
+    assert r1["skipped"] == 0
+
+    # 第二次收集,相同 URL 应被 DB 层 partial unique index 拦截
+    r2: dict = await service.collect_news()
+    assert r2["collected"] == 0
+    assert r2["skipped"] >= 1
+
+
+async def test_tag_patterns_cache_key_stable() -> None:
+    """验证缓存 key 是 (symbol, tags_str) tuple,多次调用只编译一次。"""
+    service = NewsService(news_providers=[])
+
+    # 模拟 sqlite3.Row
+    class FakeRow:
+        def __init__(self, symbol: str) -> None:
+            self._symbol = symbol
+
+        def keys(self) -> list[str]:
+            return ["symbol"]
+
+        def __getitem__(self, key: str) -> str:
+            if key == "symbol":
+                return self._symbol
+            raise KeyError(key)
+
+    row = FakeRow("hk00700")
+    p1 = service._get_tag_patterns(row, "AI,云")
+    p2 = service._get_tag_patterns(row, "AI,云")
+    # 同一 key 命中缓存,返回同一对象
+    assert p1 is p2
+    assert ("hk00700", "AI,云") in service._tag_patterns_cache
+    # 不同 tags_str 不同 key
+    p3 = service._get_tag_patterns(row, "新能源")
+    assert p3 is not p1
+    assert ("hk00700", "新能源") in service._tag_patterns_cache
