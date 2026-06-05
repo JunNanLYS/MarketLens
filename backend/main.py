@@ -11,6 +11,7 @@ from starlette.responses import Response
 
 from backend.api.assets import router as assets_router
 from backend.api.data import router as data_router
+from backend.api.data_sources import router as data_sources_router
 from backend.api.neodata import router as neodata_router
 from backend.api.news import router as news_router
 from backend.api.portfolio import router as portfolio_router
@@ -56,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _scheduler_manager, _db_ready, _scheduler_ready
     logger.info("MarketLens 应用启动中...")
     try:
-        init_db()
+        await init_db()
         _db_ready = True
         logger.info("数据库初始化完成")
     except Exception:
@@ -105,6 +106,7 @@ app.add_middleware(
 
 app.include_router(assets_router)
 app.include_router(data_router)
+app.include_router(data_sources_router)
 app.include_router(neodata_router)
 app.include_router(news_router)
 app.include_router(reports_router)
