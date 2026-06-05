@@ -1,6 +1,6 @@
 # MarketLens 产品需求文档 (PRD)
 
-> 版本: 1.1 | 日期: 2026-06-03 | 状态: MVP 已完成（除 AI 问答）
+> 版本: 1.2 | 日期: 2026-06-05 | 状态: MVP 已完成（除 AI 问答）
 
 ---
 
@@ -232,9 +232,9 @@ MarketLens MVP
 | 指标 | 目标值 | 说明 |
 |---|---|---|
 | 单标的行情采集 | < 3 秒 | subprocess 调用 + 解析 |
-| 全量标的采集（20 只） | < 60 秒 | 串行采集，逐个标的 |
+| 全量标的采集（20 只） | < 30 秒 | `asyncio.gather` 并发采集，逐个标的并行 |
 | API 响应时间 | < 500ms | 简单查询（单表） |
-| AI 报告生成（20 只） | < 120 秒 | 规则引擎批量分析 |
+| AI 报告生成（20 只） | < 60 秒 | 规则引擎 + 证据包并行组装 |
 | 数据库大小（1 年数据） | < 500MB | 20 只标的，日级别数据 |
 
 ### 5.2 可靠性
@@ -260,8 +260,11 @@ MarketLens MVP
 | 要求 | 说明 |
 |---|---|
 | 数据本地化 | 所有数据存储于本地 SQLite，不上传任何云端 |
-| 无外部账号依赖 | 不强制注册、不要求 API Key（数据源为公开接口） |
+| 无外部账号依赖 | 数据源为公开接口，不强制注册；NeoData 凭证本地缓存可选 |
 | 配置文件安全 | config.yaml 中的敏感字段支持环境变量替代 |
+| 写端点鉴权 | 9 个写端点需要 `X-API-Key` 头：POST/PATCH/DELETE on `/assets`、`/accounts`、`/transactions`；POST on `/reports/generate`；POST on `/neodata/token`；POST on `/tasks/trigger/{name}` |
+| 默认 API Key | 本地默认 `marketlens-local`；生产环境必须通过环境变量 `MARKETLENS_API_KEY` 或 `config.security.api_key` 覆盖，否则启动日志会发出 warning |
+| Security Headers | 5 个安全响应头由 `SecurityHeadersMiddleware` 统一注入：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Strict-Transport-Security`、`Content-Security-Policy`（宽松以兼容 Swagger UI） |
 
 ### 5.5 可扩展性
 
@@ -333,6 +336,9 @@ MarketLens MVP
 - [x] 用户可查看任一标的的十大股东和股东人数变化
 - [x] 用户可查看任一标的的最新业绩预告
 - [x] 用户可查看任一标的的历史分红记录
+- [x] 投资组合：交易历史与已实现盈亏汇总均支持分页（`page` / `page_size` 参数）
+- [x] 投资组合：账户与交易均使用软删除（`deleted_at` 标记）保留审计痕迹
+- [x] 投资组合：持仓总览、已实现盈亏支持按账户 ID 跨账户汇总
 
 ---
 

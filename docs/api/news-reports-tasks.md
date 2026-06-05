@@ -1,5 +1,17 @@
 ﻿# 新闻 + AI 报告 + 任务管理 API
 
+## 鉴权
+
+| 模块 | 需要 API Key 的端点 |
+|---|---|
+| 新闻 | 无（全部 GET） |
+| AI 报告 | `POST /reports/generate` |
+| 任务管理 | `POST /tasks/trigger/{name}` |
+
+`GET` 端点公开访问。API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。
+
+---
+
 ## 新闻
 
 > 基准路径: `/api/v1/news` | 返回上级: [API 概述](/docs/api.md)
@@ -65,7 +77,7 @@ GET /api/v1/news/1 HTTP/1.1
 | `GET` | `/reports` | 报告列表 | 200 |
 | `GET` | `/reports/{symbol}` | 指定标的最新报告 | 200, 404 |
 | `GET` | `/reports/{symbol}/history` | 指定标的历史报告 | 200, 404 |
-| `POST` | `/reports/generate` | 手动生成报告 | 200, 400 |
+| `POST` | `/reports/generate` | 手动生成报告 | 200, 400, 401 |
 
 ### `GET /reports` — 报告列表
 
@@ -143,8 +155,8 @@ Content-Type: application/json
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
-| `GET` | `/tasks/status` | 任务运行状态 | 200 |
-| `POST` | `/tasks/trigger/{name}` | 手动触发 | 202, 400, 404 |
+| `GET` | `/tasks/status` | 任务运行状态 | 200, 503 |
+| `POST` | `/tasks/trigger/{name}` | 手动触发 | 202, 400, 401, 404, 500 |
 | `GET` | `/tasks/logs` | 运行日志 | 200 |
 
 ### `GET /tasks/status`

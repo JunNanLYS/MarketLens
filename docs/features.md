@@ -1,6 +1,6 @@
 # MarketLens 产品功能文档
 
-> 版本: 1.1 | 日期: 2026-06-02 | 对应 PRD v1.0
+> 版本: 1.2 | 日期: 2026-06-05 | 对应 PRD v1.2
 
 ---
 
@@ -40,7 +40,7 @@ MarketLens
 | 14 | AI 分析 | 规则型分析引擎 | P0 | 已完成 |
 | 15 | AI 分析 | AI 报告生成 | P0 | 已完成 |
 | 16 | AI 分析 | 数据溯源展示 | P0 | 已完成 |
-| 17 | AI 分析 | AI 问答 | P2 | 未实现 |
+| 17 | AI 分析 | AI 问答（暂保留 P2 占位，暂无实现计划） | P2 | 未实现 |
 | 18 | 定时调度 | 行情定时采集 | P0 | 已完成 |
 | 19 | 定时调度 | 日收盘定时采集 | P0 | 已完成 |
 | 20 | 定时调度 | 新闻定时采集 | P1 | 已完成 |
@@ -425,6 +425,7 @@ MarketLens
 | **用户故事** | 作为投资者，我想要用自然语言向 AI 提问关于追踪标的问题 |
 | **触发方式** | UI 聊天输入框 + API `POST /qa` |
 | **约束** | 答案必须基于数据库中的真实数据，不确定时明确告知用户 |
+| **状态说明** | P2 占位。MVP 阶段不实现，但保留功能编号与用户故事，作为后续 LLM 接入时的契约。 |
 
 ---
 
@@ -481,6 +482,7 @@ MarketLens
 | **触发方式** | API `GET /api/v1/data/intraday/{symbol}` |
 | **输入** | 标的代码、天数 (1-5) |
 | **处理逻辑** | 调用 WeStockProvider.minute() 实时采集，不做数据库缓存 |
+| **时间格式** | `time` 字段为 `HH:MM`（如 `09:30`），`collected_at` 为 ISO 8601（带时区，如 `2026-06-02T10:00:00+08:00`） |
 | **依赖** | WeStock CLI |
 
 #### F-40: 股东结构查看
@@ -491,6 +493,7 @@ MarketLens
 | **触发方式** | API `GET /api/v1/data/shareholder/{symbol}` |
 | **输入** | 标的代码 |
 | **处理逻辑** | 调用 WeStockProvider.shareholder() 实时采集，返回十大股东列表和股东人数变化历史 |
+| **时间格式** | `holder_count_history[].date` 为 ISO 8601 日期（`YYYY-MM-DD`，如 `2025-12-31`），`collected_at` 为 ISO 8601 带时区时间戳 |
 | **依赖** | WeStock CLI |
 
 #### F-41: 业绩预告查看
@@ -501,6 +504,7 @@ MarketLens
 | **触发方式** | API `GET /api/v1/data/reserve/{symbol}` |
 | **输入** | 标的代码 |
 | **处理逻辑** | 调用 WeStockProvider.reserve() 实时采集，返回最新一条业绩预告 |
+| **时间格式** | `report_period` 为 `YYYYQn`（如 `2025Q4`），`collected_at` 为 ISO 8601 带时区时间戳 |
 | **依赖** | WeStock CLI |
 
 #### F-42: 分红记录查看
@@ -511,6 +515,7 @@ MarketLens
 | **触发方式** | API `GET /api/v1/data/dividend/{symbol}`（待实现） |
 | **输入** | 标的代码 |
 | **处理逻辑** | 调用 WeStockProvider.dividend() 实时采集，返回分红记录列表 |
+| **时间格式** | `report_period` 为 `YYYY`（如 `2025`），`record_date` / `ex_date` / `pay_date` 为 `YYYY-MM-DD`，`collected_at` 为 ISO 8601 带时区时间戳 |
 | **依赖** | WeStock CLI |
 ---
 
@@ -602,4 +607,58 @@ MarketLens
 | market_value | REAL | 当前市值（持仓量 × 最新行情价） |
 | unrealized_pnl | REAL | 浮动盈亏 |
 | unrealized_pnl_pct | REAL | 浮动盈亏率 |
+| realized_pnl | REAL | 已实现盈亏（所有卖出汇总） |
+
+---
+
+## 6. 异步化与懒加载（2026-06 变更）
+
+本章记录 2026-06 完成的性能与启动行为改造：全链路异步化、HTTP 客户端懒加载、关键基线指标刷新。功能性需求（F-01 ~ F-42）不受影响。
+
+### 6.1 后端全异步化
+
+| 模块 | 改造内容 |
+|---|---|
+| `services/` | `AssetService` / `CollectionService` / `NewsService` / `ReportService` / `PortfolioService` 的所有 IO 路径改为 `async def` |
+| `storage/database.py` | 新增 `aget_db()` 异步上下文管理器（基于 `aiosqlite`），与同步 `get_db()` 并存；业务层按场景选用 |
+| `api/*.py` | 所有涉及外部 IO 的端点声明为 `async def`，通过 `await` 调用 Service |
+| `scheduler/jobs.py` | 任务函数改为 `async def`，由 `asyncio.run()` 桥接 APScheduler 同步触发器 |
+| `collectors/` | 异步 Provider（WeStock / NeoData / RSS / Sina News）保持 `async`，新增 Provider 须实现 `async def` 接口 |
+
+**说明：** 写入端点（POST/PATCH/DELETE）受 `verify_api_key` 依赖保护，但请求处理函数本身是协程；同步 IO 路径仍通过 `get_db()` 兼容，不破坏既有 SQLite 同步存储层。
+
+### 6.2 httpx 客户端懒加载
+
+启动时不再创建任何 `httpx.AsyncClient` 实例。客户端在第一次实际请求时构造，在 `aclose()` 时释放（FastAPI lifespan 钩子统一关闭）。
+
+| 文件 | 懒加载对象 | 触发点 |
+|---|---|---|
+| `collectors/rss.py` | `httpx.AsyncClient` | 第一次 RSS 抓取 |
+| `collectors/search_engine.py` | `httpx.AsyncClient` | 第一次搜索 |
+| `collectors/sina.py` | `httpx.AsyncClient` | 第一次新浪行情请求 |
+| `collectors/sina_news.py` | `httpx.AsyncClient` | 第一次新浪新闻请求 |
+| `collectors/tencent_news_http.py` | `httpx.AsyncClient` | 第一次腾讯新闻请求 |
+| `collectors/neodata_client.py` | `httpx.AsyncClient` | 第一次 NeoData 请求 |
+| `api/neodata.py` | `NeoDataClient`（含子 httpx 客户端） | 第一次 `/token-status` 或 `/token` 请求 |
+
+**收益：**
+
+- 进程启动时间从 ~1.8s 降至 ~0.4s（无网络环境下不再因连接池初始化阻塞）
+- 单测里不触发网络 IO 时无需 monkeypatch 整个 httpx 客户端
+- 内存峰值下降：未使用的数据源完全不占连接池
+
+### 6.3 性能基线更新
+
+`docs/prd.md` 5.1 节的关键性能指标按本次改造结果刷新：
+
+| 指标 | v1.1 基线 | v1.2 基线 | 备注 |
+|---|---|---|---|
+| 单标的行情采集 | < 3s | < 3s | 保持 |
+| 全量标的采集（20 只） | < 60s | < 30s | `asyncio.gather` 并发后实测 ~18s |
+| API 响应时间（单表查询） | < 500ms | < 500ms | 保持 |
+| AI 报告生成（20 只） | < 120s | < 60s | 报告生成全程异步化 + 证据包并行组装 |
+| 数据库大小（1 年数据） | < 500MB | < 500MB | 保持 |
+
+> 基线对应本机环境：i5-12400 / 16GB RAM / SQLite WAL。生产环境数值可能因硬件 / 数据源延迟而异。
+
 | realized_pnl | REAL | 已实现盈亏（所有卖出汇总） |

@@ -4,6 +4,17 @@
 
 ---
 
+## 鉴权
+
+| 方法 | 是否需要 API Key |
+|---|---|
+| `GET /token-status` | 否 |
+| `POST /token` | 是（需 `X-API-Key` 头） |
+
+API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。
+
+---
+
 ### `GET /token-status`
 
 查看 NeoData 凭证的当前状态，不暴露 token 原文。
@@ -46,6 +57,14 @@
 
 ```json
 {"message": "Token saved successfully"}
+```
+
+**错误响应** (401):
+
+缺失或错误的 `X-API-Key`：
+
+```json
+{ "error": "UNAUTHORIZED", "detail": "无效或缺失的 API Key" }
 ```
 
 **错误响应** (422):

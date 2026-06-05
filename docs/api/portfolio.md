@@ -4,20 +4,31 @@
 
 ---
 
+## 鉴权
+
+| 方法 | 是否需要 API Key |
+|---|---|
+| `GET` | 否 |
+| `POST` / `PATCH` / `DELETE` | 是（需 `X-API-Key` 头） |
+
+API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。
+
+---
+
 ## 接口清单
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
-| `POST` | `/accounts` | 创建账户 | 201, 400, 409 |
+| `POST` | `/accounts` | 创建账户 | 201, 400, 401, 409 |
 | `GET` | `/accounts` | 账户列表 | 200 |
 | `GET` | `/accounts/{account_id}` | 账户详情 | 200, 404 |
-| `PATCH` | `/accounts/{account_id}` | 更新账户 | 200, 404, 409 |
-| `DELETE` | `/accounts/{account_id}` | 删除账户（软删除） | 204, 404 |
-| `POST` | `/transactions` | 录入交易 | 201, 400, 404 |
+| `PATCH` | `/accounts/{account_id}` | 更新账户 | 200, 401, 404, 409 |
+| `DELETE` | `/accounts/{account_id}` | 删除账户（软删除） | 204, 401, 404 |
+| `POST` | `/transactions` | 录入交易 | 201, 400, 401, 404 |
 | `GET` | `/transactions` | 交易历史（分页/筛选） | 200 |
 | `GET` | `/transactions/{transaction_id}` | 交易详情 | 200, 404 |
-| `PATCH` | `/transactions/{transaction_id}` | 更新交易 | 200, 400, 404 |
-| `DELETE` | `/transactions/{transaction_id}` | 删除交易（软删除） | 204, 400, 404 |
+| `PATCH` | `/transactions/{transaction_id}` | 更新交易 | 200, 400, 401, 404 |
+| `DELETE` | `/transactions/{transaction_id}` | 删除交易（软删除） | 204, 400, 401, 404 |
 | `GET` | `/positions` | 持仓总览 | 200 |
 | `GET` | `/positions/realized-pnl` | 已实现盈亏汇总 | 200 |
 
@@ -238,3 +249,5 @@
 
 **计算规则：**
 - 已实现盈亏 = 卖出金额(数量×价格) - 卖出数量 × 均价 - 手续费
+
+> **分页支持：** `PortfolioService.get_realized_pnl()` 在 service 层支持 `page` / `page_size`（默认 50，上限 200），按 `(account_id, symbol)` 在 DB 层聚合，避免 Python 端遍历全表。当前 HTTP 端点不暴露分页参数——当结果集超过数百条时建议按 `account_id` 或 `symbol` 过滤缩小范围。后续版本将补充 `Query` 绑定。

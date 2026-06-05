@@ -4,21 +4,32 @@
 
 ---
 
+## 鉴权
+
+| 方法 | 是否需要 API Key |
+|---|---|
+| `GET` | 否 |
+| `POST` | 是（需 `X-API-Key` 头） |
+
+API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。所有 POST 端点（`/refresh`、`/intraday`、`/shareholder`、`/dividend`、`/reserve`）均受保护。
+
+---
+
 ## 接口清单
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
 | `GET` | `/data/quotes/{symbol}` | 最新行情 | 200, 404 |
-| `POST` | `/data/quotes/{symbol}/refresh` | 手动刷新行情 | 200, 502 |
+| `POST` | `/data/quotes/{symbol}/refresh` | 手动刷新行情 | 200, 401, 502 |
 | `GET` | `/data/quotes/{symbol}/history` | 历史行情序列 | 200, 404, 422 |
 | `GET` | `/data/kline/{symbol}` | 日 K 线 | 200, 404, 422 |
-| `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 404 |
+| `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 404, 422 |
 | `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 404, 422 |
 | `GET` | `/data/technical/{symbol}` | 技术指标 | 200, 404 |
-| `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 422, 502 |
-| `POST` | `/data/shareholder/{symbol}` | 股东结构采集 | 200, 502 |
-| `POST` | `/data/dividend/{symbol}` | 分红数据采集 | 200, 502 |
-| `POST` | `/data/reserve/{symbol}` | 业绩预告采集 | 200, 502 |
+| `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 401, 422, 502 |
+| `POST` | `/data/shareholder/{symbol}` | 股东结构采集 | 200, 401, 502 |
+| `POST` | `/data/dividend/{symbol}` | 分红数据采集 | 200, 401, 502 |
+| `POST` | `/data/reserve/{symbol}` | 业绩预告采集 | 200, 401, 502 |
 
 > 所有数据均包含 `source` 和 `collected_at` 字段以支持追溯。
 
@@ -137,6 +148,10 @@ GET /api/v1/data/kline/hk00700?limit=30 HTTP/1.1
 ---
 
 ## `GET /data/finance/{symbol}` — 财务数据
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` | integer | 4 | 取值范围 1-20 |
 
 ```http
 GET /api/v1/data/finance/hk00700 HTTP/1.1
