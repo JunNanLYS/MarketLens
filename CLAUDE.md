@@ -2,6 +2,93 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project context
+
+**MarketLens is a single-user, local-first tool.** It runs on the developer's own machine, talks to public financial data sources, and stores everything in a local SQLite file. There is no remote user base, no multi-tenant data, no internet-facing deployment.
+
+When reviewing code or assessing risks, apply this **threat model**:
+
+- ✅ **Real risks worth flagging** — data corruption, race conditions in the UI/server (Streamlit reruns, concurrent API calls), timezone/locale bugs, misconfigured config, inconsistent docs, accessibility for the user, broken tests giving false confidence.
+- ❌ **Not real risks — do NOT flag as "security vulnerabilities"**:
+  - CSRF / cross-origin attacks — there's no remote attacker; the user's browser is the only client.
+  - Phishing / XSS via ingested news or feed content — the user curates their own feeds; they are not attacking themselves.
+  - "Publicly known" default API key (`marketlens-local`) — this is the user's local password, not a public secret. If `MARKETLENS_API_KEY` env var is unset, this default is the intended working value.
+  - CORS `*` / wildcard in `config.yaml` — fine for a local tool, not a production deployment.
+  - Timing attacks on `verify_api_key` — no remote attacker on the loopback interface.
+  - Subprocess env var leakage to `npx` / CLI tools — the child process runs as the same user on the same machine.
+  - "Hardcoded" secrets in `config.yaml` — these are local dev defaults, not production credentials.
+
+If a finding only matters when the tool is exposed to untrusted networks or users, say so explicitly and do not block on it. Focus on correctness, performance, maintainability, testing, docs, and accessibility — these are the dimensions where this project can actually regress.
+
+## Code review priorities
+
+When reviewing this project (whether via `/code-review` skill, manual review, or any other means), spend time in this order. Do NOT default to the generic 7-dimension checklist (Security/Performance/Correctness/Maintainability/Testing/Accessibility/Documentation) — the Security leg is a false-positive generator here, and the dimensions are not equally important for a single-user financial tool.
+
+### 1. Correctness — HIGHEST PRIORITY
+Money math + time + concurrency bugs hit the user directly. Local tools have no remote shield, so defects surface as bad P&L or wrong AI reports.
+
+- **Money math precision** — WAC, realized P&L, unrealized P&L, cross-account aggregation, split handling, multi-currency
+- **Timezone & date handling** — every `datetime` must be `timezone.utc`; check trade_date type, range comparisons
+- **Edge cases** — empty holdings, zero price, negative quantities (especially split `quantity > 0` write-time validation), `page=0`, `page_size=0`
+- **Concurrency** — Streamlit rerun can race with API requests; scheduler tick can overlap with manual triggers; check-then-act in `update_transaction`/`delete_transaction`
+- **Quote/position timing** — what happens if a tracked asset has no quote yet?
+
+### 2. Data integrity & collection reliability
+The project's core value is "evidence-driven AI." Every AI report depends on accurate collection. `raw_data` table is the audit trail.
+
+- **Source failure isolation** — when one Provider throws, are others genuinely unaffected?
+- **`optional: true` handling** — token missing / 401 → silent skip, not crash
+- **Timeout config** — every external call (subprocess, HTTP) must have a `timeout` (CLAUDE.md hard constraint)
+- **Idempotency** — scheduler re-runs must not duplicate rows; verify `INSERT OR IGNORE` / UNIQUE INDEX coverage
+- **Schema evolution** — `ALTER TABLE` paths, column constraint migration
+- **`raw_data` unbounded growth** — needs auto-cleanup
+
+### 3. Performance — only the real bottlenecks
+Already benchmarked: 100 assets < 2min, import 0.9s. Look for new regressions, don't relitigate solved ones.
+
+- **N+1 queries** — especially portfolio's per-(account, symbol) aggregation
+- **Streamlit `@st.cache_data`** — which of the 9 detail-page tabs are un-cached?
+- **Large fetch + Python-side aggregation** — `evidence_builder.build_multi` parses 5000 news rows in Python per batch
+- **CTE pitfalls** — `get_asset_by_id` kline×flow Cartesian product risk
+- **Write lock granularity** — currently locks the whole `_collect_*` method
+- **Subprocess cold start** — westock `npx` 2-5s per call, 100 assets serialized
+
+### 4. Maintainability
+Single-user tool = you maintain it yourself. Code must be readable by you 3 months from now.
+
+- **Config-driven vs hardcoded** — scattered `if symbol.startswith("sh")`?
+- **Provider registry** — `base.py` 6 methods, are they `@abstractmethod` or empty stubs? (see Known issues)
+- **Dead code** — unused methods, broken fixtures (`sample_asset` type cases)
+- **Duplicated logic** — `collection_service.py` `_fetch_kline`/`_fetch_finance`/`_fetch_fund_flow`/`_fetch_technical` 4-way duplication
+- **Type annotations + Chinese docstrings** — CLAUDE.md hard constraint
+
+### 5. UI / accessibility / docs accuracy
+You stare at the Streamlit 9-tab detail page daily. Color blindness, doc/code drift, dead UI options affect you.
+
+- **P&L red/green only** — ~8% of male users can't distinguish
+- **Cache TTL reasonableness** — quote 15min cycle, UI 30s reasonable
+- **API doc/code sync** — `docs/api/*.md` vs `backend/api/*.py` field names, status codes
+- **Emoji-only buttons** — `st.button("✏️")` with no `help=` / `aria_label`
+- **Dead UI options** — `running` filter that never matches
+- **Hidden labels** — `label_visibility="collapsed"` removes accessible name
+
+### 6. Integration & module boundaries
+Strong module coupling is the local-tool tax. Cross-layer violations break deployment.
+
+- **Layer boundaries** — does `ui/` import `backend/storage/` directly? (CLAUDE.md forbids)
+- **Module boundaries per CLAUDE.md** — collectors, services, storage, scheduler isolation
+- **Import time** — still < 1s? (lazy load intact?)
+- **Resource cleanup** — `lifespan shutdown` closes all lazy clients
+
+### Dimensions to NOT spend time on
+
+| Skip | Why |
+|------|-----|
+| Generic Security checklist (CSRF, CORS, XSS, timing attacks, default-key exposure) | Single-user local tool — see "Project context" above |
+| Multi-tenant / horizontal scaling | One user, one process, one SQLite |
+| Performance load testing | Already benchmarked: 100 assets < 2min, import 0.9s |
+| Production deployment concerns (TLS, auth providers, rate limits) | Not a deployed service |
+
 ## Commands
 
 ```bash

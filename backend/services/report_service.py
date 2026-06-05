@@ -63,12 +63,15 @@ class ReportService:
         finished_at = datetime.now(timezone.utc).isoformat()
         status = "success" if not errors else "failure"
         error_message = "; ".join(errors) if errors else None
-        with get_db() as conn_sync:
-            conn_sync.execute(
-                """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                ("ai_report", status, started_at, finished_at, error_message, generated + skipped),
-            )
+        try:
+            with get_db() as conn_sync:
+                conn_sync.execute(
+                    """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("ai_report", status, started_at, finished_at, error_message, generated + skipped),
+                )
+        except Exception:
+            logger.exception("写入 ai_report run_logs 失败")
 
         return {"generated": generated, "skipped": skipped}
 

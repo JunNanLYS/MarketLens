@@ -231,3 +231,29 @@ class TestReportServiceForceIdempotent:
             ).fetchone()[0]
         assert count == 1
 
+
+async def test_generate_reports_run_logs_failure_isolated(tmp_db) -> None:
+    """run_logs 写入失败不应掩盖 report 生成结果。"""
+    from unittest.mock import patch
+
+    # 先插入一个标的可用于生成
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled) "
+            "VALUES (?, ?, ?, ?, 1)",
+            ("hk00700", "腾讯控股", "hk", "stock"),
+        )
+
+    # 显式传 symbols 跳过 _get_active_symbols 中的 get_db() 调用;
+    # 这样 mock 触发的 RuntimeError 只在 run_logs 写入时被抛出,被 try/except 捕获。
+    with patch("backend.services.report_service.get_db", side_effect=RuntimeError("disk full")):
+        result: dict = await ReportService.generate_reports(symbols=["hk00700"])
+    assert "generated" in result
+    assert "skipped" in result
+    # 实际生成的报告仍应进入 ai_reports
+    with get_db() as conn:
+        count: int = conn.execute(
+            "SELECT COUNT(*) FROM ai_reports"
+        ).fetchone()[0]
+    assert count >= 1
+

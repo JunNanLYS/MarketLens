@@ -64,7 +64,6 @@ def _render_positions_tab() -> None:
     with m1:
         st.metric("总市值", f"{total_market_value:,.2f}")
     with m2:
-        color: str = "normal" if total_unrealized_pnl >= 0 else "inverse"
         st.metric("总浮动盈亏", _format_pnl(total_unrealized_pnl))
     with m3:
         if total_market_value > 0:
