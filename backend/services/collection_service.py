@@ -1069,3 +1069,124 @@ class CollectionService:
         if row is None:
             return None
         return dict(row)
+
+    def get_dividends(
+        self,
+        symbol: str,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询分红记录，按 ex_date 降序。
+
+        Args:
+            symbol: 标的代码。
+            limit: 返回行数上限。
+            source: 可选数据源过滤；None 时返回所有数据源。
+        """
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM dividends WHERE {where} ORDER BY ex_date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_shareholders(
+        self,
+        symbol: str,
+        limit: int = 10,
+        source: str | None = None,
+    ) -> dict:
+        """查询股东结构 + 股东户数历史。
+
+        Args:
+            symbol: 标的代码。
+            limit: top_shareholders 返回行数上限。
+            source: 可选数据源过滤。
+
+        Returns:
+            dict 含 top_shareholders / holder_count_history 两条列表。
+        """
+        top_conditions: list[str] = ["symbol = ?"]
+        top_params: list[Any] = [symbol]
+        if source is not None:
+            top_conditions.append("source = ?")
+            top_params.append(source)
+        top_where = " AND ".join(top_conditions)
+        top_params.append(limit)
+        top_sql = (
+            f"SELECT * FROM shareholders WHERE {top_where} "
+            f"ORDER BY report_period DESC, rank ASC LIMIT ?"
+        )
+
+        cnt_conditions: list[str] = ["symbol = ?"]
+        cnt_params: list[Any] = [symbol]
+        if source is not None:
+            cnt_conditions.append("source = ?")
+            cnt_params.append(source)
+        cnt_where = " AND ".join(cnt_conditions)
+        cnt_sql = (
+            f"SELECT * FROM shareholder_count_history WHERE {cnt_where} "
+            f"ORDER BY report_date DESC"
+        )
+
+        with get_db() as conn:
+            top_rows = conn.execute(top_sql, top_params).fetchall()
+            cnt_rows = conn.execute(cnt_sql, cnt_params).fetchall()
+        return {
+            "top_shareholders": [dict(r) for r in top_rows],
+            "holder_count_history": [dict(r) for r in cnt_rows],
+        }
+
+    def get_profit_forecasts(
+        self,
+        symbol: str,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询业绩预告，按 report_period 降序。"""
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM profit_forecasts WHERE {where} ORDER BY report_period DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_minute_klines(
+        self,
+        symbol: str,
+        limit: int = 240,
+        from_dt: str | None = None,
+        to_dt: str | None = None,
+    ) -> list[dict]:
+        """查询分时 K 线，按 time 降序。
+
+        Args:
+            symbol: 标的代码。
+            limit: 返回行数上限（默认 240，对应 4 小时交易时间 1 分钟 K）。
+            from_dt: 起始时间（ISO 字符串，可选）。
+            to_dt: 截止时间（ISO 字符串，可选）。
+        """
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if from_dt is not None:
+            conditions.append("time >= ?")
+            params.append(from_dt)
+        if to_dt is not None:
+            conditions.append("time <= ?")
+            params.append(to_dt)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM minute_klines WHERE {where} ORDER BY time DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]

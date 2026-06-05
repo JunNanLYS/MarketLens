@@ -115,3 +115,136 @@ async def get_reserve(symbol: str) -> dict:
         raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 业绩预告采集失败"})
     return result
 
+
+# ============================================================================
+# 阶段 3：4 个 GET 查询端点（按需查询已落库数据）
+# GET 无副作用；写入/触发采集走 /refresh 端点
+# ============================================================================
+
+
+@router.get("/dividend/{symbol}")
+def get_dividend_records(
+    symbol: str,
+    limit: int = Query(20, ge=1, le=200),
+    source: str | None = Query(None, description="按数据源过滤"),
+) -> dict:
+    """查询分红记录（按 ex_date 降序）。"""
+    items = _service.get_dividends(symbol, limit=limit, source=source)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"标的 {symbol} 无分红数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.get("/shareholder/{symbol}")
+def get_shareholder_records(
+    symbol: str,
+    limit: int = Query(10, ge=1, le=100),
+    source: str | None = Query(None, description="按数据源过滤"),
+) -> dict:
+    """查询股东结构（top + 户数历史）。"""
+    result = _service.get_shareholders(symbol, limit=limit, source=source)
+    if not result["top_shareholders"] and not result["holder_count_history"]:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"标的 {symbol} 无股东数据"},
+        )
+    return {
+        "symbol": symbol,
+        "top_shareholders": result["top_shareholders"],
+        "holder_count_history": result["holder_count_history"],
+    }
+
+
+@router.get("/reserve/{symbol}")
+def get_reserve_records(
+    symbol: str,
+    limit: int = Query(20, ge=1, le=200),
+    source: str | None = Query(None, description="按数据源过滤"),
+) -> dict:
+    """查询业绩预告（按 report_period 降序）。"""
+    items = _service.get_profit_forecasts(symbol, limit=limit, source=source)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"标的 {symbol} 无业绩预告数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.get("/minute/{symbol}")
+def get_minute_klines(
+    symbol: str,
+    from_: datetime | None = Query(None, alias="from"),
+    to: datetime | None = Query(None, alias="to"),
+    limit: int = Query(240, ge=1, le=1440),
+) -> dict:
+    """查询分时 K 线（按 time 降序）。"""
+    from_dt = from_.isoformat() if from_ else None
+    to_dt = to.isoformat() if to else None
+    items = _service.get_minute_klines(
+        symbol, limit=limit, from_dt=from_dt, to_dt=to_dt
+    )
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"标的 {symbol} 无分时数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+# ============================================================================
+# 4 个 /refresh 端点（POST 主动触发采集）
+# 保留 /dividend、/shareholder、/reserve、/intraday 老路径以兼容现有调用方
+# ============================================================================
+
+
+@router.post("/dividend/{symbol}/refresh")
+async def refresh_dividend(symbol: str) -> dict:
+    """手动触发分红数据采集并落库。"""
+    items = await _service.collect_dividend(symbol)
+    if items is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 分红数据采集失败"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.post("/shareholder/{symbol}/refresh")
+async def refresh_shareholder(symbol: str) -> dict:
+    """手动触发股东结构采集并落库（双表单事务）。"""
+    result = await _service.collect_shareholder(symbol)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 股东结构数据采集失败"},
+        )
+    return result
+
+
+@router.post("/reserve/{symbol}/refresh")
+async def refresh_reserve(symbol: str) -> dict:
+    """手动触发业绩预告采集并落库。"""
+    result = await _service.collect_reserve(symbol)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 业绩预告采集失败"},
+        )
+    return result
+
+
+@router.post("/minute/{symbol}/refresh")
+async def refresh_minute(symbol: str, days: int = Query(1, ge=1, le=5)) -> dict:
+    """手动触发分时数据采集并落库。"""
+    items = await _service.collect_intraday(symbol, days=days)
+    if items is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 分时数据采集失败"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+

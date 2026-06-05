@@ -232,3 +232,247 @@ class TestEvidenceBuilderNewsStats:
 
         evidence = await EvidenceBuilder.build("hk00700")
         assert evidence["news"] is None
+
+
+# ---------------------------------------------------------------------------
+# 第 2 阶段新增：3 个新维度 + 财务多期 YoY 派生
+# ---------------------------------------------------------------------------
+
+
+async def _insert_dividends(conn, symbol: str = "hk00700", count: int = 4) -> None:
+    """插入 N 条分红记录（ex_date 从 2026-Q1 ~ 2025-Q4 倒序）。"""
+    base_dates = ["2026-04-15", "2025-04-20", "2024-04-18", "2023-04-22"]
+    cash_values = [10.5, 8.2, 7.0, 6.5]
+    for i in range(count):
+        await conn.execute(
+            """INSERT INTO dividends
+               (symbol, ex_date, cash_dividend, share_bonus, record_date, announce_date,
+                dividend_year, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol, base_dates[i], cash_values[i], 0.0,
+                base_dates[i], base_dates[i], 2026 - i,
+                "westock", datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+async def _insert_profit_forecasts(conn, symbol: str = "hk00700", count: int = 4) -> None:
+    """插入 N 条业绩预告。"""
+    periods = ["2026Q1", "2025Q4", "2025Q3", "2025Q2"]
+    for i in range(count):
+        await conn.execute(
+            """INSERT INTO profit_forecasts
+               (symbol, report_period, forecast_type, profit_lower, profit_upper,
+                change_lower, change_upper, summary, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol, periods[i], "pre_increase", 38000000000, 42000000000,
+                8.0, 12.0, "预计净利润同比增长", "westock",
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+async def _insert_shareholders(conn, symbol: str = "hk00700") -> None:
+    """插入十大股东 + 股东人数历史。"""
+    now = datetime.now(timezone.utc).isoformat()
+    # 十大股东：最新一期 2026Q1，10 个股东
+    for rank in range(1, 11):
+        await conn.execute(
+            """INSERT INTO shareholders
+               (symbol, report_period, rank, name, shares, ratio, change_amount,
+                source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol, "2026Q1", rank, f"股东{rank}",
+                10000000 - rank * 100000, 0.5 - rank * 0.01,
+                -rank * 1000.0, "westock", now,
+            ),
+        )
+    # 股东人数历史：8 个报告期
+    base_dates = [
+        "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30",
+        "2025-03-31", "2024-12-31", "2024-09-30", "2024-06-30",
+    ]
+    holders = [25000, 24000, 23500, 23000, 22500, 22000, 21500, 21000]
+    for i, d in enumerate(base_dates):
+        await conn.execute(
+            """INSERT INTO shareholder_count_history
+               (symbol, report_date, total_holders, avg_shares, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (symbol, d, holders[i], 1000.0, "westock", now),
+        )
+
+
+async def _insert_finance_multi(conn, symbol: str = "hk00700", periods: int = 2) -> None:
+    """插入 N 期财务（默认 2 期：curr=200, prev=100 → yoy=100）。"""
+    now = datetime.now(timezone.utc).isoformat()
+    base_data = [
+        (200, 50, 2.0, 18.0),  # 最新期
+        (100, 25, 1.0, 15.0),  # 前一期
+        (80, 20, 0.8, 14.0),   # 更早
+        (60, 15, 0.6, 13.0),   # 最旧
+    ]
+    for i in range(periods):
+        revenue, net_profit, eps, roe = base_data[i]
+        await conn.execute(
+            """INSERT INTO financial_reports
+               (symbol, report_period, revenue, revenue_yoy, net_profit, net_profit_yoy,
+                eps, roe, debt_ratio, gross_margin, net_margin, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (symbol, f"2026Q{i+1}", revenue, 0.0, net_profit, 0.0,
+             eps, roe, 45.0, 52.0, 26.7, "westock", now),
+        )
+
+
+class TestEvidenceBuilderDividends:
+    """_build_dividends：4 期历史 + latest 字段。"""
+
+    async def test_dividends_4_periods(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            await _insert_dividends(conn, count=4)
+
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_dividends(conn, "hk00700")
+
+        assert result is not None
+        assert len(result["history"]) == 4
+        # history 按 ex_date DESC 排序：2026-04-15 排第一
+        assert result["history"][0]["ex_date"] == "2026-04-15"
+        assert result["history"][-1]["ex_date"] == "2023-04-22"
+        assert result["latest_cash_dividend"] == 10.5
+        assert result["latest_ex_date"] == "2026-04-15"
+        assert result["source"] == "westock"
+
+    async def test_dividends_empty(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_dividends(conn, "hk00700")
+        assert result is None
+
+
+class TestEvidenceBuilderShareholders:
+    """_build_shareholders：双表（top + trend）。"""
+
+    async def test_shareholders_dual_table(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            await _insert_shareholders(conn)
+
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_shareholders(conn, "hk00700")
+
+        assert result is not None
+        assert len(result["top_shareholders"]) == 10
+        # top_shareholders 按 rank 升序
+        assert result["top_shareholders"][0]["rank"] == 1
+        assert result["top_shareholders"][9]["rank"] == 10
+        assert len(result["holder_count_trend"]) == 8
+        # holder_count_trend 按 report_date DESC
+        assert result["holder_count_trend"][0]["report_date"] == "2026-03-31"
+        assert result["source"] == "westock"
+
+    async def test_shareholders_empty(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_shareholders(conn, "hk00700")
+        assert result is None
+
+
+class TestEvidenceBuilderProfitForecasts:
+    """_build_profit_forecasts：4 期 + latest 字段。"""
+
+    async def test_forecasts_4_periods(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            await _insert_profit_forecasts(conn, count=4)
+
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_profit_forecasts(conn, "hk00700")
+
+        assert result is not None
+        assert len(result["history"]) == 4
+        # history 按 report_period DESC
+        assert result["history"][0]["report_period"] == "2026Q1"
+        assert result["history"][-1]["report_period"] == "2025Q2"
+        assert result["latest"]["report_period"] == "2026Q1"
+        assert result["latest"]["profit_upper"] == 42000000000
+        assert result["source"] == "westock"
+
+    async def test_forecasts_empty(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_profit_forecasts(conn, "hk00700")
+        assert result is None
+
+
+class TestEvidenceBuilderFinanceYoY:
+    """_build_finance YoY 派生。"""
+
+    async def test_finance_yoy_derivation(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            await _insert_finance_multi(conn, periods=2)
+
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_finance(conn, "hk00700")
+
+        assert result is not None
+        # curr=200, prev=100 → yoy=100%
+        assert result["revenue_yoy"] == 100.0
+        # curr=50, prev=25 → yoy=100%
+        assert result["net_profit_yoy"] == 100.0
+        # curr=2.0, prev=1.0 → yoy=100%
+        assert result["eps_yoy"] == 100.0
+        # curr_roe=18.0, prev_roe=15.0 → change=3.0
+        assert result["roe_change"] == 3.0
+        # 向后兼容字段
+        assert result["prev_revenue"] == 100
+        assert result["prev_net_profit"] == 25
+        assert result["prev_eps"] == 1.0
+        assert result["prev_roe"] == 15.0
+        # history 至少含 2 期
+        assert len(result["history"]) == 2
+
+    async def test_finance_yoy_single_period(self, tmp_db: Path) -> None:
+        """仅有 1 期时所有 YoY/roe_change 字段应为 None。"""
+        async with aget_db() as conn:
+            await _insert_finance_multi(conn, periods=1)
+
+        async with aget_db() as conn:
+            result = await EvidenceBuilder._build_finance(conn, "hk00700")
+
+        assert result is not None
+        assert result["revenue_yoy"] is None
+        assert result["net_profit_yoy"] is None
+        assert result["eps_yoy"] is None
+        assert result["roe_change"] is None
+        # 单期没有 prev_* 字段
+        assert "prev_revenue" not in result
+        # history 仍含 1 期
+        assert len(result["history"]) == 1
+
+
+class TestEvidenceBuilderIntegration:
+    """build() 主流程：3 个新维度都返回。"""
+
+    async def test_build_includes_three_new_dimensions(self, tmp_db: Path) -> None:
+        async with aget_db() as conn:
+            await _insert_dividends(conn, count=4)
+            await _insert_shareholders(conn)
+            await _insert_profit_forecasts(conn, count=4)
+            await _insert_finance_multi(conn, periods=2)
+
+        evidence = await EvidenceBuilder.build("hk00700")
+
+        # 3 个新 key 都存在
+        assert "dividends" in evidence
+        assert "shareholders" in evidence
+        assert "forecasts" in evidence
+        # 内容非 None
+        assert evidence["dividends"] is not None
+        assert evidence["shareholders"] is not None
+        assert evidence["forecasts"] is not None
+        # data_sources 包含 3 个新类型
+        types = {item["type"] for item in evidence["data_sources"]}
+        assert "dividend" in types
+        assert "shareholder" in types
+        assert "forecast" in types
+        # finance 仍有 YoY 派生
+        assert evidence["finance"]["revenue_yoy"] == 100.0
+

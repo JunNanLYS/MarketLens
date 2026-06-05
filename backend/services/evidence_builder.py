@@ -18,6 +18,46 @@ class EvidenceBuilder:
             "finance_limit": cfg.get("finance_limit", 2),
             "news_days": cfg.get("news_days", 7),
         }
+
+    @staticmethod
+    def _derive_finance_yoy(rows: list[dict]) -> dict | None:
+        """对 ``rows``（按 collected_at DESC 排序的最近 N 期）做 YoY/差值派生。
+
+        派生字段：
+        - ``revenue_yoy`` / ``net_profit_yoy`` / ``eps_yoy``: 百分比（最新 vs 前一期）
+        - ``roe_change``: ROE 绝对差值
+        - ``prev_*``: 前一期原值（向后兼容）
+        - ``history``: 多期列表（按时间从旧到新）
+
+        返回 latest 字典（已附加派生字段）；若 ``rows`` 为空则返回 ``None``。
+        """
+        if not rows:
+            return None
+        latest = dict(rows[0])
+        if len(rows) >= 2:
+            prev = dict(rows[1])
+            for key in ("revenue", "net_profit", "eps"):
+                curr_val = latest.get(key)
+                prev_val = prev.get(key)
+                if curr_val is not None and prev_val is not None and prev_val != 0:
+                    latest[f"{key}_yoy"] = round((curr_val - prev_val) / abs(prev_val) * 100, 2)
+                else:
+                    latest[f"{key}_yoy"] = None
+            if latest.get("roe") is not None and prev.get("roe") is not None:
+                latest["roe_change"] = round(latest["roe"] - prev["roe"], 2)
+            else:
+                latest["roe_change"] = None
+            latest["prev_revenue"] = prev.get("revenue")
+            latest["prev_net_profit"] = prev.get("net_profit")
+            latest["prev_eps"] = prev.get("eps")
+            latest["prev_roe"] = prev.get("roe")
+        else:
+            for key in ("revenue", "net_profit", "eps"):
+                latest[f"{key}_yoy"] = None
+            latest["roe_change"] = None
+        latest["history"] = [dict(r) for r in reversed(rows)]
+        return latest
+
     @staticmethod
     async def build(symbol: str, conn=None) -> dict:
         close_conn = conn is None
@@ -32,6 +72,9 @@ class EvidenceBuilder:
             finance = await EvidenceBuilder._build_finance(conn, symbol)
             news = await EvidenceBuilder._build_news(conn, symbol)
             technical = await EvidenceBuilder._build_technical(conn, symbol)
+            dividends = await EvidenceBuilder._build_dividends(conn, symbol)
+            shareholders = await EvidenceBuilder._build_shareholders(conn, symbol)
+            forecasts = await EvidenceBuilder._build_profit_forecasts(conn, symbol)
 
             data_sources = []
             if quote:
@@ -46,6 +89,12 @@ class EvidenceBuilder:
                 data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
             if technical:
                 data_sources.append({"type": "technical", "source": technical.get("source", ""), "collected_at": technical.get("collected_at", "")})
+            if dividends:
+                data_sources.append({"type": "dividend", "source": dividends.get("source", ""), "collected_at": ""})
+            if shareholders:
+                data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
+            if forecasts:
+                data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
 
             return {
                 "symbol": symbol,
@@ -55,6 +104,9 @@ class EvidenceBuilder:
                 "finance": finance,
                 "news": news,
                 "technical": technical,
+                "dividends": dividends,
+                "shareholders": shareholders,
+                "forecasts": forecasts,
                 "data_sources": data_sources,
             }
         finally:
@@ -140,6 +192,83 @@ class EvidenceBuilder:
                     fin_by_symbol[sym] = []
                 fin_by_symbol[sym].append(r)
 
+            # dividends：取每标的最近 4 次分红（按 ex_date DESC）
+            cursor = await conn.execute(
+                f"""SELECT * FROM dividends
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, ex_date DESC""",
+                params,
+            )
+            divs_by_symbol: dict[str, list[dict]] = {}
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                divs_by_symbol.setdefault(sym, []).append(r)
+                if len(divs_by_symbol[sym]) >= 4:
+                    del divs_by_symbol[sym][4:]
+
+            # shareholders：取每标的最新一期前 10 名（按 report_period DESC, rank ASC）
+            shr_by_symbol: dict[str, dict] = {}
+            cursor = await conn.execute(
+                f"""SELECT * FROM shareholders
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, report_period DESC, rank ASC""",
+                params,
+            )
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                bucket = shr_by_symbol.get(sym)
+                if bucket is None:
+                    bucket = {
+                        "top_shareholders": [],
+                        "latest_period": r["report_period"],
+                        "source": r.get("source"),
+                    }
+                    shr_by_symbol[sym] = bucket
+                if r["report_period"] != bucket["latest_period"]:
+                    # 已超过该标的的最新一期，停止
+                    continue
+                if len(bucket["top_shareholders"]) < 10:
+                    bucket["top_shareholders"].append(r)
+            # 股东人数趋势：取每标的最近 8 个报告期
+            cursor = await conn.execute(
+                f"""SELECT * FROM shareholder_count_history
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, report_date DESC""",
+                params,
+            )
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                bucket = shr_by_symbol.setdefault(
+                    sym,
+                    {"top_shareholders": [], "source": r.get("source")},
+                )
+                bucket.setdefault("holder_count_trend", [])
+                if len(bucket["holder_count_trend"]) < 8:
+                    bucket["holder_count_trend"].append(r)
+                if not bucket.get("source"):
+                    bucket["source"] = r.get("source")
+            # 清理临时字段 latest_period
+            for bucket in shr_by_symbol.values():
+                bucket.pop("latest_period", None)
+
+            # profit_forecasts：取每标的最近 4 个报告期
+            cursor = await conn.execute(
+                f"""SELECT * FROM profit_forecasts
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, report_period DESC""",
+                params,
+            )
+            fcsts_by_symbol: dict[str, list[dict]] = {}
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                fcsts_by_symbol.setdefault(sym, []).append(r)
+                if len(fcsts_by_symbol[sym]) >= 4:
+                    del fcsts_by_symbol[sym][4:]
+
             # news：批量拉取 7 天窗口内新闻，Python 端按 related_symbols 聚合。
             # 替代原来的 N 次单标的 json_each 查询，性能提升 N 倍。
             # LIMIT 5000 防止全表扫：单标的 evidence 包不需要 7 天内所有新闻。
@@ -200,17 +329,36 @@ class EvidenceBuilder:
                         else:
                             item[f"ma{w}"] = None
                 flows = list(reversed(flows_by_symbol.get(symbol, [])[:5]))
-                fin_rows = fin_by_symbol.get(symbol, [])
-                finance = None
-                if fin_rows:
-                    latest = fin_rows[0]
-                    if len(fin_rows) >= 2:
-                        prev = fin_rows[1]
-                        latest["prev_revenue"] = prev.get("revenue")
-                        latest["prev_net_profit"] = prev.get("net_profit")
-                        latest["prev_eps"] = prev.get("eps")
-                        latest["prev_roe"] = prev.get("roe")
-                    finance = latest
+                # 财务：复用单标的 _derive_finance_yoy 保证语义一致
+                finance = EvidenceBuilder._derive_finance_yoy(fin_by_symbol.get(symbol, []))
+                # dividends：取最近 4 期（按 ex_date DESC 已是当前顺序）
+                divs = divs_by_symbol.get(symbol, [])
+                dividends = None
+                if divs:
+                    dividends = {
+                        "history": divs,
+                        "latest_cash_dividend": divs[0]["cash_dividend"],
+                        "latest_ex_date": divs[0]["ex_date"],
+                        "source": divs[0].get("source"),
+                    }
+                # shareholders：来自 shr_by_symbol；组装同单标的版对齐
+                shr_bucket = shr_by_symbol.get(symbol)
+                shareholders = None
+                if shr_bucket and (shr_bucket.get("top_shareholders") or shr_bucket.get("holder_count_trend")):
+                    shareholders = {
+                        "top_shareholders": shr_bucket.get("top_shareholders", []),
+                        "holder_count_trend": shr_bucket.get("holder_count_trend", []),
+                        "source": shr_bucket.get("source"),
+                    }
+                # profit_forecasts：取最近 4 期
+                fcsts = fcsts_by_symbol.get(symbol, [])
+                forecasts = None
+                if fcsts:
+                    forecasts = {
+                        "history": fcsts,
+                        "latest": fcsts[0],
+                        "source": fcsts[0].get("source"),
+                    }
 
                 # news from pre-aggregated dict
                 news_rows = news_by_symbol.get(symbol, [])
@@ -240,6 +388,12 @@ class EvidenceBuilder:
                     data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
                 if news:
                     data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
+                if dividends:
+                    data_sources.append({"type": "dividend", "source": dividends.get("source", ""), "collected_at": ""})
+                if shareholders:
+                    data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
+                if forecasts:
+                    data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
 
                 result[symbol] = {
                     "symbol": symbol,
@@ -249,6 +403,9 @@ class EvidenceBuilder:
                     "finance": finance,
                     "news": news,
                     "technical": tech_map.get(symbol),
+                    "dividends": dividends,
+                    "shareholders": shareholders,
+                    "forecasts": forecasts,
                     "data_sources": data_sources,
                 }
             return result
@@ -312,6 +469,15 @@ class EvidenceBuilder:
 
     @staticmethod
     async def _build_finance(conn, symbol: str) -> dict | None:
+        """多期财务 + YoY 派生指标。
+
+        取最近 ``finance_limit`` 期（默认 4）财务数据，派生：
+        - ``revenue_yoy``: 营收同比（最新 vs 前一期，单位 %）
+        - ``net_profit_yoy``: 净利润同比
+        - ``eps_yoy``: EPS 同比
+        - ``roe_change``: ROE 差值（绝对值，单位百分点）
+        - ``history``: 全部期次的列表（按时间从旧到新）
+        """
         limits = EvidenceBuilder._evidence_limits()
         cursor = await conn.execute(
             """SELECT * FROM financial_reports WHERE symbol = ?
@@ -319,16 +485,70 @@ class EvidenceBuilder:
             (symbol, limits["finance_limit"]),
         )
         rows = await cursor.fetchall()
+        return EvidenceBuilder._derive_finance_yoy([dict(r) for r in rows])
+
+    @staticmethod
+    async def _build_dividends(conn, symbol: str) -> dict | None:
+        """查询最近 4 次分红历史 + 最新一次派息。"""
+        cursor = await conn.execute(
+            """SELECT * FROM dividends WHERE symbol = ?
+               ORDER BY ex_date DESC LIMIT 4""",
+            (symbol,),
+        )
+        rows = await cursor.fetchall()
         if not rows:
             return None
-        latest = dict(rows[0])
-        if len(rows) >= 2:
-            prev = dict(rows[1])
-            latest["prev_revenue"] = prev.get("revenue")
-            latest["prev_net_profit"] = prev.get("net_profit")
-            latest["prev_eps"] = prev.get("eps")
-            latest["prev_roe"] = prev.get("roe")
-        return latest
+        return {
+            "history": [dict(r) for r in rows],
+            "latest_cash_dividend": rows[0]["cash_dividend"] if rows else None,
+            "latest_ex_date": rows[0]["ex_date"] if rows else None,
+            "source": rows[0]["source"] if rows else None,
+        }
+
+    @staticmethod
+    async def _build_shareholders(conn, symbol: str) -> dict | None:
+        """查询最新一期十大股东 + 股东人数趋势。"""
+        # 十大股东（按报告期降序、排名升序，取最新一期前 10 名）
+        cursor = await conn.execute(
+            """SELECT * FROM shareholders WHERE symbol = ?
+               ORDER BY report_period DESC, rank ASC LIMIT 10""",
+            (symbol,),
+        )
+        top_rows = await cursor.fetchall()
+        # 股东人数历史（最近 8 个报告期）
+        cursor = await conn.execute(
+            """SELECT * FROM shareholder_count_history WHERE symbol = ?
+               ORDER BY report_date DESC LIMIT 8""",
+            (symbol,),
+        )
+        count_rows = await cursor.fetchall()
+        if not top_rows and not count_rows:
+            return None
+        return {
+            "top_shareholders": [dict(r) for r in top_rows],
+            "holder_count_trend": [dict(r) for r in count_rows],
+            "source": (
+                top_rows[0]["source"] if top_rows
+                else (count_rows[0]["source"] if count_rows else None)
+            ),
+        }
+
+    @staticmethod
+    async def _build_profit_forecasts(conn, symbol: str) -> dict | None:
+        """查询最近 4 个报告期的业绩预告。"""
+        cursor = await conn.execute(
+            """SELECT * FROM profit_forecasts WHERE symbol = ?
+               ORDER BY report_period DESC LIMIT 4""",
+            (symbol,),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return None
+        return {
+            "history": [dict(r) for r in rows],
+            "latest": dict(rows[0]) if rows else None,
+            "source": rows[0]["source"] if rows else None,
+        }
 
     @staticmethod
     async def _build_news(conn, symbol: str) -> dict | None:

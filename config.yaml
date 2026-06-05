@@ -196,7 +196,7 @@ database:
 evidence:
   kline_limit: 60      # ??? N ?? K ?
   fund_flow_limit: 5   # ??? N ?????
-  finance_limit: 2     # ??? N ???
+  finance_limit: 4     # 取最近 N 期（多期+YoY 派生）
   news_days: 7          # ??? N ?????
 
 # --------------------------------------------------------------------------
