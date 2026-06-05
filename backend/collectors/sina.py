@@ -213,16 +213,16 @@ class SinaProvider(BaseProvider):
             logger.error("新浪K线请求异常: symbol={}, error={}", symbol, e)
             return []
 
-    async def finance(self, symbol: str) -> dict:
+    async def finance(self, symbol: str) -> dict | None:
         """通过新浪财务摘要页面获取关键财务指标。
 
         抓取 vFD_FinanceSummary 页面，用正则提取：报告期/营收/净利润/EPS/ROE。
-        仅支持 A 股。
+        仅支持 A 股；非 A 股或无数据时返回 None。
         """
         sina_code = self._to_sina_code(symbol)
         pure_code = self._strip_code_for_finance(sina_code)
         if pure_code is None:
-            return {}
+            return None
 
         url = (
             f"https://vip.stock.finance.sina.com.cn/corp/go.php/"
@@ -233,16 +233,22 @@ class SinaProvider(BaseProvider):
             client = await self._get_client()
             resp = await client.get(url)
             resp.raise_for_status()
-            return self._parse_finance_html(symbol, resp.text)
+            parsed = self._parse_finance_html(symbol, resp.text)
+            # 当 HTML 解析未提取到任何关键指标时，返回 None 而非空 dict
+            if not parsed.get("report_period") and parsed.get("revenue") is None \
+                    and parsed.get("net_profit") is None and parsed.get("eps") is None \
+                    and parsed.get("roe") is None:
+                return None
+            return parsed
         except httpx.TimeoutException:
             logger.warning("新浪财务请求超时: symbol={}, timeout={}s", symbol, self.timeout)
-            return {}
+            return None
         except httpx.HTTPStatusError as e:
             logger.error("新浪财务 HTTP 错误: symbol={}, status={}", symbol, e.response.status_code)
-            return {}
+            return None
         except Exception as e:
             logger.error("新浪财务请求异常: symbol={}, error={}", symbol, e)
-            return {}
+            return None
 
     async def fund_flow(self, symbol: str) -> dict:
         """通过新浪资金流向 API 获取主力资金数据。

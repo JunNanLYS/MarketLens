@@ -49,43 +49,43 @@ def _insert_run_log(
 
 class TestSchedulerManagerInit:
 
-    async def test_init_creates_scheduler(self) -> None:
+    def test_init_creates_scheduler(self) -> None:
         mgr = SchedulerManager()
         assert mgr._scheduler is not None
 
-    async def test_init_reads_timezone_from_config(self) -> None:
+    def test_init_reads_timezone_from_config(self) -> None:
         mgr = SchedulerManager()
         assert str(mgr._scheduler.timezone) == "Asia/Shanghai"
 
 
 class TestRegisterJobs:
 
-    async def test_register_jobs_adds_four_tasks(self) -> None:
+    def test_register_jobs_adds_four_tasks(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         job_ids = [job.id for job in mgr._scheduler.get_jobs()]
         for name in VALID_TASK_NAMES:
             assert name in job_ids
 
-    async def test_register_jobs_quote_interval(self) -> None:
+    def test_register_jobs_quote_interval(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         job = mgr._scheduler.get_job("quote")
         assert job is not None
 
-    async def test_register_jobs_daily_close_cron(self) -> None:
+    def test_register_jobs_daily_close_cron(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         job = mgr._scheduler.get_job("daily_close")
         assert job is not None
 
-    async def test_register_jobs_news_interval(self) -> None:
+    def test_register_jobs_news_interval(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         job = mgr._scheduler.get_job("news")
         assert job is not None
 
-    async def test_register_jobs_ai_report_cron(self) -> None:
+    def test_register_jobs_ai_report_cron(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         job = mgr._scheduler.get_job("ai_report")
@@ -94,37 +94,37 @@ class TestRegisterJobs:
 
 class TestTriggerTask:
 
-    async def test_trigger_valid_task(self) -> None:
+    def test_trigger_valid_task(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("quote")
         assert result is True
 
-    async def test_trigger_daily_close(self) -> None:
+    def test_trigger_daily_close(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("daily_close")
         assert result is True
 
-    async def test_trigger_news(self) -> None:
+    def test_trigger_news(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("news")
         assert result is True
 
-    async def test_trigger_ai_report(self) -> None:
+    def test_trigger_ai_report(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("ai_report")
         assert result is True
 
-    async def test_trigger_invalid_task(self) -> None:
+    def test_trigger_invalid_task(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("nonexistent")
         assert result is False
 
-    async def test_trigger_empty_name(self) -> None:
+    def test_trigger_empty_name(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("")
@@ -133,7 +133,7 @@ class TestTriggerTask:
 
 class TestGetTaskStatus:
 
-    async def test_get_task_status_no_logs(self) -> None:
+    def test_get_task_status_no_logs(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         status = mgr.get_task_status()
@@ -143,7 +143,7 @@ class TestGetTaskStatus:
             assert item["last_run_at"] is None
             assert item["last_status"] is None
 
-    async def test_get_task_status_with_logs(self) -> None:
+    def test_get_task_status_with_logs(self) -> None:
         now = datetime.now(timezone.utc).isoformat()
         _insert_run_log(
             "quote",
@@ -160,7 +160,7 @@ class TestGetTaskStatus:
         assert quote_status["last_affected_assets"] == 10
         assert quote_status["last_error"] is None
 
-    async def test_get_task_status_with_failure_log(self) -> None:
+    def test_get_task_status_with_failure_log(self) -> None:
         now = datetime.now(timezone.utc).isoformat()
         _insert_run_log(
             "news",
@@ -177,7 +177,7 @@ class TestGetTaskStatus:
         assert news_status["last_status"] == "failure"
         assert news_status["last_error"] == "连接超时"
 
-    async def test_get_task_status_duration_calculation(self) -> None:
+    def test_get_task_status_duration_calculation(self) -> None:
         started = "2026-05-31T15:30:00+00:00"
         finished = "2026-05-31T15:30:05+00:00"
         _insert_run_log(
@@ -193,7 +193,7 @@ class TestGetTaskStatus:
         quote_status = next(s for s in status if s["task_name"] == "quote")
         assert quote_status["last_duration_ms"] == 5000
 
-    async def test_get_task_status_returns_description(self) -> None:
+    def test_get_task_status_returns_description(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         status = mgr.get_task_status()
@@ -214,14 +214,14 @@ class TestTaskLogsAPI:
         set_scheduler(mgr)
         return TestClient(app)
 
-    async def test_get_logs_empty(self, client: TestClient) -> None:
+    def test_get_logs_empty(self, client: TestClient) -> None:
         resp = client.get("/api/v1/tasks/logs")
         assert resp.status_code == 200
         data = resp.json()
         assert data["items"] == []
         assert data["page_info"]["total"] == 0
 
-    async def test_get_logs_with_data(self, client: TestClient) -> None:
+    def test_get_logs_with_data(self, client: TestClient) -> None:
         _insert_run_log("quote", status="success", affected_assets=5)
         _insert_run_log("news", status="failure", error_message="超时")
         resp = client.get("/api/v1/tasks/logs")
@@ -229,7 +229,7 @@ class TestTaskLogsAPI:
         data = resp.json()
         assert data["page_info"]["total"] == 2
 
-    async def test_get_logs_filter_by_task_name(self, client: TestClient) -> None:
+    def test_get_logs_filter_by_task_name(self, client: TestClient) -> None:
         _insert_run_log("quote", status="success")
         _insert_run_log("news", status="success")
         resp = client.get("/api/v1/tasks/logs", params={"task_name": "quote"})
@@ -238,7 +238,7 @@ class TestTaskLogsAPI:
         assert data["page_info"]["total"] == 1
         assert data["items"][0]["task_name"] == "quote"
 
-    async def test_get_logs_filter_by_status(self, client: TestClient) -> None:
+    def test_get_logs_filter_by_status(self, client: TestClient) -> None:
         _insert_run_log("quote", status="success")
         _insert_run_log("news", status="failure", error_message="超时")
         resp = client.get("/api/v1/tasks/logs", params={"status": "failure"})
@@ -247,7 +247,7 @@ class TestTaskLogsAPI:
         assert data["page_info"]["total"] == 1
         assert data["items"][0]["status"] == "failure"
 
-    async def test_get_logs_pagination(self, client: TestClient) -> None:
+    def test_get_logs_pagination(self, client: TestClient) -> None:
         for i in range(5):
             _insert_run_log("quote", status="success", affected_assets=i)
         resp = client.get("/api/v1/tasks/logs", params={"page": 1, "page_size": 2})
@@ -269,14 +269,14 @@ class TestTaskStatusAPI:
         set_scheduler(mgr)
         return TestClient(app)
 
-    async def test_get_status(self, client: TestClient) -> None:
+    def test_get_status(self, client: TestClient) -> None:
         resp = client.get("/api/v1/tasks/status")
         assert resp.status_code == 200
         data = resp.json()
         assert "items" in data
         assert len(data["items"]) == 5
 
-    async def test_get_status_with_logs(self, client: TestClient) -> None:
+    def test_get_status_with_logs(self, client: TestClient) -> None:
         now = datetime.now(timezone.utc).isoformat()
         _insert_run_log(
             "quote",
@@ -304,7 +304,7 @@ class TestTriggerAPI:
         set_scheduler(mgr)
         return TestClient(app)
 
-    async def test_trigger_valid_task(self, client: TestClient) -> None:
+    def test_trigger_valid_task(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/tasks/trigger/quote",
             headers={"X-API-Key": "marketlens-local"},
@@ -314,7 +314,7 @@ class TestTriggerAPI:
         assert data["task_name"] == "quote"
         assert data["status"] == "triggered"
 
-    async def test_trigger_invalid_task(self, client: TestClient) -> None:
+    def test_trigger_invalid_task(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/tasks/trigger/nonexistent",
             headers={"X-API-Key": "marketlens-local"},
@@ -323,7 +323,7 @@ class TestTriggerAPI:
         data = resp.json()
         assert data["error"] == "TASK_NOT_FOUND"
 
-    async def test_trigger_all_valid_tasks(self, client: TestClient) -> None:
+    def test_trigger_all_valid_tasks(self, client: TestClient) -> None:
         for name in VALID_TASK_NAMES:
             resp = client.post(
                 f"/api/v1/tasks/trigger/{name}",

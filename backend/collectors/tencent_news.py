@@ -23,11 +23,21 @@ else:
 
 
 class TencentNewsProvider(BaseProvider):
-    """Tencent News provider using CLI (async)."""
+    """腾讯新闻 Provider，通过 CLI 调用外部工具（异步版）。
+
+    该 Provider 通过调用本地安装的 tencent-news-cli 命令行工具获取新闻数据，
+    适用于本地未提供直连 API 的腾讯新闻源。主要职责：
+    1. 启动时通过 _find_cli 探测 CLI 可执行文件位置（环境变量、PATH、全局目录、Skill 目录）。
+    2. 通过 asyncio.create_subprocess_exec 异步执行子进程，避免阻塞事件循环。
+    3. 支持 hot（热点新闻）和 search（关键词搜索）两种命令，并将 CLI 文本/JSON 输出
+       统一解析为标准化的新闻字典结构。
+    4. 当 CLI 缺失时通过 _cli_disabled 标志位短路，避免每次采集周期重复探测和重复警告。
+    """
 
     def __init__(self, name: str, timeout: int = 30, params: dict | None = None, optional: bool = True) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
-        self._cli_path = None
+        self._cli_path: str | None = None
+        self._cli_disabled: bool = False
         self._max_items: int = int(params.get("max_items", 50)) if params else 50
 
 
@@ -44,11 +54,14 @@ class TencentNewsProvider(BaseProvider):
     def _ensure(self) -> bool:
         if self._cli_path:
             return True
+        if self._cli_disabled:
+            return False
         p = self._find_cli()
         if p:
             self._cli_path = p
             logger.info("TencentNews CLI found: {}", p)
             return True
+        self._cli_disabled = True
         logger.warning("TencentNews CLI not available")
         return False
 

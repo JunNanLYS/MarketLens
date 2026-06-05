@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 
 
 class BaseProvider(ABC):
@@ -25,20 +25,26 @@ class BaseProvider(ABC):
     async def close(self) -> None:
         """关闭底层连接（默认空操作，子类可按需覆盖）。"""
 
-    @abstractmethod
-    async def search(self, keyword: str) -> list[dict]: ...
+    async def search(self, keyword: str) -> list[dict]:
+        """默认空实现：子类按需覆盖。"""
+        return []
 
-    @abstractmethod
-    async def quote(self, symbols: list[str]) -> list[dict]: ...
+    async def quote(self, symbols: list[str]) -> list[dict]:
+        """默认空实现：子类按需覆盖。"""
+        return []
 
-    @abstractmethod
-    async def kline(self, symbol: str, period: str = "daily") -> list[dict]: ...
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
+        """默认空实现：子类按需覆盖。"""
+        return []
 
-    @abstractmethod
-    async def finance(self, symbol: str) -> dict: ...
+    async def finance(self, symbol: str) -> dict:
+        """默认空实现：子类按需覆盖。"""
+        return {}
 
-    @abstractmethod
-    async def fund_flow(self, symbol: str) -> dict: ...
+    async def fund_flow(self, symbol: str) -> dict:
+        """默认空实现：子类按需覆盖。"""
+        return {}
 
-    @abstractmethod
-    async def technical(self, symbol: str) -> dict: ...
+    async def technical(self, symbol: str) -> dict:
+        """默认空实现：子类按需覆盖。"""
+        return {}

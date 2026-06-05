@@ -1,4 +1,6 @@
-﻿from fastapi import APIRouter, HTTPException, Query
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
 
 from backend.services.news_service import NewsService
 
@@ -6,12 +8,16 @@ router = APIRouter(prefix="/api/v1/news", tags=["news"])
 _service = NewsService()
 
 
+# 与 collectors/*.py 中 sentiment/importance 字段的取值保持一致
+Sentiment = Literal["positive", "negative", "neutral"]
+
+
 @router.get("")
 def list_news(
-    symbol: str | None = Query(default=None),
-    days: int = Query(default=7, ge=1),
-    sentiment: str | None = Query(default=None),
-    source: str | None = Query(default=None),
+    symbol: str | None = Query(default=None, min_length=1),
+    days: int = Query(default=7, ge=1, le=365),
+    sentiment: Sentiment | None = Query(default=None),
+    source: str | None = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:

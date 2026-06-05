@@ -25,6 +25,16 @@ TRANSACTION_TYPE_LABELS: dict[str, str] = {
 CURRENCY_OPTIONS: list[str] = ["CNY", "HKD", "USD"]
 
 
+@st.cache_data(ttl=15)
+def _fetch_accounts() -> list[dict[str, Any]]:
+    """缓存账户列表。
+
+    portfolio 页面 6 处需要 get_accounts()，每次都重拉会阻塞 Streamlit。
+    跨用户/跨 session 复用（@st.cache_data 是模块级缓存）。
+    """
+    return get_accounts()
+
+
 def _format_pnl(value: float | None) -> str:
     if value is None:
         return "-"
@@ -39,7 +49,7 @@ def _render_positions_tab() -> None:
         st.info("暂无持仓")
         return
 
-    account_map: dict[int, str] = {a["id"]: a.get("name", "") for a in get_accounts()}
+    account_map: dict[int, str] = {a["id"]: a.get("name", "") for a in _fetch_accounts()}
 
     total_market_value: float = 0.0
     total_unrealized_pnl: float = 0.0
@@ -97,7 +107,7 @@ def _render_positions_tab() -> None:
             upnl_pct: float | None = pos.get("unrealized_pnl_pct")
             if upnl_pct is not None:
                 pct_color: str = "green" if upnl_pct > 0 else "red" if upnl_pct < 0 else "inherit"
-                st.markdown(f":{pnl_color}[{upnl_pct:+.2f}%]")
+                st.markdown(f":{pct_color}[{upnl_pct:+.2f}%]")
             else:
                 st.text("-")
 
@@ -127,7 +137,7 @@ def _render_positions_tab() -> None:
 
 
 def _render_transactions_tab() -> None:
-    accounts: list[dict[str, Any]] = get_accounts()
+    accounts: list[dict[str, Any]] = _fetch_accounts()
     account_options: dict[str, int | None] = {"全部": None}
     for acc in accounts:
         account_options[f"{acc.get('name', '')} (ID: {acc.get('id', '')})"] = acc.get("id")
@@ -159,8 +169,10 @@ def _render_transactions_tab() -> None:
     if not items:
         st.info("暂无交易记录")
     else:
-        for tx in items:
+        for tx_idx, tx in enumerate(items):
             with st.container():
+                # 优先用 id 作 key；id 缺失时回退到索引，避免 Streamlit DuplicateWidgetID 错误
+                tx_key = tx.get("id") if tx.get("id") is not None else f"idx_{tx_idx}"
                 tc1, tc2, tc3, tc4, tc5, tc6 = st.columns([2, 1, 1.5, 1.5, 1.5, 1])
                 with tc1:
                     st.markdown(f"**{tx.get('symbol', '')}**")
@@ -178,24 +190,24 @@ def _render_transactions_tab() -> None:
                 with tc5:
                     st.text(f"日期: {tx.get('trade_date', '-')}")
                 with tc6:
-                    if st.button("✏️", key=f"edit_tx_{tx.get('id', '')}", help="编辑该交易"):
-                        st.session_state[f"edit_tx_{tx.get('id', '')}"] = True
+                    if st.button("✏️", key=f"edit_tx_{tx_key}", help="编辑该交易"):
+                        st.session_state[f"edit_tx_{tx_key}"] = True
                         st.rerun()
-                    if st.button("🗑️", key=f"del_tx_{tx.get('id', '')}", help="删除该交易"):
-                        st.session_state[f"confirm_del_tx_{tx.get('id', '')}"] = True
+                    if st.button("🗑️", key=f"del_tx_{tx_key}", help="删除该交易"):
+                        st.session_state[f"confirm_del_tx_{tx_key}"] = True
                         st.rerun()
 
-                if st.session_state.get(f"edit_tx_{tx.get('id', '')}"):
-                    with st.form(f"edit_transaction_form_{tx.get('id', '')}"):
+                if st.session_state.get(f"edit_tx_{tx_key}"):
+                    with st.form(f"edit_transaction_form_{tx_key}"):
                         st.markdown(f"**编辑交易 #{tx.get('id', '')} — {tx.get('symbol', '')}**")
                         ex1, ex2, ex3 = st.columns(3)
                         with ex1:
-                            new_qty: float = st.number_input("数量 *", min_value=0.01, value=float(tx.get("quantity", 0) or 0), step=1.0, key=f"etx_qty_{tx.get('id', '')}")
+                            new_qty: float = st.number_input("数量 *", min_value=0.01, value=float(tx.get("quantity", 0) or 0), step=1.0, key=f"etx_qty_{tx_key}")
                         with ex2:
-                            new_price: float = st.number_input("价格 *", min_value=0.01, value=float(tx.get("price", 0) or 0), step=0.01, key=f"etx_price_{tx.get('id', '')}")
+                            new_price: float = st.number_input("价格 *", min_value=0.01, value=float(tx.get("price", 0) or 0), step=0.01, key=f"etx_price_{tx_key}")
                         with ex3:
-                            new_fee: float = st.number_input("手续费", min_value=0.0, value=float(tx.get("fee", 0) or 0), step=0.01, key=f"etx_fee_{tx.get('id', '')}")
-                        new_notes: str = st.text_input("备注", value=tx.get("notes", "") or "", key=f"etx_notes_{tx.get('id', '')}")
+                            new_fee: float = st.number_input("手续费", min_value=0.0, value=float(tx.get("fee", 0) or 0), step=0.01, key=f"etx_fee_{tx_key}")
+                        new_notes: str = st.text_input("备注", value=tx.get("notes", "") or "", key=f"etx_notes_{tx_key}")
                         es1, es2 = st.columns(2)
                         with es1:
                             if st.form_submit_button("保存"):
@@ -203,26 +215,26 @@ def _render_transactions_tab() -> None:
                                 if new_notes.strip():
                                     upd["notes"] = new_notes.strip()
                                 update_transaction(int(tx["id"]), upd)
-                                st.session_state.pop(f"edit_tx_{tx.get('id', '')}", None)
+                                st.session_state.pop(f"edit_tx_{tx_key}", None)
                                 st.success("已更新")
                                 st.rerun()
                         with es2:
                             if st.form_submit_button("取消"):
-                                st.session_state.pop(f"edit_tx_{tx.get('id', '')}", None)
+                                st.session_state.pop(f"edit_tx_{tx_key}", None)
                                 st.rerun()
 
-                if st.session_state.get(f"confirm_del_tx_{tx.get('id', '')}"):
+                if st.session_state.get(f"confirm_del_tx_{tx_key}"):
                     st.warning(f"确认删除交易 {tx.get('id', '')}？")
                     bc1, bc2 = st.columns(2)
                     with bc1:
-                        if st.button("确认", key=f"confirm_del_tx_btn_{tx.get('id', '')}"):
+                        if st.button("确认", key=f"confirm_del_tx_btn_{tx_key}"):
                             delete_transaction(tx["id"])
-                            st.session_state.pop(f"confirm_del_tx_{tx.get('id', '')}", None)
+                            st.session_state.pop(f"confirm_del_tx_{tx_key}", None)
                             st.success("已删除")
                             st.rerun()
                     with bc2:
-                        if st.button("取消", key=f"cancel_del_tx_btn_{tx.get('id', '')}"):
-                            st.session_state.pop(f"confirm_del_tx_{tx.get('id', '')}", None)
+                        if st.button("取消", key=f"cancel_del_tx_btn_{tx_key}"):
+                            st.session_state.pop(f"confirm_del_tx_{tx_key}", None)
                             st.rerun()
 
     st.divider()
@@ -230,7 +242,7 @@ def _render_transactions_tab() -> None:
     with st.form("add_transaction_form"):
         fc1, fc2, fc3 = st.columns(3)
         with fc1:
-            tx_accounts: list[dict[str, Any]] = get_accounts()
+            tx_accounts: list[dict[str, Any]] = _fetch_accounts()
             tx_account_options: dict[str, int] = {
                 f"{a.get('name', '')} (ID: {a.get('id', '')})": a["id"]
                 for a in tx_accounts
@@ -290,7 +302,7 @@ def _render_transactions_tab() -> None:
 
 def _render_accounts_tab() -> None:
     st.subheader("账户列表")
-    accounts: list[dict[str, Any]] = get_accounts()
+    accounts: list[dict[str, Any]] = _fetch_accounts()
 
     if accounts:
         for acc in accounts:

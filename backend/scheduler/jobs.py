@@ -1,4 +1,5 @@
 ﻿import asyncio
+from collections.abc import Callable
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -98,7 +99,7 @@ def _run_cleanup() -> None:
         logger.exception("定时任务执行异常: cleanup")
 
 
-_TASK_FUNCTIONS: dict[str, object] = {
+_TASK_FUNCTIONS: dict[str, Callable[[], None]] = {
     "quote": _run_quote,
     "daily_close": _run_daily_close,
     "news": _run_news,

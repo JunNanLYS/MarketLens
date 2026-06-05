@@ -13,12 +13,18 @@ TASK_LABELS: dict[str, str] = {
 }
 
 
+@st.cache_data(ttl=15)
+def _fetch_task_status() -> dict[str, Any]:
+    """缓存任务状态结果，避免每次 Streamlit 重新渲染都打后端。"""
+    return get_task_status()
+
+
 def render() -> None:
     st.header("任务运行状态")
 
     st.subheader("任务概览")
     try:
-        status_result: dict[str, Any] = get_task_status()
+        status_result: dict[str, Any] = _fetch_task_status()
         items: list[dict[str, Any]] = status_result.get("items", [])
 
         if not items:

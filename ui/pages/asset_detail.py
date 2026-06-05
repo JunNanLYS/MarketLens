@@ -154,6 +154,13 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
 def render() -> None:
     st.header("标的详情")
 
+    # 刷新数据按钮 — 清除本页所有 st.cache_data，强制重新拉取 API
+    _hdr_col, _btn_col = st.columns([6, 1])
+    with _btn_col:
+        if st.button("刷新数据", use_container_width=True, help="清除缓存并重新拉取所有数据"):
+            st.cache_data.clear()
+            st.rerun()
+
     @st.cache_data(ttl=30)
     def _get_assets_cached() -> list[dict[str, Any]]:
         assets_result: dict[str, Any] = get_assets(page_size=100)
@@ -189,7 +196,13 @@ def render() -> None:
         f"状态: {'启用' if asset.get('enabled', True) else '停用'}"
     )
 
-    detail: dict[str, Any] = get_asset(asset_id)
+    # 详情查询（含 K线/财务/资金流向等 6 表 JOIN）单次 ~50-200ms，
+    # 用 @st.cache_data(ttl=30) 复用结果，避免每次切 tab 都重拉。
+    @st.cache_data(ttl=30)
+    def _get_detail_cached(_aid: int) -> dict[str, Any]:
+        return get_asset(_aid)
+
+    detail: dict[str, Any] = _get_detail_cached(asset_id)
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "行情", "K 线", "财务", "资金流向", "分时走势", "股东结构", "业绩预告", "分红记录", "AI 报告",
@@ -246,7 +259,12 @@ def render() -> None:
 def _render_intraday_tab(symbol: str) -> None:
     st.subheader("分时走势")
     try:
-        result: dict[str, Any] = get_intraday(symbol)
+        @st.cache_data(ttl=300)
+        def _fetch_intraday(_sym: str) -> dict[str, Any]:
+            return get_intraday(_sym)
+
+        with st.spinner("正在采集分时数据（首次需调用 westock CLI）..."):
+            result: dict[str, Any] = _fetch_intraday(symbol)
         items: list[dict[str, Any]] = result.get("items", [])
         if not items:
             st.info("暂无分时数据")
@@ -275,7 +293,12 @@ def _render_intraday_tab(symbol: str) -> None:
 def _render_shareholder_tab(symbol: str) -> None:
     st.subheader("股东结构")
     try:
-        result: dict[str, Any] = get_shareholder(symbol)
+        @st.cache_data(ttl=300)
+        def _fetch_shareholder(_sym: str) -> dict[str, Any]:
+            return get_shareholder(_sym)
+
+        with st.spinner("正在采集股东结构..."):
+            result: dict[str, Any] = _fetch_shareholder(symbol)
         top_shareholders: list[dict[str, Any]] = result.get("top_shareholders", [])
         if top_shareholders:
             st.markdown("**十大股东**")
@@ -307,7 +330,12 @@ def _render_shareholder_tab(symbol: str) -> None:
 def _render_reserve_tab(symbol: str) -> None:
     st.subheader("业绩预告")
     try:
-        result: dict[str, Any] = get_reserve(symbol)
+        @st.cache_data(ttl=300)
+        def _fetch_reserve(_sym: str) -> dict[str, Any]:
+            return get_reserve(_sym)
+
+        with st.spinner("正在采集业绩预告..."):
+            result: dict[str, Any] = _fetch_reserve(symbol)
         forecast_type: str = result.get("forecast_type", "") or result.get("report_period", "")
         if not forecast_type and not result.get("profit_lower"):
             st.info("暂无业绩预告数据")
@@ -331,7 +359,12 @@ def _render_reserve_tab(symbol: str) -> None:
 def _render_dividend_tab(symbol: str) -> None:
     st.subheader("分红记录")
     try:
-        result: dict[str, Any] = get_dividend(symbol)
+        @st.cache_data(ttl=300)
+        def _fetch_dividend(_sym: str) -> dict[str, Any]:
+            return get_dividend(_sym)
+
+        with st.spinner("正在采集分红记录..."):
+            result: dict[str, Any] = _fetch_dividend(symbol)
         items: list[dict[str, Any]] = result.get("items", [])
         if not items:
             st.info("暂无分红记录")

@@ -1,6 +1,7 @@
 ﻿"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
 
 import json
+from contextlib import suppress
 
 from backend.config import get_config
 from backend.storage.database import aget_db
@@ -59,7 +60,8 @@ class EvidenceBuilder:
             }
         finally:
             if close_conn:
-                await conn.close()
+                with suppress(Exception):
+                    await conn.close()
 
 
     @staticmethod
@@ -250,7 +252,8 @@ class EvidenceBuilder:
                 }
             return result
         finally:
-            await conn.close()
+            with suppress(Exception):
+                await conn.close()
 
     @staticmethod
     async def _build_quote(conn, symbol: str) -> dict | None:

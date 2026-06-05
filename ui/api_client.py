@@ -6,10 +6,23 @@ import streamlit as st
 
 _BASE_URL: str = os.environ.get("MARKETLENS_API_URL", "http://localhost:8000/api/v1")
 
+# 分层超时：健康检查快速失败；常规 API 中等；live 端点（触发 westock CLI）允许更久
+_TIMEOUT_HEALTH: float = 5.0
+_TIMEOUT_API: float = 10.0
+_TIMEOUT_LIVE: float = 30.0
+
 
 @st.cache_resource
 def _get_client() -> httpx.Client:
-    return httpx.Client(base_url=_BASE_URL, timeout=30.0)
+    """共享 httpx 同步客户端。
+
+    注意：Streamlit 是单线程同步框架，httpx.Client.get 是阻塞调用。
+    当前架构下无法完全避免阻塞（Streamlit 不支持原生 async UI），但：
+    - 通过 @st.cache_resource 复用连接池，避免每次重建 TCP/TLS
+    - 调用方应在外部加 @st.cache_data(ttl=N) 控制刷新频率
+    - 真正耗时的端点（intraday/shareholder 等）应迁移到后端 GET + 缓存
+    """
+    return httpx.Client(base_url=_BASE_URL, timeout=_TIMEOUT_API)
 
 
 def _handle_response(response: httpx.Response) -> dict[str, Any] | list[Any]:
@@ -28,7 +41,7 @@ def _handle_response(response: httpx.Response) -> dict[str, Any] | list[Any]:
 def check_health() -> bool:
     try:
         client: httpx.Client = _get_client()
-        resp: httpx.Response = client.get("/health", timeout=5.0)
+        resp: httpx.Response = client.get("/health", timeout=_TIMEOUT_HEALTH)
         return resp.status_code == 200
     except Exception:
         return False
@@ -120,7 +133,7 @@ def generate_reports(symbols: list[str] | None = None, force: bool = False) -> d
     payload: dict[str, Any] = {"force": force}
     if symbols:
         payload["symbols"] = symbols
-    resp: httpx.Response = client.post("/reports/generate", json=payload)
+    resp: httpx.Response = client.post("/reports/generate", json=payload, timeout=_TIMEOUT_LIVE)
     return _handle_response(resp)
 
 
@@ -193,26 +206,41 @@ def get_task_status() -> dict[str, Any]:
 
 
 def get_intraday(symbol: str, days: int = 1) -> dict[str, Any]:
+    """实时采集分时——会触发 westock CLI subprocess。
+
+    UI 层应使用 @st.cache_data(ttl=300) 包装以避免重复触发。
+    """
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get(f"/data/intraday/{symbol}", params={"days": days})
+    resp: httpx.Response = client.post(
+        f"/data/intraday/{symbol}", params={"days": days}, timeout=_TIMEOUT_LIVE
+    )
     return _handle_response(resp)
 
 
 def get_shareholder(symbol: str) -> dict[str, Any]:
+    """实时采集股东结构——会触发 westock CLI subprocess。"""
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get(f"/data/shareholder/{symbol}")
+    resp: httpx.Response = client.post(
+        f"/data/shareholder/{symbol}", timeout=_TIMEOUT_LIVE
+    )
     return _handle_response(resp)
 
 
 def get_reserve(symbol: str) -> dict[str, Any]:
+    """实时采集业绩预告——会触发 westock CLI subprocess。"""
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get(f"/data/reserve/{symbol}")
+    resp: httpx.Response = client.post(
+        f"/data/reserve/{symbol}", timeout=_TIMEOUT_LIVE
+    )
     return _handle_response(resp)
 
 
 def get_dividend(symbol: str) -> dict[str, Any]:
+    """实时采集分红记录——会触发 westock CLI subprocess。"""
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get(f"/data/dividend/{symbol}")
+    resp: httpx.Response = client.post(
+        f"/data/dividend/{symbol}", timeout=_TIMEOUT_LIVE
+    )
     return _handle_response(resp)
 
 
@@ -236,7 +264,9 @@ def get_task_logs(**params: Any) -> dict[str, Any]:
 
 def trigger_task(task_name: str) -> dict[str, Any]:
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.post(f"/tasks/trigger/{task_name}")
+    resp: httpx.Response = client.post(
+        f"/tasks/trigger/{task_name}", timeout=_TIMEOUT_LIVE
+    )
     return _handle_response(resp)
 
 

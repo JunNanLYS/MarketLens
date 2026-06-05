@@ -68,7 +68,10 @@ class AIAnalyzer:
 
         score_diff = bullish_score - bearish_score
         total_score = bullish_score + bearish_score
-        confidence = abs(score_diff) / max(total_score, 0.01)
+        # 置信度：相对差异 * 绝对强度系数。
+        # 当 total_score 较小时（信号极弱），min(1, total/0.5) 抑制置信度，
+        # 避免在证据不足时返回接近 100% 的虚假高置信度。
+        confidence = (abs(score_diff) / max(total_score, 0.01)) * min(1.0, total_score / 0.5)
 
         if score_diff > SIGNAL_BULLISH_STRONG:
             action = "buy"

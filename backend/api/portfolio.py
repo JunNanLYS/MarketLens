@@ -1,5 +1,8 @@
+from datetime import date as _date
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.api.neodata import verify_api_key
 from backend.services.portfolio_service import PortfolioService
@@ -9,15 +12,28 @@ router = APIRouter(prefix="/api/v1", tags=["portfolio"])
 _service = PortfolioService()
 
 
+# 交易类型白名单（与 services/portfolio_service.py 的 _validate_transaction 保持一致）
+TransactionType = Literal["buy", "sell", "dividend", "split"]
+
+
+def _validate_trade_date(value: str) -> str:
+    """校验 trade_date 是 ISO 8601 日期格式 (YYYY-MM-DD)，否则抛 ValueError。"""
+    try:
+        _date.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("trade_date 必须为 ISO 8601 日期格式 YYYY-MM-DD") from exc
+    return value
+
+
 class CreateAccountRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1)
     broker: str | None = None
     currency: str = "CNY"
     notes: str | None = None
 
 
 class UpdateAccountRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1)
     broker: str | None = None
     currency: str | None = None
     notes: str | None = None
@@ -25,14 +41,19 @@ class UpdateAccountRequest(BaseModel):
 
 class CreateTransactionRequest(BaseModel):
     account_id: int
-    symbol: str
-    type: str
+    symbol: str = Field(..., min_length=1)
+    type: TransactionType
     quantity: float = Field(gt=0)
     price: float = Field(gt=0)
     fee: float = 0.0
     currency: str | None = None
     trade_date: str
     notes: str | None = None
+
+    @field_validator("trade_date")
+    @classmethod
+    def _check_trade_date(cls, v: str) -> str:
+        return _validate_trade_date(v)
 
 
 class UpdateTransactionRequest(BaseModel):
@@ -42,6 +63,13 @@ class UpdateTransactionRequest(BaseModel):
     currency: str | None = None
     trade_date: str | None = None
     notes: str | None = None
+
+    @field_validator("trade_date")
+    @classmethod
+    def _check_trade_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_trade_date(v)
 
 
 @router.post("/accounts", status_code=201)
@@ -156,8 +184,8 @@ def create_transaction(
 @router.get("/transactions")
 def list_transactions(
     account_id: int | None = None,
-    symbol: str | None = None,
-    type: str | None = None,
+    symbol: str | None = Query(default=None, min_length=1),
+    type: TransactionType | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     page: int = Query(1, ge=1),
