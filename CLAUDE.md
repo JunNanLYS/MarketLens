@@ -170,6 +170,13 @@ See `CODE_REVIEW.md` for a comprehensive audit covering correctness, performance
 - `raw_data` table has no auto-cleanup and will grow unbounded
 - Service instances are recreated per scheduler tick rather than cached
 
+### External dependencies (fact, not bugs)
+
+- `NeoDataProvider` 的 token 由**外部 workbuddy 工具**写入 `~/.workbuddy/.neodata_token`，
+  本项目不参与申请/刷新。`optional: true` 保证 token 缺失或 401 时静默降级，
+  不会阻塞其他数据源。详见 `backend/collectors/neodata_client.py::TokenManager`。
+  若需 UI 提示用户"该去 workbuddy 刷新 token",使用 `GET /api/v1/data-sources/status` 的 `neodata` 字段。
+
 ## Task Completion Checklist
 
 After **every** task, execute these steps in order:

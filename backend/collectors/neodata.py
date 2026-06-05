@@ -9,7 +9,16 @@ from backend.collectors.neodata_client import NeoDataClient
 
 
 class NeoDataProvider(BaseProvider):
-    """NeoData 采集提供者（异步版）。"""
+    """NeoData 采集提供者（异步版）。
+
+    Token 生命周期由外部 workbuddy 工具管理,本类只读不写:
+    - 凭证读取顺序:本地缓存 ~/.workbuddy/.neodata_token → config.yaml.params.token → 环境变量 NEODATA_TOKEN
+    - 缺失或过期时静默降级（_query 返回 None,各业务方法返回空集合 / 空 dict）,
+      不会抛异常上抛,不会阻塞其他数据源。
+    - 写盘操作仅由 _retry_on_auth_error 触发 clear_cache() 清掉本地坏 token,
+      不会主动申请新 token。
+    详见 backend/collectors/neodata_client.py::TokenManager。
+    """
 
     def __init__(self, name: str, timeout: int = 30, params: dict | None = None, optional: bool = True) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)

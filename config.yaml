@@ -30,11 +30,13 @@ data_sources:
   - name: neodata
     provider: NeoDataProvider
     enabled: true
-    optional: true
+    optional: true        # token 缺失/过期时静默降级,不影响其他源
     timeout: 30
     params:
       endpoint: https://copilot.tencent.com/agenttool/v1/neodata
-      token: ''
+      token: ''            # 兜底占位;实际凭证由外部 workbuddy 工具
+                            # 写入 ~/.workbuddy/.neodata_token,本项目只读不写。
+                            # 详情见 backend/collectors/neodata_client.py。
   # --------------------------------------------------------------------------
   # ??????news?
   # --------------------------------------------------------------------------
