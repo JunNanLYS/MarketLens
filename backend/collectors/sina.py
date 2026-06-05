@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 import httpx
 from loguru import logger
 
-from backend.collectors.base import BaseProvider
+from backend.collectors.base import StructuredProvider
 
 
-class SinaProvider(BaseProvider):
+class SinaProvider(StructuredProvider):
     """通过新浪财经 HTTP 接口获取行情、K线、财务、资金流向数据（异步版）。"""
 
     # K线周期 → 新浪 scale 参数映射（分钟数）

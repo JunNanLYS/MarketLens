@@ -3,10 +3,10 @@
 import httpx
 from loguru import logger
 
-from backend.collectors.base import BaseProvider
+from backend.collectors.base import NewsProvider
 
 
-class TencentNewsHTTPProvider(BaseProvider):
+class TencentNewsHTTPProvider(NewsProvider):
     """腾讯新闻热榜提供者，使用公开 HTTP API 获取热点新闻（异步版）。"""
 
     _API_URL: str = "https://r.inews.qq.com/gw/event/hot_ranking_list"
@@ -42,24 +42,6 @@ class TencentNewsHTTPProvider(BaseProvider):
             await self._client.aclose()
             self._client = None
 
-
-    async def search(self, keyword: str) -> list[dict]:
-        return []
-
-    async def quote(self, symbols: list[str]) -> list[dict]:
-        return []
-
-    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
-        return []
-
-    async def finance(self, symbol: str) -> dict:
-        return {}
-
-    async def fund_flow(self, symbol: str) -> dict:
-        return {}
-
-    async def technical(self, symbol: str) -> dict:
-        return {}
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         try:

@@ -257,11 +257,14 @@ Every APScheduler job MUST:
 
 ## Known issues
 
-See `CODE_REVIEW.md` for a comprehensive audit covering correctness, performance, and maintainability findings. Notable items:
-- `BaseProvider` defines 6 abstract methods but news/RSS providers only implement `search()` — the rest return empty stubs
-- `ai_reports` table uses an index rather than a UNIQUE constraint on `(symbol, date(generated_at))`, risking duplicate reports
-- `raw_data` table has no auto-cleanup and will grow unbounded
-- Service instances are recreated per scheduler tick rather than cached
+See `CODE_REVIEW.md` for a comprehensive audit covering correctness, performance, and maintainability findings.
+
+下方 4 条 **截至 2026-06-06 已通过代码验证实际解决**，保留以追踪决策历史；新增问题请追加到本节末尾。
+
+- ✅ ~~`BaseProvider` defines 6 abstract methods but news/RSS providers only implement `search()` — the rest return empty stubs~~ → 拆分为 `StructuredProvider` + `NewsProvider` 两个 ABC（[base.py:22,71,102](backend/collectors/base.py)）；新闻类 Provider 改为继承 `NewsProvider` 并删去 6 个空 stub；MRO 兼容性由 [test_base_abcs.py](tests/collectors/test_base_abcs.py) 11 个单测守护。
+- ✅ ~~`ai_reports` table uses an index rather than a UNIQUE constraint on `(symbol, date(generated_at))`, risking duplicate reports~~ → 已升级为 `CREATE UNIQUE INDEX`（[schema.py:271-272](backend/storage/schema.py)）。
+- ✅ ~~`raw_data` table has no auto-cleanup and will grow unbounded~~ → `cleanup` 定时任务每天 03:30 删除 `>30 days` 记录（[jobs.py:195-213](backend/scheduler/jobs.py)）。
+- ✅ ~~Service instances are recreated per scheduler tick rather than cached~~ → `_collection_service` / `_news_service` 已为模块级懒加载单例（[jobs.py:145-158](backend/scheduler/jobs.py)），APScheduler 每次 tick 复用同一实例。
 
 ### External dependencies (fact, not bugs)
 

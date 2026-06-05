@@ -4,7 +4,7 @@ from urllib.parse import quote_plus
 import httpx
 from loguru import logger
 
-from backend.collectors.base import BaseProvider
+from backend.collectors.base import NewsProvider
 
 
 class _LinkExtractor(HTMLParser):
@@ -43,7 +43,7 @@ class _LinkExtractor(HTMLParser):
             self._current_text += data
 
 
-class SearchEngineNewsProvider(BaseProvider):
+class SearchEngineNewsProvider(NewsProvider):
     """多搜索引擎新闻提供者（异步版）。"""
 
     DEFAULT_ENGINES = {
@@ -150,15 +150,5 @@ class SearchEngineNewsProvider(BaseProvider):
         return results
 
     async def search(self, keyword: str) -> list[dict]:
+        """搜索入口：委托给 fetch_news，保持与旧 BaseProvider.search 签名兼容。"""
         return await self.fetch_news([keyword])
-
-    async def quote(self, symbols: list[str]) -> list[dict]:
-        return []
-    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
-        return []
-    async def finance(self, symbol: str) -> dict:
-        return {}
-    async def fund_flow(self, symbol: str) -> dict:
-        return {}
-    async def technical(self, symbol: str) -> dict:
-        return {}

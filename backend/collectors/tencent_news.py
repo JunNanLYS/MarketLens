@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from loguru import logger
-from backend.collectors.base import BaseProvider
+from backend.collectors.base import NewsProvider
 
 # CLI 搜索路径：优先从环境变量 TENCT_NEWS_CLI_PATH 获取；固定路径下查找安装的 skill。
 # 安全考量：不读取 CODEX_HOME 等未签名环境变量覆盖安装路径，
@@ -22,7 +22,7 @@ else:
     BIN_NAME = "tencent-news-cli"
 
 
-class TencentNewsProvider(BaseProvider):
+class TencentNewsProvider(NewsProvider):
     """腾讯新闻 Provider，通过 CLI 调用外部工具（异步版）。
 
     该 Provider 通过调用本地安装的 tencent-news-cli 命令行工具获取新闻数据，
@@ -154,16 +154,3 @@ class TencentNewsProvider(BaseProvider):
                     logger.info("TencentNews fetched {} items", len(items))
                     return items
         return []
-
-    async def search(self, keyword: str) -> list[dict]:
-        return []
-    async def quote(self, symbols: list[str]) -> list[dict]:
-        return []
-    async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
-        return []
-    async def finance(self, symbol: str) -> dict:
-        return {}
-    async def fund_flow(self, symbol: str) -> dict:
-        return {}
-    async def technical(self, symbol: str) -> dict:
-        return {}
