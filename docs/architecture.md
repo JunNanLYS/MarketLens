@@ -202,10 +202,12 @@ def _run_quote() -> None:
 | Provider 内部 | `asyncio.Semaphore` | 限制对下游 CLI/HTTP 的并发请求 | westock `_QUOTE_CONCURRENCY=5` / neodata 5 |
 | Service 层（quote） | `asyncio.gather` + `Semaphore(10)` | 跨标的并发采集 | 同一时间最多 10 个标的 |
 | Service 层（daily_close） | `asyncio.gather` + `Semaphore(10)` | 跨标的并发 + 单标的 4 类数据并行 | 同上 |
-| SQLite 写入 | `asyncio.Lock` + 同步 `sqlite3` | 多协程串行化 INSERT/DELETE | 全局唯一 `_WRITE_LOCK` |
+| SQLite 写入 | `threading.Lock` + 同步 `sqlite3` | 多协程串行化 INSERT/DELETE | 全局唯一 `_WRITE_LOCK` |
 | 读端点 | 同步 `sqlite3` 上下文管理器 | 高并发 GET 请求 | 无锁 |
 
-**关键约束**：SQLite 同步连接在同一进程内不支持多协程并发写，因此 `CollectionService` 内部使用 `asyncio.Lock` 串行化所有写入段。采集请求（IO 阶段）可并发，但所有 `INSERT/DELETE/COMMIT` 必须在锁内。
+**关键约束**：SQLite 同步连接在同一进程内不支持多协程并发写，因此 `CollectionService` 内部使用 `_WRITE_LOCK` 串行化所有写入段。采集请求（IO 阶段）可并发，但所有 `INSERT/DELETE/COMMIT` 必须在锁内。
+
+**为何选 `threading.Lock` 而非 `asyncio.Lock`**：scheduler tick 用 `asyncio.run()` 每次创建新事件循环，`asyncio.Lock()` 首次 `acquire` 时绑定当前 loop，跨 tick 时会失效。`threading.Lock` 跨 loop 安全且对同步 `sqlite3` 互斥语义正确。配合 `PRAGMA busy_timeout = 5000`，持有锁时 SQLite 自动等待而非 fast-fail 抛 `OperationalError`。
 
 ### 4.3 性能基线（实测）
 
@@ -344,7 +346,7 @@ Streamlit 发起 GET /api/v1/data/quotes/{symbol}
 
 ### 7.1 Provider 接口
 
-`BaseProvider`（`backend/collectors/base.py`）定义统一异步接口，子类必须实现以下方法：
+`BaseProvider`（`backend/collectors/base.py`）提供 6 个带默认空实现的方法（`search` / `quote` / `kline` / `finance` / `fund_flow` / `technical`），子类按需 override；`close()` 是 lifecycle 钩子；ABC 继承保留以允许未来 sentinel 抽象方法。
 
 ```python
 class BaseProvider(ABC):

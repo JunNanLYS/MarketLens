@@ -214,7 +214,11 @@ def _render_transactions_tab() -> None:
                                 upd: dict[str, Any] = {"quantity": new_qty, "price": new_price, "fee": new_fee}
                                 if new_notes.strip():
                                     upd["notes"] = new_notes.strip()
-                                update_transaction(int(tx["id"]), upd)
+                                result_upd_tx: dict[str, Any] = update_transaction(int(tx["id"]), upd)
+                                if "error" in result_upd_tx or "id" not in result_upd_tx:
+                                    st.error(result_upd_tx.get("detail", "更新失败"))
+                                    return
+                                st.cache_data.clear()
                                 st.session_state.pop(f"edit_tx_{tx_key}", None)
                                 st.success("已更新")
                                 st.rerun()
@@ -228,7 +232,11 @@ def _render_transactions_tab() -> None:
                     bc1, bc2 = st.columns(2)
                     with bc1:
                         if st.button("确认", key=f"confirm_del_tx_btn_{tx_key}"):
-                            delete_transaction(tx["id"])
+                            result_del_tx: dict[str, Any] = delete_transaction(tx["id"])
+                            if "error" in result_del_tx or "id" not in result_del_tx:
+                                st.error(result_del_tx.get("detail", "删除失败"))
+                                return
+                            st.cache_data.clear()
                             st.session_state.pop(f"confirm_del_tx_{tx_key}", None)
                             st.success("已删除")
                             st.rerun()
@@ -296,6 +304,7 @@ def _render_transactions_tab() -> None:
                 if "error" in result_tx or "id" not in result_tx:
                     st.error(result_tx.get("detail", "交易录入失败"))
                     return
+                st.cache_data.clear()
                 st.success("交易录入成功")
                 st.rerun()
 
@@ -352,6 +361,7 @@ def _render_accounts_tab() -> None:
                                     if "error" in result_upd_acc or "id" not in result_upd_acc:
                                         st.error(result_upd_acc.get("detail", "更新失败"))
                                         return
+                                    st.cache_data.clear()
                                     st.session_state.pop(f"edit_acc_{acc_id}", None)
                                     st.success("已更新")
                                     st.rerun()
@@ -365,7 +375,11 @@ def _render_accounts_tab() -> None:
                     dc1, dc2 = st.columns(2)
                     with dc1:
                         if st.button("确认", key=f"confirm_del_acc_btn_{acc_id}"):
-                            delete_account(acc_id)
+                            result_del_acc: dict[str, Any] = delete_account(acc_id)
+                            if "error" in result_del_acc or "id" not in result_del_acc:
+                                st.error(result_del_acc.get("detail", "删除失败"))
+                                return
+                            st.cache_data.clear()
                             st.session_state.pop(f"confirm_del_acc_{acc_id}", None)
                             st.success("已删除")
                             st.rerun()
@@ -406,6 +420,7 @@ def _render_accounts_tab() -> None:
                 if "error" in result_acc or "id" not in result_acc:
                     st.error(result_acc.get("detail", "账户创建失败"))
                     return
+                st.cache_data.clear()
                 st.success(f"账户「{acc_name.strip()}」创建成功")
                 st.rerun()
 

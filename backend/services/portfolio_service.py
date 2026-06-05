@@ -1,4 +1,3 @@
-import sqlite3
 from loguru import logger
 
 from backend.storage.database import get_db, get_connection_sync
@@ -597,15 +596,15 @@ class PortfolioService:
         self,
         account_id: int | None = None,
         symbol: str | None = None,
-        page: int | None = None,
+        page: int = 1,
         page_size: int = 50,
     ) -> list[dict]:
-        """查询已实现盈亏。
+        """查询已实现盈亏（强制分页，避免全表扫）。
 
         Args:
             account_id: 可选账户 ID 过滤
             symbol: 可选标的代码过滤
-            page: 分页页码（从 1 开始）；None 表示不分页。
+            page: 分页页码（从 1 开始，默认 1）。
             page_size: 分页大小，默认 50，上限 200。
 
         Returns:
@@ -624,43 +623,35 @@ class PortfolioService:
         where_clause: str = " AND ".join(conditions)
 
         with get_db() as conn:
-            # 分页模式下，按 (account_id, symbol) 聚合在 DB 层完成，避免 Python 端遍历全表。
-            if page is not None:
-                cap = max(1, min(page_size, 200))
-                offset = (max(1, page) - 1) * cap
-                # 先取一页内涉及的所有 (account_id, symbol) 组合
-                group_rows = conn.execute(
-                    f"""
-                    SELECT t.account_id, t.symbol
+            # 强制分页：按 (account_id, symbol) 聚合在 DB 层完成，避免 Python 端遍历全表。
+            cap = max(1, min(page_size, 200))
+            offset = (max(1, page) - 1) * cap
+            # 先取一页内涉及的所有 (account_id, symbol) 组合
+            group_rows = conn.execute(
+                f"""
+                SELECT t.account_id, t.symbol
+                FROM transactions t
+                WHERE {where_clause}
+                GROUP BY t.account_id, t.symbol
+                ORDER BY t.account_id, t.symbol
+                LIMIT ? OFFSET ?
+                """,
+                params + [cap, offset],
+            ).fetchall()
+            if not group_rows:
+                return []
+            pair_ph = ", ".join(["(?, ?)"] * len(group_rows))
+            pair_params: list = []
+            for r in group_rows:
+                pair_params.extend([r["account_id"], r["symbol"]])
+            rows = conn.execute(
+                f"""SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee
                     FROM transactions t
                     WHERE {where_clause}
-                    GROUP BY t.account_id, t.symbol
-                    ORDER BY t.account_id, t.symbol
-                    LIMIT ? OFFSET ?
-                    """,
-                    params + [cap, offset],
-                ).fetchall()
-                if not group_rows:
-                    return []
-                pair_ph = ", ".join(["(?, ?)"] * len(group_rows))
-                pair_params: list = []
-                for r in group_rows:
-                    pair_params.extend([r["account_id"], r["symbol"]])
-                rows = conn.execute(
-                    f"""SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee
-                        FROM transactions t
-                        WHERE {where_clause}
-                          AND (t.account_id, t.symbol) IN ({pair_ph})
-                        ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at""",
-                    params + pair_params,
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    f"SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee "
-                    f"FROM transactions t WHERE {where_clause} "
-                    "ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at",
-                    params,
-                ).fetchall()
+                      AND (t.account_id, t.symbol) IN ({pair_ph})
+                    ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at""",
+                params + pair_params,
+            ).fetchall()
 
             grouped: dict[tuple[int, str], list[dict]] = {}
             for row in rows:

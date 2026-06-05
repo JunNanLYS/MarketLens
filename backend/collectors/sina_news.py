@@ -1,5 +1,4 @@
-﻿import json
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 import httpx
 from loguru import logger

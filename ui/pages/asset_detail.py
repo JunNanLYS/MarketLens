@@ -2,7 +2,7 @@ from typing import Any
 
 import streamlit as st
 
-from ui.api_client import get_assets, get_asset, get_quote, get_kline, get_finance, get_fund_flow, get_latest_report, get_intraday, get_shareholder, get_reserve, get_dividend
+from ui.api_client import get_assets, get_asset, get_intraday, get_shareholder, get_reserve, get_dividend
 
 ACTION_COLORS: dict[str, str] = {
     "buy": "green",
@@ -27,6 +27,50 @@ def _format_number(value: float | None, suffix: str = "") -> str:
     if abs(value) >= 1e4:
         return f"{value / 1e4:.2f}万{suffix}"
     return f"{value:.2f}{suffix}"
+
+
+@st.cache_data(ttl=30)
+def _get_assets_cached() -> list[dict[str, Any]]:
+    """获取追踪标的列表（缓存 30s）。
+
+    必须在模块作用域：嵌套 def 会随每次 rerun 创建新函数对象，
+    导致 st.cache_data 用函数身份做 key 时无法命中/无法 clear。
+    """
+    assets_result: dict[str, Any] = get_assets(page_size=100)
+    return assets_result.get("items", [])
+
+
+@st.cache_data(ttl=30)
+def _get_detail_cached(_aid: int) -> dict[str, Any]:
+    """获取标的详情（6 表 JOIN 结果，缓存 30s）。
+
+    详情查询 ~50-200ms，缓存避免每次切 tab 都重拉。
+    """
+    return get_asset(_aid)
+
+
+@st.cache_data(ttl=300)
+def _fetch_intraday(_sym: str) -> dict[str, Any]:
+    """获取分时走势数据（缓存 5min）。"""
+    return get_intraday(_sym)
+
+
+@st.cache_data(ttl=300)
+def _fetch_shareholder(_sym: str) -> dict[str, Any]:
+    """获取股东结构数据（缓存 5min）。"""
+    return get_shareholder(_sym)
+
+
+@st.cache_data(ttl=300)
+def _fetch_reserve(_sym: str) -> dict[str, Any]:
+    """获取业绩预告数据（缓存 5min）。"""
+    return get_reserve(_sym)
+
+
+@st.cache_data(ttl=300)
+def _fetch_dividend(_sym: str) -> dict[str, Any]:
+    """获取分红记录数据（缓存 5min）。"""
+    return get_dividend(_sym)
 
 
 def _render_quote_section(quote: dict[str, Any]) -> None:
@@ -161,11 +205,6 @@ def render() -> None:
             st.cache_data.clear()
             st.rerun()
 
-    @st.cache_data(ttl=30)
-    def _get_assets_cached() -> list[dict[str, Any]]:
-        assets_result: dict[str, Any] = get_assets(page_size=100)
-        return assets_result.get("items", [])
-
     asset_items: list[dict[str, Any]] = _get_assets_cached()
 
     if not asset_items:
@@ -198,10 +237,6 @@ def render() -> None:
 
     # 详情查询（含 K线/财务/资金流向等 6 表 JOIN）单次 ~50-200ms，
     # 用 @st.cache_data(ttl=30) 复用结果，避免每次切 tab 都重拉。
-    @st.cache_data(ttl=30)
-    def _get_detail_cached(_aid: int) -> dict[str, Any]:
-        return get_asset(_aid)
-
     detail: dict[str, Any] = _get_detail_cached(asset_id)
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
@@ -259,10 +294,6 @@ def render() -> None:
 def _render_intraday_tab(symbol: str) -> None:
     st.subheader("分时走势")
     try:
-        @st.cache_data(ttl=300)
-        def _fetch_intraday(_sym: str) -> dict[str, Any]:
-            return get_intraday(_sym)
-
         with st.spinner("正在采集分时数据（首次需调用 westock CLI）..."):
             result: dict[str, Any] = _fetch_intraday(symbol)
         items: list[dict[str, Any]] = result.get("items", [])
@@ -293,10 +324,6 @@ def _render_intraday_tab(symbol: str) -> None:
 def _render_shareholder_tab(symbol: str) -> None:
     st.subheader("股东结构")
     try:
-        @st.cache_data(ttl=300)
-        def _fetch_shareholder(_sym: str) -> dict[str, Any]:
-            return get_shareholder(_sym)
-
         with st.spinner("正在采集股东结构..."):
             result: dict[str, Any] = _fetch_shareholder(symbol)
         top_shareholders: list[dict[str, Any]] = result.get("top_shareholders", [])
@@ -330,10 +357,6 @@ def _render_shareholder_tab(symbol: str) -> None:
 def _render_reserve_tab(symbol: str) -> None:
     st.subheader("业绩预告")
     try:
-        @st.cache_data(ttl=300)
-        def _fetch_reserve(_sym: str) -> dict[str, Any]:
-            return get_reserve(_sym)
-
         with st.spinner("正在采集业绩预告..."):
             result: dict[str, Any] = _fetch_reserve(symbol)
         forecast_type: str = result.get("forecast_type", "") or result.get("report_period", "")
@@ -359,10 +382,6 @@ def _render_reserve_tab(symbol: str) -> None:
 def _render_dividend_tab(symbol: str) -> None:
     st.subheader("分红记录")
     try:
-        @st.cache_data(ttl=300)
-        def _fetch_dividend(_sym: str) -> dict[str, Any]:
-            return get_dividend(_sym)
-
         with st.spinner("正在采集分红记录..."):
             result: dict[str, Any] = _fetch_dividend(symbol)
         items: list[dict[str, Any]] = result.get("items", [])

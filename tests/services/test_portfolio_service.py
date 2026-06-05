@@ -31,7 +31,7 @@ def sample_account(svc: PortfolioService) -> dict:
 
 @pytest.fixture
 async def sample_asset() -> None:
-    from backend.storage.database import aget_db
+    pass
 
 async def __insert(table: str, data: dict) -> int:
     async with aget_db() as conn:
@@ -332,7 +332,6 @@ async def test_positions_unrealized_pnl(
             "trade_date": "2026-05-01",
         }
     )
-    from backend.storage.database import aget_db
 
 async def __insert(table: str, data: dict) -> int:
     async with aget_db() as conn:
@@ -790,3 +789,79 @@ async def test_positions_fully_sold_excluded(
     )
     positions: list[dict] = svc.get_positions()
     assert len(positions) == 0
+
+
+class TestCreateTransactionRequestValidators:
+    """Pydantic field_validator 边界值测试。"""
+
+    def test_trade_date_iso_format_valid(self) -> None:
+        """ISO 8601 YYYY-MM-DD 格式应通过。"""
+        from backend.api.portfolio import CreateTransactionRequest
+
+        req = CreateTransactionRequest(
+            account_id=1,
+            symbol="sh600519",
+            type="buy",
+            quantity=100,
+            price=10.0,
+            trade_date="2026-06-05",
+        )
+        assert req.trade_date == "2026-06-05"
+
+    def test_trade_date_iso_format_invalid(self) -> None:
+        """非 ISO 8601 格式应被 Pydantic 拒绝。"""
+        from pydantic import ValidationError
+
+        from backend.api.portfolio import CreateTransactionRequest
+
+        for bad in ("not-a-date", "2026/06/05", "06-05-2026", ""):
+            with pytest.raises(ValidationError):
+                CreateTransactionRequest(
+                    account_id=1,
+                    symbol="sh600519",
+                    type="buy",
+                    quantity=100,
+                    price=10.0,
+                    trade_date=bad,
+                )
+
+    def test_quantity_must_be_positive(self) -> None:
+        """quantity 必须 > 0。"""
+        from pydantic import ValidationError
+
+        from backend.api.portfolio import CreateTransactionRequest
+
+        with pytest.raises(ValidationError):
+            CreateTransactionRequest(
+                account_id=1,
+                symbol="sh600519",
+                type="buy",
+                quantity=0,
+                price=10.0,
+                trade_date="2026-06-05",
+            )
+        with pytest.raises(ValidationError):
+            CreateTransactionRequest(
+                account_id=1,
+                symbol="sh600519",
+                type="buy",
+                quantity=-1.0,
+                price=10.0,
+                trade_date="2026-06-05",
+            )
+
+    def test_invalid_transaction_type_rejected(self) -> None:
+        """type 必须是 Literal 白名单内的值。"""
+        from pydantic import ValidationError
+
+        from backend.api.portfolio import CreateTransactionRequest
+
+        with pytest.raises(ValidationError):
+            CreateTransactionRequest(
+                account_id=1,
+                symbol="sh600519",
+                type="invalid_type",
+                quantity=100,
+                price=10.0,
+                trade_date="2026-06-05",
+            )

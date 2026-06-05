@@ -1,5 +1,4 @@
 import asyncio
-import sqlite3
 import json
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -9,7 +8,7 @@ from loguru import logger
 from backend.config import get_config
 from backend.services.ai_analyzer import AIAnalyzer
 from backend.services.evidence_builder import EvidenceBuilder
-from backend.storage.database import get_db, aget_db, aget_connection
+from backend.storage.database import get_db, aget_connection
 
 
 class ReportService:

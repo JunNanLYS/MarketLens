@@ -283,5 +283,9 @@ def get_positions(account_id: int | None = None) -> list[dict]:
 def get_realized_pnl(
     account_id: int | None = None,
     symbol: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
-    return _service.get_realized_pnl(account_id=account_id, symbol=symbol)
+    return _service.get_realized_pnl(
+        account_id=account_id, symbol=symbol, page=page, page_size=page_size
+    )

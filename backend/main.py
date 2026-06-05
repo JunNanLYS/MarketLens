@@ -133,12 +133,17 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 @app.get("/api/v1/health")
-def health_check() -> dict:
-    return {
-        "status": "ok" if (_db_ready and _scheduler_ready) else "degraded",
+def health_check() -> JSONResponse:
+    healthy = _db_ready and _scheduler_ready
+    body = {
+        "status": "ok" if healthy else "degraded",
         "database": "ok" if _db_ready else "error",
         "scheduler": "ok" if _scheduler_ready else "error",
     }
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content=body,
+    )
 
 
 @app.get("/")

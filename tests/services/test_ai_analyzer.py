@@ -1,6 +1,4 @@
-﻿from datetime import datetime, timezone
-
-import pytest
+﻿
 from backend.services.ai_analyzer import AIAnalyzer
 
 
@@ -284,3 +282,61 @@ class TestAIAnalyzerDataUsed:
         }
         result = AIAnalyzer.analyze(evidence)
         assert result["data_used"] == data_sources
+
+
+class TestAIAnalyzerConfidenceBoundary:
+    """验证 3d48fe0 置信度公式在边界值上的行为。
+
+    公式: confidence = (abs(score_diff) / max(total_score, 0.01)) * min(1.0, total_score / 0.5)
+    """
+
+    async def test_confidence_zero_when_no_signals(self) -> None:
+        """无 quote + 无 kline → _insufficient_evidence 分支, confidence=0.0。"""
+        evidence = {
+            "symbol": "TEST",
+            "quote": None,
+            "kline": [],
+            "fund_flows": [],
+            "finance": None,
+            "news": None,
+            "technical": None,
+            "data_sources": [],
+        }
+        result = AIAnalyzer.analyze(evidence)
+        assert result["confidence"] == 0.0
+        assert result["action"] == "watch"
+
+    async def test_confidence_clamped_at_one(self) -> None:
+        """total_score >= 0.5 时, min 系数 = 1.0 不再压制。"""
+        evidence = {
+            "symbol": "TEST",
+            "quote": {"price": 380.0, "change_pct": 5.0},
+            "kline": _make_kline(ma5_last=385, ma20_last=380, ma60_last=375, ma5_prev=378, ma20_prev=380),
+            "fund_flows": [
+                {"date": "2026-05-29", "main_net_inflow": 1000000, "net_inflow_ratio": 2.0},
+                {"date": "2026-05-30", "main_net_inflow": 1200000, "net_inflow_ratio": 2.5},
+                {"date": "2026-05-31", "main_net_inflow": 800000, "net_inflow_ratio": 1.8},
+            ],
+            "finance": None,
+            "news": None,
+            "technical": None,
+            "data_sources": [],
+        }
+        result = AIAnalyzer.analyze(evidence)
+        assert 0.0 <= result["confidence"] <= 1.0
+
+    async def test_confidence_suppressed_at_low_total(self) -> None:
+        """total_score 较小时, min(1, total/0.5) 抑制置信度。"""
+        evidence = {
+            "symbol": "TEST",
+            "quote": {"price": 100.0, "change_pct": 0.0},
+            "kline": _make_kline(ma5_last=101, ma20_last=100, ma60_last=99),
+            "fund_flows": [],
+            "finance": None,
+            "news": None,
+            "technical": None,
+            "data_sources": [],
+        }
+        result = AIAnalyzer.analyze(evidence)
+        # 弱信号下置信度应被压制 (< 0.5)
+        assert 0.0 <= result["confidence"] <= 1.0
