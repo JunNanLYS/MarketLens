@@ -107,7 +107,7 @@ def _render_positions_tab() -> None:
             upnl_pct: float | None = pos.get("unrealized_pnl_pct")
             if upnl_pct is not None:
                 pct_color: str = "green" if upnl_pct > 0 else "red" if upnl_pct < 0 else "inherit"
-                st.markdown(f":{pnl_color}[{upnl_pct:+.2f}%]")
+                st.markdown(f":{pct_color}[{upnl_pct:+.2f}%]")
             else:
                 st.text("-")
 

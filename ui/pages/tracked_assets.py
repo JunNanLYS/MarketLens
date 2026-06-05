@@ -89,6 +89,8 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                         if "error" not in result and "id" in result:
                             st.success(f"已{label}")
                             st.rerun()
+                        else:
+                            st.error(result.get("detail", "操作失败"))
                 with btn_cols[1]:
                     if st.button("🗑️", key=f"del_{asset_id}", help="删除该标的"):
                         st.session_state[f"confirm_delete_{asset_id}"] = True
@@ -99,10 +101,13 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("确认删除", key=f"confirm_del_{asset_id}"):
-                        delete_asset(asset_id)
+                        del_result: dict[str, Any] = delete_asset(asset_id)
                         st.session_state.pop(f"confirm_delete_{asset_id}", None)
-                        st.success("已删除")
-                        st.rerun()
+                        if "error" not in del_result:
+                            st.success("已删除")
+                            st.rerun()
+                        else:
+                            st.error(del_result.get("detail", "删除失败"))
                 with c2:
                     if st.button("取消", key=f"cancel_del_{asset_id}"):
                         st.session_state.pop(f"confirm_delete_{asset_id}", None)
@@ -159,6 +164,8 @@ def _render_add_form() -> None:
                     if "id" in result:
                         st.success(f"已添加: {result.get('symbol', symbol)}")
                         st.rerun()
+                    else:
+                        st.error(result.get("detail", "添加失败"))
 
 
 def _render_search() -> None:
@@ -200,6 +207,8 @@ def _render_search() -> None:
                                 if "id" in add_result:
                                     st.success(f"已添加: {item['symbol']}")
                                     st.rerun()
+                                else:
+                                    st.error(add_result.get("detail", "添加失败"))
 
 
 def render() -> None:
