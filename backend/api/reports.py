@@ -2,7 +2,7 @@ from datetime import date as _date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 from backend.api.neodata import verify_api_key
 from backend.services.report_service import ReportService

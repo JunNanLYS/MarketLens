@@ -61,6 +61,6 @@ def render() -> None:
         st.warning(f"调度状态加载失败: {e}")
 
     st.subheader("系统信息")
-    st.text(f"数据库: SQLite (本地)")
-    st.text(f"数据存储: 全部本地化，无云端上传")
-    st.text(f"AI 引擎: 规则引擎（证据驱动）")
+    st.text("数据库: SQLite (本地)")
+    st.text("数据存储: 全部本地化，无云端上传")
+    st.text("AI 引擎: 规则引擎（证据驱动）")

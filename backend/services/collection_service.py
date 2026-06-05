@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -15,9 +16,9 @@ from backend.utils import build_fund_flow_summary
 
 # 全局并发信号量：限制同一时间并发写入 sqlite 的协程数。
 # sqlite3 同步连接在同一进程内不支持多协程并发写，必须用 lock 串行化写入操作。
-# 模块级创建（非懒加载）：asyncio.Lock() 构造不会绑定事件循环；首次 acquire 才绑定。
-# 避免在 FastAPI 主循环与 scheduler 临时 asyncio.run() 循环中各创建一份导致锁失效。
-_WRITE_LOCK: asyncio.Lock = asyncio.Lock()
+# 用 threading.Lock 替代 asyncio.Lock：scheduler tick 用 asyncio.run() 每次创建新
+# event loop，asyncio.Lock() 首次 acquire 时绑定循环会失效；threading.Lock 跨循环安全。
+_WRITE_LOCK: threading.Lock = threading.Lock()
 
 
 class CollectionService:
@@ -70,7 +71,7 @@ class CollectionService:
         )
 
     async def _collect_quote_for_symbol(
-        self, write_lock: asyncio.Lock, symbol: str
+        self, write_lock: threading.Lock, symbol: str
     ) -> dict | None:
         """采集单个标的的最新行情。
 
@@ -90,7 +91,7 @@ class CollectionService:
                 collected_at = item.get("collected_at", self._now_iso())
                 source = item.get("source", provider.name)
                 # 写入阶段加锁，保证多协程串行化 INSERT
-                async with write_lock:
+                with write_lock:
                     from backend.storage.database import get_connection_sync
                     conn = get_connection_sync()
                     try:
@@ -219,44 +220,6 @@ class CollectionService:
 
         return summary
 
-    async def _collect_kline(self, conn: sqlite3.Connection, symbol: str) -> dict:
-        success = 0
-        failed = 0
-        for provider in self._get_structured_providers():
-            try:
-                items = await provider.kline(symbol)
-                if not items:
-                    continue
-                collected_at = self._now_iso()
-                source = provider.name
-                raw_json = json.dumps(items, ensure_ascii=False, default=str)
-                self._save_raw_data(conn, symbol, source, "kline", raw_json, collected_at)
-                for item in items:
-                    conn.execute(
-                        """INSERT OR IGNORE INTO kline_daily
-                           (symbol, date, open, high, low, close, volume, change_pct, source, collected_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            symbol,
-                            item.get("date"),
-                            item.get("open"),
-                            item.get("high"),
-                            item.get("low"),
-                            item.get("close"),
-                            item.get("volume"),
-                            item.get("change_pct"),
-                            item.get("source", source),
-                            item.get("collected_at", collected_at),
-                        ),
-                    )
-                success += len(items)
-                break
-            except Exception as e:
-                logger.warning("Provider {} 采集K线失败: {} - {}", provider.name, symbol, e)
-                failed += 1
-                continue
-        return {"success": success, "failed": failed}
-
     async def _fetch_kline(self, symbol: str) -> dict:
         """仅执行网络 IO，不写库；返回数据 + 计数供上层 commit 阶段落盘。
 
@@ -315,48 +278,6 @@ class CollectionService:
                 row,
             )
 
-    async def _collect_finance(self, conn: sqlite3.Connection, symbol: str) -> dict:
-        success = 0
-        failed = 0
-        for provider in self._get_structured_providers():
-            try:
-                data = await provider.finance(symbol)
-                if not data:
-                    continue
-                collected_at = self._now_iso()
-                source = provider.name
-                raw_json = json.dumps(data, ensure_ascii=False, default=str)
-                self._save_raw_data(conn, symbol, source, "finance", raw_json, collected_at)
-                report_period = data.get("report_period") or data.get("period") or data.get("report_date")
-                conn.execute(
-                    """INSERT OR IGNORE INTO financial_reports
-                       (symbol, report_period, revenue, revenue_yoy, net_profit, net_profit_yoy,
-                        eps, roe, debt_ratio, gross_margin, net_margin, source, collected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        symbol,
-                        report_period,
-                        data.get("revenue"),
-                        data.get("revenue_yoy"),
-                        data.get("net_profit"),
-                        data.get("net_profit_yoy"),
-                        data.get("eps"),
-                        data.get("roe"),
-                        data.get("debt_ratio"),
-                        data.get("gross_margin"),
-                        data.get("net_margin"),
-                        data.get("source", source),
-                        data.get("collected_at", collected_at),
-                    ),
-                )
-                success += 1
-                break
-            except Exception as e:
-                logger.warning("Provider {} 采集财务数据失败: {} - {}", provider.name, symbol, e)
-                failed += 1
-                continue
-        return {"success": success, "failed": failed}
-
     async def _fetch_finance(self, symbol: str) -> dict:
         success = 0
         failed = 0
@@ -413,45 +334,6 @@ class CollectionService:
                 payload["row"],
             )
 
-    async def _collect_fund_flow(self, conn: sqlite3.Connection, symbol: str) -> dict:
-        success = 0
-        failed = 0
-        for provider in self._get_structured_providers():
-            try:
-                data = await provider.fund_flow(symbol)
-                if not data:
-                    continue
-                collected_at = self._now_iso()
-                source = provider.name
-                raw_json = json.dumps(data, ensure_ascii=False, default=str)
-                self._save_raw_data(conn, symbol, source, "fund_flow", raw_json, collected_at)
-                # fund_flow() 返回 dict；Provider 已统一字段命名。
-                conn.execute(
-                    """INSERT OR IGNORE INTO fund_flows
-                       (symbol, date, main_net_inflow, super_large_net_inflow, large_net_inflow,
-                        medium_net_inflow, small_net_inflow, net_inflow_ratio, source, collected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        symbol,
-                        item.get("date"),
-                        item.get("main_net_inflow") or item.get("net_flow"),
-                        item.get("super_large_net_inflow"),
-                        item.get("large_net_inflow") or item.get("main_inflow"),
-                        item.get("medium_net_inflow"),
-                        item.get("small_net_inflow"),
-                        item.get("net_inflow_ratio"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ),
-                )
-                success += 1
-                break
-            except Exception as e:
-                logger.warning("Provider {} 采集资金流向失败: {} - {}", provider.name, symbol, e)
-                failed += 1
-                continue
-        return {"success": success, "failed": failed}
-
     async def _fetch_fund_flow(self, symbol: str) -> dict:
         success = 0
         failed = 0
@@ -504,54 +386,6 @@ class CollectionService:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 payload["row"],
             )
-
-    async def _collect_technical(self, conn: sqlite3.Connection, symbol: str) -> dict:
-        success = 0
-        failed = 0
-        for provider in self._get_structured_providers():
-            try:
-                data = await provider.technical(symbol)
-                if not data:
-                    continue
-                collected_at = self._now_iso()
-                source = provider.name
-                raw_json = json.dumps(data, ensure_ascii=False, default=str)
-                self._save_raw_data(conn, symbol, source, "technical", raw_json, collected_at)
-                conn.execute(
-                    """INSERT OR IGNORE INTO technical_indicators
-                       (symbol, date, ma5, ma10, ma20, ma60,
-                        macd_dif, macd_dea, macd_histogram,
-                        rsi6, rsi14, boll_upper, boll_middle, boll_lower,
-                        volume_ma5, volume_ma20, source, collected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        symbol,
-                        data.get("date"),
-                        data.get("ma5"),
-                        data.get("ma10"),
-                        data.get("ma20"),
-                        data.get("ma60"),
-                        data.get("macd_dif"),
-                        data.get("macd_dea"),
-                        data.get("macd_histogram"),
-                        data.get("rsi6"),
-                        data.get("rsi14"),
-                        data.get("boll_upper"),
-                        data.get("boll_middle"),
-                        data.get("boll_lower"),
-                        data.get("volume_ma5"),
-                        data.get("volume_ma20"),
-                        data.get("source", source),
-                        data.get("collected_at", collected_at),
-                    ),
-                )
-                success += 1
-                break
-            except Exception as e:
-                logger.warning("Provider {} 采集技术指标失败: {} - {}", provider.name, symbol, e)
-                failed += 1
-                continue
-        return {"success": success, "failed": failed}
 
     async def _fetch_technical(self, symbol: str) -> dict:
         success = 0
@@ -616,7 +450,7 @@ class CollectionService:
             )
 
     async def _collect_daily_close_for_symbol(
-        self, write_lock: asyncio.Lock, symbol: str
+        self, write_lock: threading.Lock, symbol: str
     ) -> dict:
         """采集单标的的 K线/财务/资金流向/技术指标。
 
@@ -655,7 +489,7 @@ class CollectionService:
         # 阶段 2：持锁 commit。锁内仅做同步 DB 写入（毫秒级），不再持有网络 IO。
         from backend.storage.database import get_connection_sync
         try:
-            async with write_lock:
+            with write_lock:
                 conn = get_connection_sync()
                 try:
                     self._insert_kline(conn, {"symbol": symbol, **kline_p})

@@ -212,3 +212,4 @@
 > - `tests/collectors/test_sina.py:343-365` — 3 个 finance() 测试从断言 `== {}` 改为 `is None`，对齐新约定
 >
 > 验证：311/311 tests pass
+

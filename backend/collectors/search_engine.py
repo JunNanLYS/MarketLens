@@ -1,5 +1,4 @@
-﻿import re
-from html.parser import HTMLParser
+﻿from html.parser import HTMLParser
 from urllib.parse import quote_plus
 
 import httpx

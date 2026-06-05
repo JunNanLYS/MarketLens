@@ -429,5 +429,42 @@ async def test_kline_idempotent(service: CollectionService) -> None:
     assert len(rows) == 1
 
 
+async def test_concurrent_collect_quotes_no_corruption() -> None:
+    """并发 collect_quotes 不应产生数据库锁定错误, 且最终行数一致。
+
+    验证 _WRITE_LOCK 串行化生效: 3 次并发采集, 每次 3 资产全成功 = 9。
+    """
+    import asyncio
+
+    _insert_assets("sh600519", "hk00700", "sz000001")
+    svc = CollectionService(providers={"structured": [mock_provider] if False else [], "news": []})
+    # 重新构建以使用真正的 mock_provider
+    from tests.services.test_collection_service import MockProvider as _MP  # noqa: F401
+
+    # mock_provider 是 fixture,不能直接引用 —— 用 QUOTE_DATA 手动构造
+    provider = MockProvider(
+        name="mock",
+        quote_data=QUOTE_DATA + [
+            {
+                "symbol": "sz000001",
+                "price": 12.5,
+                "change": 0.1,
+                "change_pct": 0.8,
+                "source": "mock",
+                "collected_at": "2026-05-31T15:30:00+00:00",
+            },
+        ],
+    )
+    svc = CollectionService(providers={"structured": [provider], "news": []})
+
+    results = await asyncio.gather(
+        svc.collect_quotes(),
+        svc.collect_quotes(),
+        svc.collect_quotes(),
+    )
+    total_success = sum(r["success"] for r in results)
+    assert total_success == 9  # 3 次 × 3 资产 = 9
+
+
 
 

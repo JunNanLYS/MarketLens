@@ -3,8 +3,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime
 
 from loguru import logger
 

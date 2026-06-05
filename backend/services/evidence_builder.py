@@ -4,7 +4,6 @@ import json
 from contextlib import suppress
 
 from backend.config import get_config
-from backend.storage.database import aget_db
 
 
 class EvidenceBuilder:
@@ -143,10 +142,12 @@ class EvidenceBuilder:
 
             # news：批量拉取 7 天窗口内新闻，Python 端按 related_symbols 聚合。
             # 替代原来的 N 次单标的 json_each 查询，性能提升 N 倍。
+            # LIMIT 5000 防止全表扫：单标的 evidence 包不需要 7 天内所有新闻。
             cursor = await conn.execute(
                 """SELECT * FROM news_items
                    WHERE published_at >= datetime("now", "-7 days")
-                   ORDER BY published_at DESC""",
+                   ORDER BY published_at DESC
+                   LIMIT 5000""",
             )
             all_news_rows: list[dict] = [dict(r) for r in await cursor.fetchall()]
             news_by_symbol: dict[str, list[dict]] = {sym: [] for sym in symbols}

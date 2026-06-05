@@ -233,8 +233,12 @@ class NewsService:
         effective_filters = dict(filters) if filters else {}
 
         if "symbol" in effective_filters:
-            conditions.append("related_symbols LIKE ? ESCAPE '\\'")
-            params.append(f'%"%{escape_like(effective_filters["symbol"])}%"%')
+            # 用 json_each 替代 LIKE:避免全表扫 + 误匹配 (e.g. 搜索 '00700' 会误中 'hk00700')
+            sym = effective_filters["symbol"]
+            conditions.append(
+                "EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?)"
+            )
+            params.append(sym)
 
         if "days" in effective_filters:
             conditions.append("published_at >= datetime('now', ?)")

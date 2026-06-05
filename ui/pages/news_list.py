@@ -4,13 +4,27 @@ import streamlit as st
 from loguru import logger
 
 from ui.api_client import get_news
-from ui.api_client import get_assets
 
 SENTIMENT_DISPLAY: dict[str, tuple[str, str]] = {
     "positive": ("正面", "green"),
     "negative": ("负面", "red"),
     "neutral": ("中性", "gray"),
 }
+
+
+@st.cache_data(ttl=60)
+def _fetch_news(_symbol: str, _days: int, _sentiment: str) -> dict[str, Any]:
+    """获取新闻列表（缓存 60s）。
+
+    必须在模块作用域：嵌套 def 会随每次 rerun 创建新函数对象，
+    导致 st.cache_data 用函数身份做 key 时无法命中/无法 clear。
+    """
+    params: dict[str, Any] = {"days": _days, "page_size": 50}
+    if _symbol.strip():
+        params["symbol"] = _symbol.strip()
+    if _sentiment != "全部":
+        params["sentiment"] = _sentiment
+    return get_news(**params)
 
 
 def render() -> None:
@@ -27,15 +41,6 @@ def render() -> None:
         )
 
     try:
-        @st.cache_data(ttl=60)
-        def _fetch_news(_symbol: str, _days: int, _sentiment: str) -> dict[str, Any]:
-            params: dict[str, Any] = {"days": _days, "page_size": 50}
-            if _symbol.strip():
-                params["symbol"] = _symbol.strip()
-            if _sentiment != "全部":
-                params["sentiment"] = _sentiment
-            return get_news(**params)
-
         result: dict[str, Any] = _fetch_news(symbol_filter, days, sentiment)
         items: list[dict[str, Any]] = result.get("items", [])
         total: int = result.get("total", 0)

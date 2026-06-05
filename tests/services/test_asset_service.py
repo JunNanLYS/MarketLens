@@ -1,6 +1,6 @@
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -164,7 +164,6 @@ async def test_get_assets_filter_by_tag(service: AssetService) -> None:
 async def test_get_assets_with_quote(service: AssetService) -> None:
     await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import aget_db
     async with aget_db() as conn:
         await conn.execute(
             """INSERT INTO market_quotes (symbol, price, change_pct, collected_at)
@@ -194,7 +193,6 @@ async def test_get_asset_by_id_basic(service: AssetService) -> None:
 async def test_get_asset_by_id_with_quote(service: AssetService) -> None:
     asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import aget_db
     async with aget_db() as conn:
         await conn.execute(
             """INSERT INTO market_quotes (symbol, price, change, change_pct, open, high, low, volume, collected_at)
@@ -211,7 +209,6 @@ async def test_get_asset_by_id_with_quote(service: AssetService) -> None:
 async def test_get_asset_by_id_with_kline(service: AssetService) -> None:
     asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import aget_db
     async with aget_db() as conn:
         for i in range(60):
             await conn.execute(
@@ -232,7 +229,6 @@ async def test_get_asset_by_id_with_kline(service: AssetService) -> None:
 async def test_get_asset_by_id_with_finance(service: AssetService) -> None:
     asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import aget_db
     async with aget_db() as conn:
         await conn.execute(
             """INSERT INTO financial_reports (symbol, report_period, revenue_yoy, eps, roe, collected_at)
@@ -249,7 +245,6 @@ async def test_get_asset_by_id_with_finance(service: AssetService) -> None:
 async def test_get_asset_by_id_with_fund_flow(service: AssetService) -> None:
     asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import aget_db
     async with aget_db() as conn:
         for i in range(5):
             await conn.execute(
@@ -267,7 +262,6 @@ async def test_get_asset_by_id_with_fund_flow(service: AssetService) -> None:
 async def test_get_asset_by_id_with_ai_report(service: AssetService) -> None:
     asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
 
-    from backend.storage.database import aget_db
     async with aget_db() as conn:
         await conn.execute(
             """INSERT INTO ai_reports (symbol, action, confidence, risk_level, generated_at)

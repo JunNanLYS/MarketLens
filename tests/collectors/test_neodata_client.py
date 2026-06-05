@@ -4,7 +4,6 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 from backend.collectors.neodata_client import NeoDataClient, TokenManager
 

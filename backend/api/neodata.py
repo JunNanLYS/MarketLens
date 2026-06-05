@@ -1,8 +1,9 @@
 import os
+import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.collectors.neodata_client import NeoDataClient
 from backend.config import get_config
@@ -51,13 +52,28 @@ def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> N
         )
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
 class TokenSaveRequest(BaseModel):
-    token: str = Field(..., min_length=1)
+    token: str = Field(..., min_length=1, max_length=8192)
+
+    @field_validator("token")
+    @classmethod
+    def _strip_control_chars(cls, v: str) -> str:
+        if _CONTROL_CHARS.search(v):
+            raise ValueError("token 含非法控制字符")
+        return v
 
 
 @router.get("/token-status")
 async def get_token_status() -> dict:
-    return _get_or_create_client().get_token_status()
+    """返回 NeoData token 状态（不暴露过期时间）。"""
+    raw = _get_or_create_client().get_token_status()
+    return {
+        "is_valid": bool(raw.get("has_token", False)),
+        "source": raw.get("source"),
+    }
 
 
 @router.post("/token")

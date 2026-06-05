@@ -1,5 +1,4 @@
 import json
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -103,7 +102,6 @@ class TestEvidenceBuilderFull:
     """证据包完整（有全部数据类型）。"""
 
     async def test_full_evidence(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await _insert_quote(conn)
             await _insert_kline(conn)
@@ -136,7 +134,6 @@ class TestEvidenceBuilderPartial:
     """证据不足（仅有部分数据）。"""
 
     async def test_partial_evidence_only_quote(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await _insert_quote(conn)
 
@@ -150,7 +147,6 @@ class TestEvidenceBuilderPartial:
         assert evidence["technical"] is None
 
     async def test_partial_evidence_quote_and_kline(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await _insert_quote(conn)
             await _insert_kline(conn, days=10)
@@ -182,7 +178,6 @@ class TestEvidenceBuilderKlineMA:
     """K 线 MA 计算正确。"""
 
     async def test_ma_calculation(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await _insert_kline(conn, days=60)
 
@@ -201,7 +196,6 @@ class TestEvidenceBuilderKlineMA:
         assert first_item.get("ma60") is None
 
     async def test_ma5_value(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await _insert_kline(conn, days=10)
 
@@ -216,7 +210,6 @@ class TestEvidenceBuilderNewsStats:
     """新闻统计正确。"""
 
     async def test_news_statistics(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await _insert_news(conn)
 
@@ -230,7 +223,6 @@ class TestEvidenceBuilderNewsStats:
         assert news["neutral_count"] == 1
 
     async def test_no_matching_news(self, tmp_db: Path) -> None:
-        from backend.storage.database import aget_db
         async with aget_db() as conn:
             await conn.execute(
                 """INSERT INTO news_items (title, source, url, sentiment, importance, related_symbols, published_at, collected_at)

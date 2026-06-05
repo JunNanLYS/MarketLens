@@ -1,7 +1,7 @@
 # MarketLens API 文档
 
 > 版本: v2 | 基准路径: `http://localhost:8000/api/v1` | 协议: HTTP / HTTPS | 内容类型: `application/json; charset=utf-8`
-> 文档校验基准: `backend/api/*.py` + `backend/main.py`（共 40 个业务接口 + 1 个健康检查 + 1 个根路径）
+> 文档校验基准: `backend/api/*.py` + `backend/main.py`（共 40 个业务接口 + 1 个数据源状态 + 1 个健康检查 + 1 个根路径）
 
 ---
 

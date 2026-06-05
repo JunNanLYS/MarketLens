@@ -213,3 +213,21 @@ class TestReportServiceHistory:
         history = ReportService.get_report_history("hk00700", from_date="2020-01-01", to_date="2020-12-31")
         assert len(history) == 0
 
+
+class TestReportServiceForceIdempotent:
+    """force=True 重复调用不应产生重复行 (依赖 UNIQUE INDEX + INSERT OR IGNORE)。"""
+
+    async def test_force_twice_still_one_row(self, tmp_db: Path) -> None:
+        await _seed_full_data()
+        result1 = await ReportService.generate_reports(symbols=["hk00700"], force=True)
+        result2 = await ReportService.generate_reports(symbols=["hk00700"], force=True)
+
+        assert result1["generated"] == 1
+        assert result2["generated"] == 1
+
+        with get_db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM ai_reports WHERE symbol = 'hk00700'"
+            ).fetchone()[0]
+        assert count == 1
+
