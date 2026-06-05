@@ -174,9 +174,9 @@ class CollectionService:
         return await self._collect_quote_for_symbol(write_lock, symbol)
 
     async def collect_daily_close(self) -> dict:
-        """并发采集所有启用标的的日终四类数据。
+        """并发采集所有启用标的的日终七类数据。
 
-        同一标的的 4 个数据源并行；不同标的间用 Semaphore(10) 限制并发。
+        同一标的的 7 个数据源并行；不同标的间用 Semaphore(10) 限制并发。
         """
         started_at = self._now_iso()
         assets = self._asset_service.get_active_assets()
@@ -185,6 +185,9 @@ class CollectionService:
             "finance": {"success": 0, "failed": 0},
             "fund_flow": {"success": 0, "failed": 0},
             "technical": {"success": 0, "failed": 0},
+            "dividend": {"success": 0, "failed": 0},
+            "shareholder": {"success": 0, "failed": 0},
+            "reserve": {"success": 0, "failed": 0},
         }
         all_errors: list[str] = []
         write_lock = _WRITE_LOCK
@@ -449,12 +452,235 @@ class CollectionService:
                 payload["row"],
             )
 
+    async def _fetch_dividend(self, symbol: str) -> dict:
+        """仅网络 IO，不写库；返回分红记录 + 计数供上层落盘。
+
+        拆分目的：与 _insert_dividends 配合，让 fetch 与 commit 解耦。
+        """
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            try:
+                items = await provider.dividend(symbol)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    # dividend_year 在 westock 输出是字符串如 "2023"，_try_number 已转 int
+                    year_val = item.get("dividend_year")
+                    if not isinstance(year_val, int):
+                        try:
+                            year_val = int(str(year_val).strip()) if year_val is not None and str(year_val).strip() else None
+                        except (ValueError, TypeError):
+                            year_val = None
+                    rows.append((
+                        symbol,
+                        item.get("ex_date", ""),
+                        item.get("cash_dividend"),
+                        item.get("share_bonus"),
+                        item.get("record_date"),
+                        item.get("announce_date"),
+                        year_val,
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集分红失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
+
+    def _insert_dividends(self, conn: sqlite3.Connection, payload: dict) -> int:
+        """批量插入分红记录，INSERT OR IGNORE 去重。
+
+        Returns: 实际写入行数（SQLite executemany 的 rowcount）。
+        """
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            self._save_raw_data(conn, payload["symbol"], source, "dividend", raw_json, collected_at)
+        if not payload["rows"]:
+            return 0
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO dividends
+               (symbol, ex_date, cash_dividend, share_bonus,
+                record_date, announce_date, dividend_year, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
+        )
+        return cur.rowcount
+
+    async def _fetch_reserve(self, symbol: str) -> dict:
+        """仅网络 IO，不写库；返回业绩预告 + 计数供上层落盘。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            try:
+                data = await provider.reserve(symbol)
+                # 正常返回空 dict 时跳过（westock 约定空数据返回占位 dict）
+                if not data or not data.get("report_period"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                # forecast_type 是 NOT NULL；缺失时填 "未知" 防止约束失败
+                forecast_type = data.get("forecast_type") or "未知"
+                row = (
+                    symbol,
+                    data.get("report_period"),
+                    forecast_type,
+                    data.get("profit_lower"),
+                    data.get("profit_upper"),
+                    data.get("change_lower"),
+                    data.get("change_upper"),
+                    data.get("summary"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
+
+    def _insert_profit_forecasts(self, conn: sqlite3.Connection, payload: dict) -> int:
+        """单条业绩预告插入，INSERT OR IGNORE 去重。
+
+        Returns: 实际写入行数（0 或 1）。
+        """
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            self._save_raw_data(conn, payload["symbol"], source, "reserve", raw_json, collected_at)
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO profit_forecasts
+               (symbol, report_period, forecast_type, profit_lower, profit_upper,
+                change_lower, change_upper, summary, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    async def _fetch_shareholder(self, symbol: str) -> dict:
+        """仅网络 IO，不写库；返回股东结构 + 股东户数历史 + 计数供上层落盘。
+
+        返回 dict 同时含 top_shareholders 行列表与 holder_count_history 行列表，
+        由 _insert_shareholders 一次性 commit 到两张表（事务一致性）。
+        """
+        success = 0
+        failed = 0
+        top_rows: list[tuple] = []
+        count_rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            try:
+                data = await provider.shareholder(symbol)
+                if not data or not data.get("top_shareholders"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                # westock 股东表每行无 report_period 字段；CLI 输出通常带 EndDate
+                # 若规范数据无 period 字段则用 collected_at 作占位，确保 UNIQUE 不冲突
+                report_period_fallback = data.get("report_period") or data.get("end_date") or collected_at
+                for sh in data["top_shareholders"]:
+                    top_rows.append((
+                        symbol,
+                        report_period_fallback,
+                        sh.get("rank"),
+                        sh.get("name"),
+                        sh.get("shares"),
+                        sh.get("ratio"),
+                        sh.get("change"),  # 对应 shareholders.change_amount
+                        data.get("source", source),
+                        data.get("collected_at", collected_at),
+                    ))
+                for hc in data.get("holder_count_history", []):
+                    count_rows.append((
+                        symbol,
+                        hc.get("date", ""),
+                        hc.get("total_holders"),
+                        hc.get("avg_shares"),
+                        data.get("source", source),
+                        data.get("collected_at", collected_at),
+                    ))
+                success = len(data["top_shareholders"])
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集股东结构失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {
+            "success": success,
+            "failed": failed,
+            "top_rows": top_rows,
+            "count_rows": count_rows,
+            "raw_packets": raw_packets,
+        }
+
+    def _insert_shareholders(
+        self, conn: sqlite3.Connection, payload: dict
+    ) -> tuple[int, int]:
+        """股东结构 + 股东户数历史 双表单事务落盘。
+
+        两张表共用同一份原始 raw_data + collected_at；为保证两张表数据一致性，
+        必须在同一 connection、同一 commit 中写入（任一 executemany 抛错时整体回滚）。
+
+        Returns: (top_inserted, count_inserted) 行数元组。
+        """
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            self._save_raw_data(conn, payload["symbol"], source, "shareholder", raw_json, collected_at)
+        top_inserted = 0
+        if payload["top_rows"]:
+            cur = conn.executemany(
+                """INSERT OR IGNORE INTO shareholders
+                   (symbol, report_period, rank, name, shares, ratio, change_amount,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                payload["top_rows"],
+            )
+            top_inserted = cur.rowcount
+        count_inserted = 0
+        if payload["count_rows"]:
+            cur = conn.executemany(
+                """INSERT OR IGNORE INTO shareholder_count_history
+                   (symbol, report_date, total_holders, avg_shares, source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                payload["count_rows"],
+            )
+            count_inserted = cur.rowcount
+        return top_inserted, count_inserted
+
     async def _collect_daily_close_for_symbol(
         self, write_lock: threading.Lock, symbol: str
     ) -> dict:
-        """采集单标的的 K线/财务/资金流向/技术指标。
+        """采集单标的的 K线/财务/资金流向/技术指标 + 分红/股东/业绩预告。
 
-        同一标的的 4 个数据源相互独立，可并行；不同标的间用 Semaphore 限制并发数。
+        同一标的的 7 个数据源相互独立，可并行；不同标的间用 Semaphore 限制并发数。
         写入侧用 write_lock 串行化：先并发 fetch（无锁网络 IO），再持锁一次性 commit。
         """
         results: dict[str, dict] = {
@@ -462,16 +688,30 @@ class CollectionService:
             "finance": {"success": 0, "failed": 0},
             "fund_flow": {"success": 0, "failed": 0},
             "technical": {"success": 0, "failed": 0},
+            "dividend": {"success": 0, "failed": 0},
+            "shareholder": {"success": 0, "failed": 0},
+            "reserve": {"success": 0, "failed": 0},
         }
         errors: list[str] = []
 
-        # 阶段 1：4 类数据并行 fetch（不持锁，纯网络 IO，事件循环可调度其他协程）
+        # 阶段 1：7 类数据并行 fetch（不持锁，纯网络 IO，事件循环可调度其他协程）
         try:
-            kline_p, finance_p, fund_p, tech_p = await asyncio.gather(
+            (
+                kline_p,
+                finance_p,
+                fund_p,
+                tech_p,
+                dividend_p,
+                shareholder_p,
+                reserve_p,
+            ) = await asyncio.gather(
                 self._fetch_kline(symbol),
                 self._fetch_finance(symbol),
                 self._fetch_fund_flow(symbol),
                 self._fetch_technical(symbol),
+                self._fetch_dividend(symbol),
+                self._fetch_shareholder(symbol),
+                self._fetch_reserve(symbol),
             )
         except Exception as e:
             logger.exception("daily_close fetch 阶段失败: symbol={}", symbol)
@@ -482,6 +722,9 @@ class CollectionService:
             ("finance", finance_p),
             ("fund_flow", fund_p),
             ("technical", tech_p),
+            ("dividend", dividend_p),
+            ("shareholder", shareholder_p),
+            ("reserve", reserve_p),
         ]:
             results[name]["success"] = payload["success"]
             results[name]["failed"] = payload["failed"]
@@ -496,6 +739,10 @@ class CollectionService:
                     self._insert_finance(conn, {"symbol": symbol, **finance_p})
                     self._insert_fund_flow(conn, {"symbol": symbol, **fund_p})
                     self._insert_technical(conn, {"symbol": symbol, **tech_p})
+                    # 新增三张表：分红/股东结构/业绩预告
+                    self._insert_dividends(conn, {"symbol": symbol, **dividend_p})
+                    self._insert_shareholders(conn, {"symbol": symbol, **shareholder_p})
+                    self._insert_profit_forecasts(conn, {"symbol": symbol, **reserve_p})
                     conn.commit()
                 finally:
                     conn.close()
@@ -511,13 +758,46 @@ class CollectionService:
 
 
     async def collect_intraday(self, symbol: str, days: int = 1) -> list[dict] | None:
-        """实时采集分时数据。"""
+        """实时采集分时数据并落库。
+
+        注：分时数据按需触发（API 主动调用），不在 daily_close 编排中拉取。
+        """
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
                 items = await provider.minute(symbol, days=days)
                 if items:
+                    # 落库：持锁 + executemany INSERT OR IGNORE
+                    rows: list[tuple] = []
+                    for item in items:
+                        rows.append((
+                            symbol,
+                            item.get("time", ""),
+                            item.get("price"),
+                            item.get("volume"),
+                            item.get("avg_price"),
+                            item.get("source", provider.name),
+                            item.get("collected_at", self._now_iso()),
+                        ))
+                    from backend.storage.database import get_connection_sync
+                    with _WRITE_LOCK:
+                        conn = get_connection_sync()
+                        try:
+                            raw_json = json.dumps(items, ensure_ascii=False, default=str)
+                            self._save_raw_data(
+                                conn, symbol, provider.name, "minute",
+                                raw_json, self._now_iso(),
+                            )
+                            conn.executemany(
+                                """INSERT OR IGNORE INTO minute_klines
+                                   (symbol, time, price, volume, avg_price, source, collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                rows,
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
                     return items
             except Exception as e:
                 logger.warning("Provider {} 采集分时失败: {} - {}", provider.name, symbol, e)
@@ -525,13 +805,71 @@ class CollectionService:
         return None
 
     async def collect_shareholder(self, symbol: str) -> dict | None:
-        """实时采集股东结构数据。"""
+        """实时采集股东结构数据并落库（双表单事务）。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
                 result = await provider.shareholder(symbol)
-                if result:
+                if result and result.get("top_shareholders"):
+                    # 落库：单事务双表
+                    collected_at = self._now_iso()
+                    source = provider.name
+                    report_period_fallback = (
+                        result.get("report_period")
+                        or result.get("end_date")
+                        or collected_at
+                    )
+                    top_rows: list[tuple] = []
+                    for sh in result["top_shareholders"]:
+                        top_rows.append((
+                            symbol,
+                            report_period_fallback,
+                            sh.get("rank"),
+                            sh.get("name"),
+                            sh.get("shares"),
+                            sh.get("ratio"),
+                            sh.get("change"),
+                            result.get("source", source),
+                            result.get("collected_at", collected_at),
+                        ))
+                    count_rows: list[tuple] = []
+                    for hc in result.get("holder_count_history", []):
+                        count_rows.append((
+                            symbol,
+                            hc.get("date", ""),
+                            hc.get("total_holders"),
+                            hc.get("avg_shares"),
+                            result.get("source", source),
+                            result.get("collected_at", collected_at),
+                        ))
+                    from backend.storage.database import get_connection_sync
+                    with _WRITE_LOCK:
+                        conn = get_connection_sync()
+                        try:
+                            raw_json = json.dumps(result, ensure_ascii=False, default=str)
+                            self._save_raw_data(
+                                conn, symbol, source, "shareholder",
+                                raw_json, collected_at,
+                            )
+                            if top_rows:
+                                conn.executemany(
+                                    """INSERT OR IGNORE INTO shareholders
+                                       (symbol, report_period, rank, name, shares, ratio, change_amount,
+                                        source, collected_at)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    top_rows,
+                                )
+                            if count_rows:
+                                conn.executemany(
+                                    """INSERT OR IGNORE INTO shareholder_count_history
+                                       (symbol, report_date, total_holders, avg_shares, source, collected_at)
+                                       VALUES (?, ?, ?, ?, ?, ?)""",
+                                    count_rows,
+                                )
+                            conn.commit()
+                        finally:
+                            conn.close()
                     return result
             except Exception as e:
                 logger.warning("Provider {} 采集股东结构失败: {} - {}", provider.name, symbol, e)
@@ -539,13 +877,47 @@ class CollectionService:
         return None
 
     async def collect_reserve(self, symbol: str) -> dict | None:
-        """实时采集业绩预告。"""
+        """实时采集业绩预告并落库。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
                 result = await provider.reserve(symbol)
-                if result:
+                if result and result.get("report_period"):
+                    # 落库：单条 INSERT OR IGNORE
+                    forecast_type = result.get("forecast_type") or "未知"
+                    collected_at = self._now_iso()
+                    source = provider.name
+                    from backend.storage.database import get_connection_sync
+                    with _WRITE_LOCK:
+                        conn = get_connection_sync()
+                        try:
+                            raw_json = json.dumps(result, ensure_ascii=False, default=str)
+                            self._save_raw_data(
+                                conn, symbol, source, "reserve",
+                                raw_json, collected_at,
+                            )
+                            conn.execute(
+                                """INSERT OR IGNORE INTO profit_forecasts
+                                   (symbol, report_period, forecast_type, profit_lower, profit_upper,
+                                    change_lower, change_upper, summary, source, collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    symbol,
+                                    result.get("report_period"),
+                                    forecast_type,
+                                    result.get("profit_lower"),
+                                    result.get("profit_upper"),
+                                    result.get("change_lower"),
+                                    result.get("change_upper"),
+                                    result.get("summary"),
+                                    result.get("source", source),
+                                    result.get("collected_at", collected_at),
+                                ),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
                     return result
             except Exception as e:
                 logger.warning("Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e)
@@ -553,13 +925,58 @@ class CollectionService:
         return None
 
     async def collect_dividend(self, symbol: str) -> list[dict] | None:
-        """实时采集分红记录。"""
+        """实时采集分红记录并落库。"""
         for provider in self._get_structured_providers():
             if not isinstance(provider, WeStockProvider):
                 continue
             try:
                 items = await provider.dividend(symbol)
                 if items:
+                    # 落库：executemany INSERT OR IGNORE
+                    collected_at = self._now_iso()
+                    source = provider.name
+                    rows: list[tuple] = []
+                    for item in items:
+                        year_val = item.get("dividend_year")
+                        if not isinstance(year_val, int):
+                            try:
+                                year_val = (
+                                    int(str(year_val).strip())
+                                    if year_val is not None and str(year_val).strip()
+                                    else None
+                                )
+                            except (ValueError, TypeError):
+                                year_val = None
+                        rows.append((
+                            symbol,
+                            item.get("ex_date", ""),
+                            item.get("cash_dividend"),
+                            item.get("share_bonus"),
+                            item.get("record_date"),
+                            item.get("announce_date"),
+                            year_val,
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        ))
+                    from backend.storage.database import get_connection_sync
+                    with _WRITE_LOCK:
+                        conn = get_connection_sync()
+                        try:
+                            raw_json = json.dumps(items, ensure_ascii=False, default=str)
+                            self._save_raw_data(
+                                conn, symbol, source, "dividend",
+                                raw_json, collected_at,
+                            )
+                            conn.executemany(
+                                """INSERT OR IGNORE INTO dividends
+                                   (symbol, ex_date, cash_dividend, share_bonus,
+                                    record_date, announce_date, dividend_year, source, collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                rows,
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
                     return items
             except Exception as e:
                 logger.warning("Provider {} 采集分红记录失败: {} - {}", provider.name, symbol, e)

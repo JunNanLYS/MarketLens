@@ -1,4 +1,4 @@
-﻿"""数据库 schema 初始化。"""
+"""Database schema initialization."""
 
 from backend.storage.database import aget_db
 
@@ -193,6 +193,77 @@ TABLE_DDLS: list[str] = [
         deleted_at TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS minute_klines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        time TEXT NOT NULL,
+        price REAL,
+        volume REAL,
+        avg_price REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, time, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS dividends (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        ex_date TEXT NOT NULL,
+        cash_dividend REAL,
+        share_bonus REAL,
+        record_date TEXT,
+        announce_date TEXT,
+        dividend_year INTEGER,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, ex_date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS profit_forecasts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        report_period TEXT NOT NULL,
+        forecast_type TEXT NOT NULL,
+        profit_lower REAL,
+        profit_upper REAL,
+        change_lower REAL,
+        change_upper REAL,
+        summary TEXT,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, report_period, forecast_type, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS shareholders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        report_period TEXT NOT NULL,
+        rank INTEGER,
+        name TEXT,
+        shares REAL,
+        ratio REAL,
+        change_amount REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, report_period, rank, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS shareholder_count_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        report_date TEXT NOT NULL,
+        total_holders INTEGER,
+        avg_shares REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, report_date, source)
+    )
+    """,
 ]
 
 INDEX_DDLS: list[str] = [
@@ -244,11 +315,30 @@ INDEX_DDLS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_transactions_deleted_at
     ON transactions(deleted_at)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_minute_klines_symbol_time
+    ON minute_klines(symbol, time DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_dividends_symbol_exdate
+    ON dividends(symbol, ex_date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_profit_forecasts_symbol_period
+    ON profit_forecasts(symbol, report_period DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_shareholders_symbol_period
+    ON shareholders(symbol, report_period DESC, rank)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_shareholder_count_history_symbol_date
+    ON shareholder_count_history(symbol, report_date DESC)
+    """,
 ]
 
 
 async def init_db(db_path: str | None = None) -> None:
-    """初始化数据库表与索引（异步版）。"""
     async with aget_db(db_path) as conn:
         for ddl in TABLE_DDLS:
             await conn.execute(ddl)
@@ -257,7 +347,6 @@ async def init_db(db_path: str | None = None) -> None:
 
 
 def init_db_sync(db_path: str | None = None) -> None:
-    """初始化数据库表与索引（同步版，供测试 fixture 使用）。"""
     from backend.storage.database import get_db
     with get_db(db_path) as conn:
         for ddl in TABLE_DDLS:
