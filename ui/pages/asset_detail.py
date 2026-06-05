@@ -154,6 +154,13 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
 def render() -> None:
     st.header("标的详情")
 
+    # 刷新数据按钮 — 清除本页所有 st.cache_data，强制重新拉取 API
+    _hdr_col, _btn_col = st.columns([6, 1])
+    with _btn_col:
+        if st.button("刷新数据", use_container_width=True, help="清除缓存并重新拉取所有数据"):
+            st.cache_data.clear()
+            st.rerun()
+
     @st.cache_data(ttl=30)
     def _get_assets_cached() -> list[dict[str, Any]]:
         assets_result: dict[str, Any] = get_assets(page_size=100)

@@ -342,7 +342,8 @@ async def test_finance_success(provider: SinaProvider) -> None:
 
 async def test_finance_non_a_share(provider: SinaProvider) -> None:
     result = await provider.finance("hk00700")
-    assert result == {}
+    # 非 A 股按新约定返回 None（修复 CODE_REVIEW 2026-06-05 边界条件条目）
+    assert result is None
 
 
 async def test_finance_timeout(provider: SinaProvider) -> None:
@@ -350,7 +351,7 @@ async def test_finance_timeout(provider: SinaProvider) -> None:
     _inject_client(provider, mock_get)
 
     result = await provider.finance("sh600519")
-    assert result == {}
+    assert result is None
 
 
 async def test_finance_http_error(provider: SinaProvider) -> None:
@@ -362,7 +363,7 @@ async def test_finance_http_error(provider: SinaProvider) -> None:
     _inject_client(provider, mock_get)
 
     result = await provider.finance("sh600519")
-    assert result == {}
+    assert result is None
 
 
 # ── fund_flow 测试 ───────────────────────────────────────────

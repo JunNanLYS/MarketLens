@@ -68,8 +68,6 @@
 
 ### 缓存策略
 
-`[MINOR]` `ui/pages/asset_detail.py:48-65` — 每次渲染调用 5+ 个独立 API（quote/kline/finance/fund_flow/report + tabs 内的 intraday/shareholder/reserve/dividend 共 9 个 HTTP 请求）。Streamlit 每次交互都触发全部渲染。建议引入 `@st.cache_data(ttl=60)` 或后端提供聚合端点 `/data/dashboard/{symbol}`。
-
 ### 数据库索引
 
 ### 异步操作
@@ -86,21 +84,15 @@
 
 ### 边界条件
 
-`[MINOR]` `backend/collectors/sina.py:219` — `finance()` 无数据时返回空 `{}`，而非 `None`。上层 `collection_service.py` 以 `if item:` 判断——空 dict 被视为 `True` 导致尝试插入全 None 记录。建议统一 Provider 约定：无数据时返回 `None`。
-
 ### Null/Undefined 处理
 
 ### 竞态条件
-
-`[MINOR]` `backend/storage/schema.py:133-145` — `ai_reports` 表无 `UNIQUE(symbol, date(generated_at))` 约束。`CREATE UNIQUE INDEX idx_ai_reports_symbol_date` 仅在索引层（line 200-201），并发两次 `force=True` 仍可能产生两份同日同标的报告。应在表定义内加表级 UNIQUE 约束或在 service 层在 INSERT 前做 `INSERT OR IGNORE`。
 
 ### 时区处理
 
 - [x] **Timezone Handling** — 全项目统一使用 `datetime.now(timezone.utc)`，无裸 `datetime.now()` 调用。✅
 
 ### 异常处理
-
-`[NIT]` `backend/services/evidence_builder.py:60-62, 252-253` — `finally` 块中的 `await conn.close()` 无 try-except 保护，若 close 失败会掩盖原始异常。
 
 ### Unicode 与编码
 
@@ -116,13 +108,9 @@
 
 ### 接口设计
 
-`[MINOR]` `backend/collectors/base.py:19-35` — `BaseProvider` 定义了 6 个抽象方法（`search/quote/kline/finance/fund_flow/technical`），但 RSS、新闻类 Provider 有 5 个返回空列表/空字典，违反接口隔离原则。建议拆分为 `BaseQuoteProvider` 和 `BaseNewsProvider`，或改为带默认空实现的非抽象方法。
-
 ### 配置一致性
 
 ### 类型注解
-
-`[NIT]` `backend/scheduler/jobs.py:101` — `_TASK_FUNCTIONS: dict[str, object]` 类型注解过于宽泛。建议 `dict[str, Callable[[], Coroutine[Any, Any, None]]]`。
 
 ### 拼写
 
@@ -130,19 +118,9 @@
 
 ### 输入验证缺失
 
-`[MAJOR]` `backend/api/portfolio.py:194-226` — `update_transaction` 缺少字段级校验：`UpdateTransactionRequest` 接受任意 `price`/`quantity`（含负数、零、极大值），`trade_date` 无日期格式校验（接受 `"not-a-date"`），`type` 字段未限制为 `Literal["buy","sell"]`。建议统一 Pydantic Field 约束 + `field_validator`。
-
 ### 其他
 
-`[MINOR]` `backend/collectors/tencent_news.py:25` — 类 docstring 为英文，应改为中文（项目规范要求）。
-
-`[MINOR]` `backend/collectors/tencent_news.py:127-130` — `tencent-news` CLI 未找到时若 `apikey` 存在仍尝试调用，建议一次性检测并缓存禁用状态。
-
-`[MINOR]` `backend/services/ai_analyzer.py:71` — 置信度公式 `abs(score_diff) / max(total_score, 0.01)` 在信号极弱时（bullish=0.005, bearish=0.000）产生 100% 置信度。建议引入绝对幅度缩放。
-
 ### 错误处理
-
-`[MINOR]` `backend/collectors/search_engine.py:115-116` — `extractor.feed(resp.text)` 遇到畸形 HTML 可能抛出 `HTMLParseError`，代码未捕获。建议包裹 try/except。
 
 ---
 
@@ -157,11 +135,11 @@
 | 维度 | CRITICAL | MAJOR | MINOR | NIT | 合计 |
 |------|----------|-------|-------|-----|--------|
 | Security | 0 | 0 | 0 | 0 | 0 |
-| Performance | 0 | 0 | 1 | 0 | 1 |
-| Correctness | 0 | 0 | 2 | 1 | 3 |
-| Maintainability | 0 | 1 | 5 | 1 | 7 |
+| Performance | 0 | 0 | 0 | 0 | 0 |
+| Correctness | 0 | 0 | 0 | 0 | 0 |
+| Maintainability | 0 | 0 | 0 | 0 | 0 |
 | Testing | 0 | 0 | 0 | 0 | 0 |
-| **合计** | **0** | **1** | **8** | **2** | **11** |
+| **合计** | **0** | **0** | **0** | **0** | **0** |
 
 > 2026-06-04 增量审查发现 22 条问题（1 CRITICAL / 12 MAJOR / 9 MINOR），由 5 个并行修复 Agent 全部处理。git 历史保留审计（修复 commit: 2026-06-04 batches A-G）。
 >
@@ -211,3 +189,26 @@
 > - Maintainability: 重复 test 函数、tests/test_scheduler 同步/异步混用、sina test mock 模式、scheduler docstring 乱码
 > - UI/Docs: tracked_assets/task_status 假成功、docs HTTP 方法、status 字段一致性
 > - Tests: tests 同步 def test_ 改造、neodata test mock 模式
+
+## 2026-06-05 复审清理（第 2 轮）
+
+> 清理日期：2026-06-05
+> 清理方式：删除全部 11 条剩余问题（不留 ✅ 标记），进入 0 issue 终态
+> 本轮 4 个并行 Sub Agent 修复 + Master Agent 收尾 + 测试修正
+>
+> 删除条目（11 条）：
+> - Performance [MINOR] `ui/pages/asset_detail.py:48-65` — 9 个 API 加 cache + 刷新按钮
+> - Correctness [MINOR] `backend/collectors/sina.py:219` — `finance()` 返回 `None` 而非 `{}`
+> - Correctness [MINOR] `backend/storage/schema.py:133-145` — `ai_reports` 索引表达式 + INSERT OR IGNORE
+> - Correctness [NIT] `backend/services/evidence_builder.py:60-62, 252-253` — `conn.close()` 包 `suppress`
+> - Maintainability [MINOR] `backend/collectors/base.py:19-35` — 6 个 abstract 改默认空实现
+> - Maintainability [NIT] `backend/scheduler/jobs.py:101` — `_TASK_FUNCTIONS` 类型 `dict[str, Callable[[], None]]`
+> - Maintainability [MAJOR] `backend/api/portfolio.py:194-226` — `UpdateTransactionRequest` 字段级 Pydantic 验证
+> - Maintainability [MINOR] `backend/collectors/tencent_news.py:25, 127-130` — 类 docstring 中文化 + CLI 缺失缓存
+> - Maintainability [MINOR] `backend/services/ai_analyzer.py:71` — 置信度公式加绝对幅度缩放
+> - Maintainability [MINOR] `backend/collectors/search_engine.py:115-116` — HTMLParseError 已被 `except Exception` 覆盖
+>
+> 测试修正：
+> - `tests/collectors/test_sina.py:343-365` — 3 个 finance() 测试从断言 `== {}` 改为 `is None`，对齐新约定
+>
+> 验证：311/311 tests pass

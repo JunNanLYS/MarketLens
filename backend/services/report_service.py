@@ -200,7 +200,7 @@ class ReportService:
                 (symbol, today),
             )
         await conn.execute(
-            """INSERT INTO ai_reports
+            """INSERT OR IGNORE INTO ai_reports
                (symbol, action, confidence, risk_level, summary,
                 bullish_reasons, bearish_reasons, key_risks, data_used, generated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
