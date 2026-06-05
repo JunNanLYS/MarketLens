@@ -96,6 +96,57 @@ Positions are computed in real-time (not persisted). `portfolio_service.py` aggr
 - All configuration reads from `config.yaml` (paths, timeouts, keys, schedules)
 - API: all routes under `/api/v1/`; `GET` has no side effects; errors return `{"error": "...", "detail": "..."}`
 - Tests mirror `backend/` directory structure; `pytest` with `asyncio_mode = "auto"`
+- Data processing prefers `pandas`; file paths use `pathlib`; PEP8 compliance
+- Every collection must persist **both raw response and normalized data** (audit-traceability)
+
+### Module boundaries (enforced)
+
+```
+backend/collectors/  → ONLY module that calls external data sources
+backend/services/    → business logic orchestration (track assets, build evidence)
+backend/storage/     → database read/write + init schema
+backend/scheduler/   → ONLY module that registers APScheduler jobs
+backend/main.py      → FastAPI entry: route registration, middleware, exception handlers
+ui/                  → Streamlit pages; NEVER touches DB directly, must go through FastAPI
+tests/               → must mirror backend/ directory structure
+docs/                → project documentation (PRD, architecture, API docs)
+```
+
+### Async / concurrency hard constraints
+
+- All `Service` and `Provider` methods **MUST** be `async def`; blocking sync IO (subprocess, file IO, CPU-bound work) must be wrapped with `asyncio.to_thread` to avoid blocking the event loop.
+- **Provider httpx client lazy-load**: `__init__` MUST NOT create an `httpx.AsyncClient`. The client is created on first `await` to avoid ~3.8s blocking × 10 Providers = ~38s import-time stall on Windows + Python 3.13.
+- **SQLite write serialization**: the sync `sqlite3` connection does NOT support concurrent writes from multiple coroutines. All write paths MUST hold a module-level `asyncio.Lock`; reads may proceed concurrently.
+- **APScheduler `_run_*` wrapper layer**: APScheduler's scheduler thread calls a sync wrapper (e.g. `_run_quote`) that internally does `asyncio.run(async_business(...))`. When testing the underlying async business, mock `asyncio.run` to inject a probe — do not re-invoke the wrapper.
+- **External calls** (subprocess, HTTP) MUST set a timeout and catch exceptions; a single source/asset failure must never crash the system.
+
+### Test conventions
+
+- `asyncio_mode = "auto"` in `pyproject.toml` — all `test_*` functions MUST be `async def`.
+- Mocking a Provider's HTTP layer: assign `provider._client = AsyncMock()` to **skip the lazy-load path** and inject a deterministic response; do not mock `httpx.AsyncClient` constructor.
+- Test fixtures use `init_db_sync()` from `storage/database.py` to set up an isolated SQLite database.
+
+### Scheduler task contract
+
+Every APScheduler job MUST:
+1. Declare a fixed frequency (default cadences: `quote` 15min, `daily_close` / `kline` / `fund_flow` / `technical` on weekday close, `news` 60min, `ai_report` nightly).
+2. Be **idempotent** — re-runs MUST NOT produce duplicate rows (use `INSERT OR IGNORE` / dedup keys).
+3. Write a `run_logs` row covering `task_name` / `status` / `started_at` / `finished_at` / `error_message` / `affected_assets`.
+
+### API design hard rules
+
+> Use the `restful-api-design` skill when designing or reviewing endpoints.
+
+- `GET` MUST NOT have side effects (no `?force=true` triggering writes). Forced refresh lives in a separate `POST .../refresh` endpoint.
+- `POST` MUST NOT be used for pure queries (e.g. search) — use `GET` with query parameters.
+- `DELETE` returns `204 No Content` on success with no body.
+- All endpoints live under `/api/v1/`; error responses are uniformly `{"error": "...", "detail": "..."}`.
+
+### Logging & observability
+
+- `loguru` is the only logger (no `print`, no stdlib `logging`) — handles local debug + file logging.
+- The `run_logs` table is the persistent runtime ledger: `task_name` / `status` / `started_at` / `finished_at` / `error_message` / `affected_assets`. The UI queries this for task history.
+- Data collection, AI analysis, and scheduler triggers MUST all leave a `run_logs` row.
 
 ## Skills
 
