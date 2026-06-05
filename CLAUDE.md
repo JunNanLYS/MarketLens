@@ -23,6 +23,12 @@ uv run pytest tests/services/test_ai_analyzer.py -v
 # Run a specific test
 uv run pytest tests/services/test_ai_analyzer.py::test_analyze_bullish -v
 
+# Run ruff code check (syntax, import, style, common bugs)
+uv run ruff check .
+
+# Auto-fix ruff issues
+uv run ruff check --fix .
+
 # Initialize/reset database
 uv run python -m backend.storage.schema
 
@@ -184,6 +190,14 @@ After **every** task, execute these steps in order:
 ### 1. Error Check
 
 Scan all modified files for syntax errors or statically detectable logic issues. If errors are found, fix them and **restart from step 1**.
+
+### 1.5 Ruff Check
+
+Run ruff on all modified `.py` files:
+```bash
+uv run ruff check .
+```
+If issues are found, fix them and re-run until clean.
 
 ### 2. Test Judgment & Execution
 
