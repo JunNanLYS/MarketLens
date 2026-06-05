@@ -1,4 +1,4 @@
-﻿import json
+import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -436,8 +436,8 @@ async def test_collect_news_raw_data_saved() -> None:
     assert raw["title"] == "原始数据测试"
 
 
-async def test_evidence_builder_news_fields_consumable_by_ai_analyzer(tmp_path: Path) -> None:
-    """验证 evidence_builder._build_news 输出的字段名与 ai_analyzer 消费的字段名一致。"""
+async def test_evidence_builder_news_fields_consumable_by_ai_analyzer_via_aget_db(tmp_path: Path) -> None:
+    """验证 EvidenceBuilder 通过 aget_db (aiosqlite) 路径构建 news 字段名与 ai_analyzer 期望一致。"""
     from backend.services.evidence_builder import EvidenceBuilder
     from backend.services.ai_analyzer import AIAnalyzer
     from backend.storage.database import set_db_path as set_db, aget_db as aget
@@ -445,20 +445,20 @@ async def test_evidence_builder_news_fields_consumable_by_ai_analyzer(tmp_path: 
 
     db_path = str(tmp_path / "test.db")
     set_db(db_path)
-    init_db_sync(db_path)
+    init_db_sync()
 
     # 插入已追踪标的
-    with aget() as conn:
-        conn.execute(
+    async with aget() as conn:
+        await conn.execute(
             "INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled) VALUES (?, ?, ?, ?, 1)",
             ("hk00700", "腾讯控股", "hk", "stock"),
         )
 
     # 插入不同情感的新闻数据
     sentiments = ["positive", "positive", "positive", "positive", "negative", "neutral"]
-    with aget() as conn:
+    async with aget() as conn:
         for i, sentiment in enumerate(sentiments):
-            conn.execute(
+            await conn.execute(
                 """INSERT INTO news_items (title, source, url, sentiment, importance,
                    related_symbols, published_at, collected_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -486,65 +486,6 @@ async def test_evidence_builder_news_fields_consumable_by_ai_analyzer(tmp_path: 
     assert "latest" in news_data, "缺少 latest 字段"
 
     # 验证 ai_analyzer 可以正确消费 evidence_builder 的输出（不报错且返回有效结果）
-    result = AIAnalyzer.analyze(evidence)
-    assert isinstance(result, dict)
-    assert "action" in result
-    assert "confidence" in result
-
-    set_db(None)
-
-
-async def test_evidence_builder_news_fields_consumable_by_ai_analyzer(tmp_path: Path) -> None:
-    """验证 evidence_builder._build_news 输出的字段名与 ai_analyzer 消费的字段名一致。"""
-    from backend.services.evidence_builder import EvidenceBuilder
-    from backend.services.ai_analyzer import AIAnalyzer
-    from backend.storage.database import set_db_path as set_db, get_db, get_connection_sync
-    from backend.storage.schema import init_db_sync as init_db_local
-    import sqlite3
-
-    db_path = str(tmp_path / "test.db")
-    set_db(db_path)
-    init_db_local(db_path)
-
-    # 插入已追踪标的
-    with get_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO tracked_assets (symbol, name, market, asset_type, enabled) VALUES (?, ?, ?, ?, 1)",
-            ("hk00700", "腾讯控股", "hk", "stock"),
-        )
-
-    # 插入不同情感的新闻数据
-    sentiments = ["positive", "positive", "positive", "positive", "negative", "neutral"]
-    with get_db(db_path) as conn:
-        for i, sentiment in enumerate(sentiments):
-            conn.execute(
-                """INSERT INTO news_items (title, source, url, sentiment, importance,
-                   related_symbols, published_at, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    f"测试新闻 {i}",
-                    "test_rss",
-                    f"https://example.com/news/{i}",
-                    sentiment,
-                    "normal",
-                    json.dumps(["hk00700"]),
-                    datetime.now(timezone.utc).isoformat(),
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-
-    # 通过 EvidenceBuilder 构建 news 数据（EvidenceBuilder 内部使用 async 连接）
-    evidence = await EvidenceBuilder.build("hk00700", conn=None)
-    news_data = evidence["news"]
-
-    assert news_data is not None, "news 数据不应为 None"
-    # 验证字段名与 ai_analyzer 期望一致
-    assert "total_count" in news_data, f"缺少 total_count 字段，实际字段: {list(news_data.keys())}"
-    assert "positive_count" in news_data, f"缺少 positive_count 字段"
-    assert "negative_count" in news_data, f"缺少 negative_count 字段"
-    assert "latest" in news_data, f"缺少 latest 字段"
-
-    # 验证 ai_analyzer 可以正确消费 evidence_builder 的输出
     result = AIAnalyzer.analyze(evidence)
     assert isinstance(result, dict)
     assert "action" in result

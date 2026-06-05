@@ -6,10 +6,10 @@ from loguru import logger
 from ui.api_client import get_news
 from ui.api_client import get_assets
 
-SENTIMENT_LABELS: dict[str, str] = {
-    "positive": "正面",
-    "negative": "负面",
-    "neutral": "中性",
+SENTIMENT_DISPLAY: dict[str, tuple[str, str]] = {
+    "positive": ("正面", "green"),
+    "negative": ("负面", "red"),
+    "neutral": ("中性", "gray"),
 }
 
 
@@ -26,14 +26,17 @@ def render() -> None:
             "情绪", ["全部", "positive", "negative", "neutral"], key="news_sentiment"
         )
 
-    params: dict[str, Any] = {"days": days, "page_size": 50}
-    if symbol_filter.strip():
-        params["symbol"] = symbol_filter.strip()
-    if sentiment != "全部":
-        params["sentiment"] = sentiment
-
     try:
-        result: dict[str, Any] = get_news(**params)
+        @st.cache_data(ttl=60)
+        def _fetch_news(_symbol: str, _days: int, _sentiment: str) -> dict[str, Any]:
+            params: dict[str, Any] = {"days": _days, "page_size": 50}
+            if _symbol.strip():
+                params["symbol"] = _symbol.strip()
+            if _sentiment != "全部":
+                params["sentiment"] = _sentiment
+            return get_news(**params)
+
+        result: dict[str, Any] = _fetch_news(symbol_filter, days, sentiment)
         items: list[dict[str, Any]] = result.get("items", [])
         total: int = result.get("total", 0)
         st.caption(f"共 {total} 条新闻")
@@ -57,8 +60,9 @@ def render() -> None:
                 with nc3:
                     sentiment_val: str = news.get("sentiment", "")
                     if sentiment_val:
-                        color: str = {"positive": "green", "negative": "red"}.get(sentiment_val, "gray")
-                        label: str = SENTIMENT_LABELS.get(sentiment_val, sentiment_val)
+                        label, color = SENTIMENT_DISPLAY.get(
+                            sentiment_val, (sentiment_val, "gray")
+                        )
                         st.markdown(f":{color}[{label}]")
                 published: str = news.get("published_at", "")
                 if published:

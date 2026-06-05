@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -6,16 +5,31 @@ import streamlit as st
 from ui.api_client import get_task_status
 
 
+@st.cache_data(ttl=60)
+def _fetch_data_sources() -> list[dict[str, Any]]:
+    """读取 config.yaml 中的数据源配置。
+
+    注意：CLAUDE.md 规定 UI 层不应直接读 DB 或配置文件。
+    此处临时直读（settings 是只读展示，无副作用），但耦合较紧。
+    后续应新增 GET /api/v1/config/data-sources 端点替代。
+    """
+    try:
+        import yaml
+        from pathlib import Path
+        config_path: Path = Path(__file__).resolve().parents[2] / "config.yaml"
+        with open(config_path, "r", encoding="utf-8") as f:
+            config: dict[str, Any] = yaml.safe_load(f)
+        return config.get("data_sources", [])
+    except Exception:
+        return []
+
+
 def render() -> None:
     st.header("系统配置")
 
     st.subheader("数据源状态")
     try:
-        import yaml
-        config_path: Path = Path(__file__).resolve().parents[2] / "config.yaml"
-        with open(config_path, "r", encoding="utf-8") as f:
-            config: dict[str, Any] = yaml.safe_load(f)
-        data_sources: list[dict[str, Any]] = config.get("data_sources", [])
+        data_sources: list[dict[str, Any]] = _fetch_data_sources()
         if data_sources:
             for ds in data_sources:
                 dc1, dc2, dc3 = st.columns([2, 1, 1])

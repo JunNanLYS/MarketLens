@@ -24,9 +24,12 @@ def get_connection_sync(db_path: str | None = None) -> sqlite3.Connection:
     if db_path is None:
         config = get_config()
         db_path = str(get_data_dir() / config["database"]["path"])
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # busy_timeout 让 SQLite 在持有锁时自动等待而非立即抛 OperationalError，
+    # 避免多线程并发写场景下被 fast-fail
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.row_factory = sqlite3.Row
     logger.debug("数据库连接已建立: {}", db_path)
     return conn
@@ -59,9 +62,10 @@ async def aget_connection(db_path: str | None = None) -> aiosqlite.Connection:
     if effective is None:
         config = get_config()
         effective = str(get_data_dir() / config["database"]["path"])
-    conn = await aiosqlite.connect(effective)
+    conn = await aiosqlite.connect(effective, timeout=5.0)
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA foreign_keys=ON")
+    await conn.execute("PRAGMA busy_timeout = 5000")
     conn.row_factory = aiosqlite.Row
     logger.debug("异步数据库连接已建立: {}", effective)
     return conn
@@ -95,7 +99,7 @@ def query_run_logs(
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
-    """?? run_logs ????????? tasks API ? scheduler ???"""
+    """查询 run_logs 表，供 tasks API 和 scheduler 调用。"""
     conditions: list[str] = []
     params: list[str | int] = []
     if task_name is not None:

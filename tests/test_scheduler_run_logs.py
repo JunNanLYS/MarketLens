@@ -1,4 +1,4 @@
-﻿"""验证 _run_* 包装函数写入 run_logs。"""
+"""验证 _run_* 包装函数写入 run_logs。"""
 
 import asyncio
 import tempfile
@@ -13,12 +13,16 @@ from backend.storage.database import aget_db, set_db_path
 from backend.storage.schema import init_db_sync as init_db
 
 
-def _run_coro_in_thread(coro):
+def _run_coro_in_thread(coro, timeout: float = 30.0):
     """在独立线程的新事件循环中运行 coroutine，返回结果。
 
     用于替代 `asyncio.run(coro)`，避免与 pytest-asyncio 当前 loop 冲突。
     包装函数（如 _run_quote）内部调用 asyncio.run(coro) 时，patch 后
     实际执行此函数。
+
+    Args:
+        coro: 待运行的协程。
+        timeout: 等待线程结束的超时秒数；超时返回部分结果并标记失败。
     """
     result: list = [None]
     error: list = [None]
@@ -34,7 +38,12 @@ def _run_coro_in_thread(coro):
 
     t = threading.Thread(target=_runner, daemon=True)
     t.start()
-    t.join()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        # 子线程仍卡住（mock 的 asyncio.run 死循环）：抛 RuntimeError 避免挂死 pytest
+        raise RuntimeError(
+            f"_run_coro_in_thread 超时（>{timeout}s），coroutine 可能死循环"
+        )
     if error[0] is not None:
         raise error[0]
     return result[0]
@@ -45,7 +54,7 @@ def setup_test_db() -> None:
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path: str = f.name
     set_db_path(path)
-    init_db(path)
+    init_db()
     try:
         yield
     finally:

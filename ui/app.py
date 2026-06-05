@@ -1,20 +1,14 @@
-import time
-
 import streamlit as st
 
 from ui.api_client import check_health
 from ui.pages import tracked_assets, asset_detail, ai_reports, portfolio, news_list, task_status, settings
 
 
+@st.cache_data(ttl=30)
 def _cached_health_check() -> bool:
-    now = time.time()
-    last_check = st.session_state.get("health_check_time", 0)
-    if now - last_check < 30:
-        return st.session_state.get("health_check_result", False)
-    result = check_health()
-    st.session_state["health_check_time"] = now
-    st.session_state["health_check_result"] = result
-    return result
+    # 30s TTL 跨用户/跨 session 复用：避免每个新用户首次访问都打 /health。
+    # Streamlit rerun 也只每 30s 重新检查。
+    return check_health()
 
 st.set_page_config(
     page_title="MarketLens",

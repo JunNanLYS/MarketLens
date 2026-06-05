@@ -1,4 +1,4 @@
-﻿from typing import Any
+from typing import Any
 
 import streamlit as st
 
@@ -86,7 +86,7 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                     label: str = "停用" if status else "启用"
                     if st.button(label, key=f"toggle_{asset_id}"):
                         result: dict[str, Any] = update_asset(asset_id, {"enabled": new_status})
-                        if "id" in result:
+                        if "error" not in result and "id" in result:
                             st.success(f"已{label}")
                             st.rerun()
                 with btn_cols[1]:
@@ -207,16 +207,19 @@ def render() -> None:
 
     market_filter, type_filter, status_filter = _render_filters()
 
-    params: dict[str, Any] = {"page_size": 100}
-    if market_filter:
-        params["market"] = market_filter
-    if type_filter:
-        params["asset_type"] = type_filter
-    if status_filter is not None:
-        params["enabled"] = status_filter
+    @st.cache_data(ttl=30)
+    def _fetch_assets(_market: str, _type: str, _status: bool | None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"page_size": 100}
+        if _market:
+            params["market"] = _market
+        if _type:
+            params["asset_type"] = _type
+        if _status is not None:
+            params["enabled"] = _status
+        result: dict[str, Any] = get_assets(**params)
+        return result.get("items", [])
 
-    result: dict[str, Any] = get_assets(**params)
-    items: list[dict[str, Any]] = result.get("items", [])
+    items: list[dict[str, Any]] = _fetch_assets(market_filter, type_filter, status_filter)
 
     _render_asset_table(items)
 

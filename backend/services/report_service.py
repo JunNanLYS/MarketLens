@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import json
 from datetime import datetime, timezone
@@ -48,7 +49,9 @@ class ReportService:
                         skipped += 1
                         continue
                     evidence = await EvidenceBuilder.build(symbol, conn=conn)
-                    result = AIAnalyzer.analyze(evidence)
+                    # AIAnalyzer.analyze 是纯 CPU 工作（规则评分 + 字符串拼接），
+                    # 在 async 路径中直接调用会阻塞事件循环。用 to_thread 卸载到线程池。
+                    result = await asyncio.to_thread(AIAnalyzer.analyze, evidence)
                     await ReportService._save_report(conn, symbol, result, force)
                     generated += 1
                 except Exception as e:

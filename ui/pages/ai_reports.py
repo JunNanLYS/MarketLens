@@ -109,8 +109,11 @@ def render() -> None:
         st.write("")
         if st.button("🔄 手动生成报告"):
             result: dict[str, Any] = generate_reports()
-            if result.get("status") == "accepted":
-                st.success(f"报告生成已提交，预计 {result.get('estimated_seconds', 0)} 秒完成")
+            # 后端 reports.py:31 实际返回 "completed"
+            if result.get("status") == "completed":
+                st.success(
+                    f"报告生成已提交，新增 {result.get('generated', 0)} 份，跳过 {result.get('skipped', 0)} 份"
+                )
 
     params: dict[str, Any] = {"page_size": 50}
     if date_filter:
