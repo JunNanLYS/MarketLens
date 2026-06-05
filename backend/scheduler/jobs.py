@@ -13,6 +13,89 @@ from backend.services.news_service import NewsService
 from backend.services.report_service import ReportService
 from backend.storage.database import get_db
 
+
+# NeoData 启动期健康检查：token 由外部 workbuddy 工具写入，
+# 应用启动时核对一次，写入 run_logs。运行期间 token 过期不会被自动检测，
+# 业务侧 NeoDataProvider 仍会按 optional=True 静默降级；如需运行期探测，
+# 可在未来扩展为独立周期任务（参见 tasks 列表 "neodata_health" TODO 留口）。
+_NEODATA_HEALTH_TASK_NAME = "neodata_health"
+
+
+def _check_neo_data_token_on_startup() -> None:
+    """应用启动时检查 NeoData token 状态，写入 run_logs。
+
+    - 有 token  → 记 success，UI 历史显示"OK"
+    - 无 token  → 记 skipped，error_message 提示去 workbuddy 刷新
+    - 异常      → 记 failure，不阻塞应用启动
+    """
+    started_at = datetime.now().isoformat()
+    status = "skipped"
+    error_message: str | None = None
+    affected_assets = 0
+    try:
+        from backend.collectors.neodata_client import NeoDataClient
+
+        config = get_config()
+        sources: list[dict] = (
+            list(config.get("data_sources", {}).get("structured", []))
+            + list(config.get("data_sources", {}).get("news", []))
+        )
+        neodata_cfg = next(
+            (s for s in sources if s.get("provider") == "NeoDataProvider"),
+            {},
+        )
+        if not neodata_cfg.get("enabled", True):
+            status = "skipped"
+            error_message = "NeoDataProvider 未启用"
+        else:
+            params = neodata_cfg.get("params") or {}
+            client = NeoDataClient(
+                endpoint=params.get(
+                    "endpoint",
+                    "https://copilot.tencent.com/agenttool/v1/neodata",
+                ),
+                config_token=params.get("token") or None,
+                timeout=neodata_cfg.get("timeout", 30),
+            )
+            token_status = client.get_token_status()
+            if token_status.get("has_token"):
+                status = "success"
+                logger.info(
+                    "NeoData token 就绪: source={}, expires_at={}",
+                    token_status.get("source"),
+                    token_status.get("expires_at"),
+                )
+            else:
+                status = "skipped"
+                error_message = (
+                    "NeoData token 不可用,请到 workbuddy 工具刷新凭证 "
+                    "(~/.workbuddy/.neodata_token)"
+                )
+                logger.warning(error_message)
+    except Exception as e:
+        status = "failure"
+        error_message = f"NeoData 健康检查异常: {e}"
+        logger.exception("NeoData 启动健康检查失败")
+
+    finished_at = datetime.now().isoformat()
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """INSERT INTO run_logs
+                   (task_name, status, started_at, finished_at, error_message, affected_assets)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    _NEODATA_HEALTH_TASK_NAME,
+                    status,
+                    started_at,
+                    finished_at,
+                    error_message,
+                    affected_assets,
+                ),
+            )
+    except Exception:
+        logger.exception("写入 NeoData 健康检查 run_logs 失败")
+
 TASK_DESCRIPTIONS: dict[str, str] = {
     "quote": "实时行情采集",
     "daily_close": "日收盘数据采集",
@@ -196,6 +279,10 @@ class SchedulerManager:
     def start(self) -> None:
         """注册所有任务后启动调度器。"""
         self.register_jobs()
+        # 启动时一次性健康检查：NeoData token 由外部 workbuddy 工具管理,
+        # 应用启动核对一次,结果写 run_logs 供 UI 历史查询。
+        # 运行期 token 失效由业务侧 NeoDataProvider 静默降级兜底。
+        _check_neo_data_token_on_startup()
         self._scheduler.start()
         logger.info("调度器已启动")
 
