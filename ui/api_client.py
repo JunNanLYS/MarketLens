@@ -244,6 +244,71 @@ def get_dividend(symbol: str) -> dict[str, Any]:
     return _handle_response(resp)
 
 
+def get_etf_info(symbol: str) -> dict[str, Any]:
+    """查询 ETF 基本信息（GET /data/etf/{symbol}）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/etf/{symbol}")
+    return _handle_response(resp)
+
+
+def get_etf_holdings(symbol: str, limit: int = 50) -> dict[str, Any]:
+    """查询 ETF 成分股（GET /data/etf/{symbol}/holdings）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(
+        f"/data/etf/{symbol}/holdings", params={"limit": limit}
+    )
+    return _handle_response(resp)
+
+
+def get_etf_nav(symbol: str, limit: int = 60) -> dict[str, Any]:
+    """查询 ETF 历史净值（GET /data/etf/{symbol}/nav）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(
+        f"/data/etf/{symbol}/nav", params={"limit": limit}
+    )
+    return _handle_response(resp)
+
+
+def get_sectors_board(limit: int = 50) -> dict[str, Any]:
+    """查询板块首页数据（GET /data/sectors/board）。
+
+    返回行业/概念/资金流入涨幅榜混合列表。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/data/sectors/board", params={"limit": limit})
+    return _handle_response(resp)
+
+
+def get_sectors_hot(limit: int = 10) -> dict[str, Any]:
+    """查询热门板块（GET /data/sectors/hot）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/data/sectors/hot", params={"limit": limit})
+    return _handle_response(resp)
+
+
+def get_ipo_calendar(market: str = "hk", limit: int = 50) -> dict[str, Any]:
+    """查询港美 IPO 日历（GET /data/calendar/ipo）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(
+        "/data/calendar/ipo", params={"market": market, "limit": limit}
+    )
+    return _handle_response(resp)
+
+
+def get_exdiv_calendar(symbol: str) -> dict[str, Any]:
+    """查询标的除权日历（GET /data/calendar/exdiv/{symbol}）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/calendar/exdiv/{symbol}")
+    return _handle_response(resp)
+
+
+def get_chip(symbol: str, limit: int = 20) -> dict[str, Any]:
+    """查询筹码成本分布（GET /data/chip/{symbol}）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/chip/{symbol}", params={"limit": limit})
+    return _handle_response(resp)
+
+
 def get_news(**params: Any) -> dict[str, Any]:
     client: httpx.Client = _get_client()
     resp: httpx.Response = client.get("/news", params=params)

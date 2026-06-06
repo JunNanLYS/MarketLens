@@ -59,6 +59,56 @@ class EvidenceBuilder:
         return latest
 
     @staticmethod
+    def _assemble_data_sources(
+        quote: dict | None,
+        klines: list[dict] | None,
+        flows: list[dict] | None,
+        finance: dict | None,
+        news: dict | None,
+        technical: dict | None,
+        dividends: dict | None,
+        shareholders: dict | None,
+        forecasts: dict | None,
+        sector_ctx: dict | None,
+        us_finance: dict | None,
+    ) -> list[dict]:
+        """统一的 ``data_sources`` 装配逻辑。
+
+        将各类型证据存在性与来源信息映射为 ``data_used`` 记录列表。
+        ``build()`` 与 ``build_multi()`` 共用本 helper，确保两路径的
+        ``data_used`` 字段对同一标的产出**完全等价**的元数据列表——
+        这是 evidence-driven AI 约束（CLAUDE.md）所要求的：
+        AI 报告声称引用的每一条数据都必须在 ``data_used`` 留痕。
+
+        装配规则：源数据非空（``None`` / 空列表 / 空 dict）时，追加一条
+        ``{type, source, collected_at}``；否则跳过。
+        """
+        data_sources: list[dict] = []
+        if quote:
+            data_sources.append({"type": "quote", "source": quote.get("source", ""), "collected_at": quote.get("collected_at", "")})
+        if klines:
+            data_sources.append({"type": "kline", "source": klines[0].get("source", ""), "collected_at": klines[0].get("collected_at", "")})
+        if flows:
+            data_sources.append({"type": "fund_flow", "source": flows[0].get("source", ""), "collected_at": flows[0].get("collected_at", "")})
+        if finance:
+            data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
+        if news:
+            data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
+        if technical:
+            data_sources.append({"type": "technical", "source": technical.get("source", ""), "collected_at": technical.get("collected_at", "")})
+        if dividends:
+            data_sources.append({"type": "dividend", "source": dividends.get("source", ""), "collected_at": ""})
+        if shareholders:
+            data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
+        if forecasts:
+            data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
+        if sector_ctx:
+            data_sources.append({"type": "sector_context", "source": sector_ctx.get("source", ""), "collected_at": sector_ctx.get("collected_at", "")})
+        if us_finance:
+            data_sources.append({"type": "us_finance", "source": us_finance.get("source", ""), "collected_at": us_finance.get("collected_at", "")})
+        return data_sources
+
+    @staticmethod
     async def build(symbol: str, conn=None) -> dict:
         close_conn = conn is None
         if conn is None:
@@ -83,29 +133,10 @@ class EvidenceBuilder:
                 else None
             )
 
-            data_sources = []
-            if quote:
-                data_sources.append({"type": "quote", "source": quote.get("source", ""), "collected_at": quote.get("collected_at", "")})
-            if klines:
-                data_sources.append({"type": "kline", "source": klines[0].get("source", ""), "collected_at": klines[0].get("collected_at", "")})
-            if fund_flows:
-                data_sources.append({"type": "fund_flow", "source": fund_flows[0].get("source", ""), "collected_at": fund_flows[0].get("collected_at", "")})
-            if finance:
-                data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
-            if news:
-                data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
-            if technical:
-                data_sources.append({"type": "technical", "source": technical.get("source", ""), "collected_at": technical.get("collected_at", "")})
-            if dividends:
-                data_sources.append({"type": "dividend", "source": dividends.get("source", ""), "collected_at": ""})
-            if shareholders:
-                data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
-            if forecasts:
-                data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
-            if sector_ctx:
-                data_sources.append({"type": "sector_context", "source": sector_ctx.get("source", ""), "collected_at": sector_ctx.get("collected_at", "")})
-            if us_finance:
-                data_sources.append({"type": "us_finance", "source": us_finance.get("source", ""), "collected_at": us_finance.get("collected_at", "")})
+            data_sources = EvidenceBuilder._assemble_data_sources(
+                quote, klines, fund_flows, finance, news, technical,
+                dividends, shareholders, forecasts, sector_ctx, us_finance,
+            )
 
             return {
                 "symbol": symbol,
@@ -323,6 +354,15 @@ class EvidenceBuilder:
             for row in await cursor.fetchall():
                 tech_map[row["symbol"]] = dict(row)
 
+            # sector_context：板块背景是市场级数据，不依赖具体 symbol，
+            # 所有标的共享同一份结果（与 build() 中 _build_sector_context 语义一致）。
+            sector_ctx_shared = await EvidenceBuilder._build_sector_context(conn, symbols[0])
+            # us_finance：仅 us 前缀的标的才查询（避免浪费 IO，与 build() 路径一致）。
+            us_symbols = [s for s in symbols if s.startswith("us")]
+            us_finance_map: dict[str, dict | None] = {}
+            for s in us_symbols:
+                us_finance_map[s] = await EvidenceBuilder._build_us_finance(conn, s)
+
             # Assemble per symbol
             for symbol in symbols:
                 quote = quotes_map.get(symbol)
@@ -390,23 +430,13 @@ class EvidenceBuilder:
                         "latest": news_rows[:5],
                     }
 
-                data_sources = []
-                if quote:
-                    data_sources.append({"type": "quote", "source": quote.get("source", ""), "collected_at": quote.get("collected_at", "")})
-                if klines:
-                    data_sources.append({"type": "kline", "source": klines[0].get("source", ""), "collected_at": klines[0].get("collected_at", "")})
-                if flows:
-                    data_sources.append({"type": "fund_flow", "source": flows[0].get("source", ""), "collected_at": flows[0].get("collected_at", "")})
-                if finance:
-                    data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
-                if news:
-                    data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
-                if dividends:
-                    data_sources.append({"type": "dividend", "source": dividends.get("source", ""), "collected_at": ""})
-                if shareholders:
-                    data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
-                if forecasts:
-                    data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
+                tech = tech_map.get(symbol)
+                sector_ctx = sector_ctx_shared
+                us_finance = us_finance_map.get(symbol)
+                data_sources = EvidenceBuilder._assemble_data_sources(
+                    quote, klines, flows, finance, news, tech,
+                    dividends, shareholders, forecasts, sector_ctx, us_finance,
+                )
 
                 result[symbol] = {
                     "symbol": symbol,
@@ -415,10 +445,12 @@ class EvidenceBuilder:
                     "fund_flows": flows,
                     "finance": finance,
                     "news": news,
-                    "technical": tech_map.get(symbol),
+                    "technical": tech,
                     "dividends": dividends,
                     "shareholders": shareholders,
                     "forecasts": forecasts,
+                    "sector_context": sector_ctx,
+                    "us_finance": us_finance,
                     "data_sources": data_sources,
                 }
             return result

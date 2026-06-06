@@ -2,7 +2,22 @@ from typing import Any
 
 import streamlit as st
 
-from ui.api_client import get_assets, get_asset, get_intraday, get_shareholder, get_reserve, get_dividend
+from ui.api_client import (
+    get_assets,
+    get_asset,
+    get_intraday,
+    get_shareholder,
+    get_reserve,
+    get_dividend,
+    get_etf_info,
+    get_etf_holdings,
+    get_etf_nav,
+    get_sectors_board,
+    get_sectors_hot,
+    get_ipo_calendar,
+    get_exdiv_calendar,
+    get_chip,
+)
 
 ACTION_COLORS: dict[str, str] = {
     "buy": "green",
@@ -71,6 +86,54 @@ def _fetch_reserve(_sym: str) -> dict[str, Any]:
 def _fetch_dividend(_sym: str) -> dict[str, Any]:
     """获取分红记录数据（缓存 5min）。"""
     return get_dividend(_sym)
+
+
+@st.cache_data(ttl=300)
+def _fetch_etf_info(_sym: str) -> dict[str, Any]:
+    """获取 ETF 基本信息（缓存 5min）。"""
+    return get_etf_info(_sym)
+
+
+@st.cache_data(ttl=300)
+def _fetch_etf_holdings(_sym: str) -> dict[str, Any]:
+    """获取 ETF 成分股（缓存 5min）。"""
+    return get_etf_holdings(_sym, limit=50)
+
+
+@st.cache_data(ttl=300)
+def _fetch_etf_nav(_sym: str) -> dict[str, Any]:
+    """获取 ETF 历史净值（缓存 5min）。"""
+    return get_etf_nav(_sym, limit=60)
+
+
+@st.cache_data(ttl=300)
+def _fetch_sectors_board() -> dict[str, Any]:
+    """获取板块首页（缓存 5min）。"""
+    return get_sectors_board(limit=50)
+
+
+@st.cache_data(ttl=300)
+def _fetch_sectors_hot() -> dict[str, Any]:
+    """获取热门板块（缓存 5min）。"""
+    return get_sectors_hot(limit=10)
+
+
+@st.cache_data(ttl=600)
+def _fetch_ipo_calendar(_market: str) -> dict[str, Any]:
+    """获取 IPO 日历（缓存 10min）。"""
+    return get_ipo_calendar(market=_market, limit=50)
+
+
+@st.cache_data(ttl=600)
+def _fetch_exdiv_calendar(_sym: str) -> dict[str, Any]:
+    """获取除权日历（缓存 10min）。"""
+    return get_exdiv_calendar(_sym)
+
+
+@st.cache_data(ttl=300)
+def _fetch_chip(_sym: str) -> dict[str, Any]:
+    """获取筹码分布（缓存 5min）。"""
+    return get_chip(_sym, limit=20)
 
 
 def _render_quote_section(quote: dict[str, Any]) -> None:
@@ -238,9 +301,19 @@ def render() -> None:
     # 用 @st.cache_data(ttl=30) 复用结果，避免每次切 tab 都重拉。
     detail: dict[str, Any] = _get_detail_cached(asset_id)
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "行情", "K 线", "财务", "资金流向", "分时走势", "股东结构", "业绩预告", "分红记录", "AI 报告",
-    ])
+    # 动态构建 tab 列表：ETF tab 仅当 asset_type == "etf" 时显示，
+    # 避免在非 ETF 标的页出现一个永远为空的 tab（更可发现、更可访问）。
+    is_etf: bool = asset.get("asset_type", "") == "etf"
+    tab_labels: list[str] = [
+        "行情", "K 线", "财务", "资金流向",
+        "分时走势", "股东结构", "业绩预告", "分红记录", "AI 报告",
+    ]
+    if is_etf:
+        tab_labels.append("ETF")
+    tab_labels.extend(["行业板块", "日历", "筹码/融资融券"])
+
+    tabs: tuple[Any, ...] = st.tabs(tab_labels)
+    (tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, *extra_tabs) = tabs
 
     with tab1:
         quote: dict[str, Any] | None = detail.get("quote")
@@ -288,6 +361,17 @@ def render() -> None:
             _render_report_section(latest_report)
         else:
             st.info("暂无 AI 报告")
+
+    # 追加 tab：ETF（条件渲染） / 行业板块 / 日历 / 筹码+融资融券
+    if is_etf:
+        with extra_tabs[0]:
+            _render_etf_tab(symbol)
+    with extra_tabs[1 if is_etf else 0]:
+        _render_sectors_tab()
+    with extra_tabs[2 if is_etf else 1]:
+        _render_calendar_tab(symbol)
+    with extra_tabs[3 if is_etf else 2]:
+        _render_chip_tab(symbol)
 
 
 def _render_intraday_tab(symbol: str) -> None:
@@ -400,3 +484,300 @@ def _render_dividend_tab(symbol: str) -> None:
             st.divider()
     except Exception as e:
         st.warning(f"分红数据加载失败: {e}")
+
+
+# ============================================================================
+# 第 5 轮新增 4 域数据 tab：ETF / 行业板块 / 日历 / 筹码+融资融券
+# 缓存 TTL：行情 5min，IPO 日历 10min（变更频次低）
+# 错误处理：API 4xx/5xx 由 _handle_response 自动调 st.error；非 dict 返回视为异常
+# ============================================================================
+
+
+def _render_etf_tab(symbol: str) -> None:
+    """ETF 详情 tab：基本信息 + 净值曲线 + 成分股 Top10。
+
+    只在 render() 检测到 asset_type == "etf" 时才会被调用。
+    """
+    st.subheader("ETF 详情")
+    try:
+        with st.spinner("正在拉取 ETF 数据..."):
+            info: dict[str, Any] = _fetch_etf_info(symbol)
+        if "error" in info:
+            st.info("该标的非 ETF")
+            return
+
+        # 基本信息表（前 10 个有意义的字段，避免一次性铺 26 列）
+        info_fields: list[tuple[str, str]] = [
+            ("etf_type", "类型"),
+            ("establish_date", "成立日期"),
+            ("track_index_code", "跟踪指数代码"),
+            ("track_index_name", "跟踪指数名称"),
+            ("manage_institution", "管理人"),
+            ("total_mv", "规模"),
+            ("close_price", "收盘价"),
+            ("change_pct", "涨跌幅(%)"),
+            ("nav", "净值"),
+            ("disc", "折溢价率(%)"),
+        ]
+        info_rows: list[dict[str, str]] = []
+        for k, label in info_fields:
+            val = info.get(k)
+            if isinstance(val, float):
+                if k in ("change_pct", "disc"):
+                    val_str = f"{val:+.2f}%"
+                elif k == "total_mv":
+                    val_str = _format_number(val)
+                else:
+                    val_str = f"{val:.4f}".rstrip("0").rstrip(".")
+            else:
+                val_str = str(val) if val is not None else "-"
+            info_rows.append({"字段": label, "取值": val_str})
+        st.markdown("**基本信息**")
+        st.dataframe(info_rows, use_container_width=True, hide_index=True)
+
+        # 净值曲线（最近 60 期，按日期升序）
+        try:
+            with st.spinner("正在拉取历史净值..."):
+                nav_result: dict[str, Any] = _fetch_etf_nav(symbol)
+            nav_items: list[dict[str, Any]] = nav_result.get("items", [])
+            if nav_items:
+                st.markdown("**历史净值**")
+                # 后端按 date DESC 返回，前端升序展示
+                nav_items = sorted(nav_items, key=lambda x: x.get("date", ""))
+                nav_df_rows: list[dict[str, Any]] = [
+                    {"date": r.get("date", ""), "净值": r.get("nav")}
+                    for r in nav_items
+                ]
+                st.line_chart(nav_df_rows, x="date", y="净值", height=240)
+        except Exception as e:
+            st.warning(f"历史净值加载失败: {e}")
+
+        # 成分股 Top 10
+        try:
+            with st.spinner("正在拉取成分股..."):
+                holdings_result: dict[str, Any] = _fetch_etf_holdings(symbol)
+            holdings: list[dict[str, Any]] = holdings_result.get("items", [])
+            if holdings:
+                st.markdown("**成分股 Top 10**")
+                top10_rows: list[dict[str, Any]] = [
+                    {
+                        "代码": h.get("constituent_code", "-"),
+                        "名称": h.get("constituent_name", "-"),
+                        "权重(%)": f"{h.get('ratio', 0):.2f}" if h.get("ratio") is not None else "-",
+                    }
+                    for h in holdings[:10]
+                ]
+                st.dataframe(top10_rows, use_container_width=True, hide_index=True)
+            else:
+                st.info("暂无成分股数据")
+        except Exception as e:
+            st.warning(f"成分股加载失败: {e}")
+    except Exception as e:
+        st.warning(f"ETF 数据加载失败: {e}")
+
+
+def _render_sectors_tab() -> None:
+    """行业板块 tab：板块涨跌幅榜 + 热门板块 Top 10。"""
+    st.subheader("行业板块")
+    try:
+        with st.spinner("正在拉取板块数据..."):
+            board_result: dict[str, Any] = _fetch_sectors_board()
+        if "error" in board_result:
+            return
+        items: list[dict[str, Any]] = board_result.get("items", [])
+        if not items:
+            st.info("暂无板块数据，请先触发板块采集（POST /api/v1/data/sectors/refresh）")
+            return
+
+        # 按 sector_type 分桶渲染
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for it in items:
+            by_type.setdefault(it.get("sector_type", "unknown"), []).append(it)
+
+        if "industry" in by_type:
+            st.markdown("**行业涨幅榜 Top 10**")
+            rows: list[dict[str, Any]] = []
+            for it in sorted(by_type["industry"], key=lambda x: x.get("change_pct") or 0, reverse=True)[:10]:
+                pct: float | None = it.get("change_pct")
+                rows.append({
+                    "板块": it.get("name", "-"),
+                    "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
+                    "领涨股": it.get("lead_stock", "-") or "-",
+                    "主力净流入": _format_number(it.get("main_net_inflow")),
+                })
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        if "fund_flow" in by_type:
+            st.markdown("**资金流入 Top 5**")
+            rows_ff: list[dict[str, Any]] = []
+            for it in sorted(by_type["fund_flow"], key=lambda x: x.get("main_net_inflow") or 0, reverse=True)[:5]:
+                rows_ff.append({
+                    "板块": it.get("name", "-"),
+                    "主力净流入": _format_number(it.get("main_net_inflow")),
+                    "5日主力净流入": _format_number(it.get("main_net_inflow_5d")),
+                })
+            st.dataframe(rows_ff, use_container_width=True, hide_index=True)
+
+        if "concept" in by_type:
+            st.markdown("**概念涨幅榜 Top 5**")
+            rows_c: list[dict[str, Any]] = []
+            for it in sorted(by_type["concept"], key=lambda x: x.get("change_pct") or 0, reverse=True)[:5]:
+                pct = it.get("change_pct")
+                rows_c.append({
+                    "概念": it.get("name", "-"),
+                    "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
+                })
+            st.dataframe(rows_c, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"板块数据加载失败: {e}")
+
+    # 热门板块
+    try:
+        with st.spinner("正在拉取热门板块..."):
+            hot_result: dict[str, Any] = _fetch_sectors_hot()
+        if "error" in hot_result:
+            return
+        hot_items: list[dict[str, Any]] = hot_result.get("items", [])
+        if hot_items:
+            st.markdown("**热门板块 Top 10**")
+            hot_rows: list[dict[str, Any]] = []
+            for it in hot_items[:10]:
+                pct = it.get("change_pct")
+                hot_rows.append({
+                    "排名": it.get("rank", "-"),
+                    "板块": it.get("name", "-"),
+                    "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
+                    "领涨股": it.get("lead_stock", "-") or "-",
+                })
+            st.dataframe(hot_rows, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"热门板块加载失败: {e}")
+
+
+def _render_calendar_tab(symbol: str) -> None:
+    """日历 tab：港股 IPO 日历（默认） + 该标的 exdiv 日历。"""
+    st.subheader("日历")
+    st.caption("IPO 数据源仅 hk/us 可用（A 股源已停）；exdiv 按 symbol 查。")
+
+    market_choice: str = st.radio(
+        "IPO 市场",
+        options=["hk", "us"],
+        index=0,
+        horizontal=True,
+        help="选择 IPO 日历的市场（港股/美股）",
+        key=f"ipo_market_{symbol}",
+    )
+
+    try:
+        with st.spinner("正在拉取 IPO 日历..."):
+            ipo_result: dict[str, Any] = _fetch_ipo_calendar(market_choice)
+        if "error" in ipo_result:
+            return
+        ipo_items: list[dict[str, Any]] = ipo_result.get("items", [])
+        if not ipo_items:
+            st.info(f"{market_choice.upper()} 市场暂无 IPO 日历数据，请先触发采集")
+        else:
+            st.markdown(f"**{market_choice.upper()} IPO 日历（最近 {len(ipo_items)} 条）**")
+            ipo_rows: list[dict[str, Any]] = [
+                {
+                    "事件日期": it.get("event_date", "-"),
+                    "代码": it.get("symbol", "-") or "-",
+                    "名称": it.get("name", "-") or "-",
+                    "阶段": it.get("stage", "-") or "-",
+                    "发行价": f"{it.get('price'):.2f}" if it.get("price") is not None else "-",
+                }
+                for it in ipo_items[:30]
+            ]
+            st.dataframe(ipo_rows, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"IPO 日历加载失败: {e}")
+
+    st.divider()
+    st.markdown(f"**{symbol} 除权日历**")
+    try:
+        with st.spinner("正在拉取除权日历..."):
+            exdiv_result: dict[str, Any] = _fetch_exdiv_calendar(symbol)
+        if "error" in exdiv_result:
+            st.info("该标的暂无除权数据（A 股源已停）")
+            return
+        exdiv_items: list[dict[str, Any]] = exdiv_result.get("items", [])
+        if not exdiv_items:
+            st.info("该标的暂无除权数据")
+            return
+        exdiv_rows: list[dict[str, Any]] = [
+            {
+                "除权日": it.get("event_date", "-"),
+                "代码": it.get("symbol", "-") or "-",
+                "名称": it.get("name", "-") or "-",
+                "每股分红": f"{it.get('dividend_per_share'):.4f}" if it.get("dividend_per_share") is not None else "-",
+                "币种": it.get("currency", "-") or "-",
+                "派息日": it.get("pay_date", "-") or "-",
+            }
+            for it in exdiv_items
+        ]
+        st.dataframe(exdiv_rows, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"除权日历加载失败: {e}")
+
+
+def _render_chip_tab(symbol: str) -> None:
+    """筹码/融资融券 tab：最新一期 90/70 集中度 + 历史曲线。"""
+    st.subheader("筹码 / 融资融券")
+    st.caption("chip / margintrade 数据源仅 A 股（sh/sz/bj）可用")
+
+    try:
+        with st.spinner("正在拉取筹码数据..."):
+            chip_result: dict[str, Any] = _fetch_chip(symbol)
+        if "error" in chip_result:
+            st.info("该标的暂无筹码数据（非 A 股 / 未采集）")
+            return
+        chip_items: list[dict[str, Any]] = chip_result.get("items", [])
+        if not chip_items:
+            st.info("暂无筹码数据")
+            return
+
+        latest: dict[str, Any] = chip_items[0]  # 后端按 date DESC 返回
+        st.markdown(f"**最新一期 ({latest.get('date', '-')})**")
+
+        c90: float | None = latest.get("chip_concentration_90")
+        c70: float | None = latest.get("chip_concentration_70")
+        avg_cost: float | None = latest.get("chip_avg_cost")
+        profit_rate: float | None = latest.get("chip_profit_rate")
+        close: float | None = latest.get("close_price")
+
+        # 数字大字号展示 90/70 集中度；用 st.metric（▲/▼ 前缀覆盖颜色盲）
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        with mc1:
+            st.metric("90% 成本集中度", f"{c90:.2f}" if c90 is not None else "-", help="90% 筹码分布的价格区间宽度，越小越集中")
+        with mc2:
+            st.metric("70% 成本集中度", f"{c70:.2f}" if c70 is not None else "-", help="70% 筹码分布的价格区间宽度")
+        with mc3:
+            st.metric("平均成本", f"{avg_cost:.2f}" if avg_cost is not None else "-")
+        with mc4:
+            # 颜色盲友好：涨/跌用 ▲/▼ 文本前缀而非纯红绿
+            if profit_rate is not None:
+                arrow: str = "▲" if profit_rate >= 0 else "▼"
+                st.metric("获利比例", f"{arrow} {abs(profit_rate):.1f}%")
+            else:
+                st.metric("获利比例", "-")
+
+        if close is not None and avg_cost is not None and avg_cost > 0:
+            spread: float = (close - avg_cost) / avg_cost * 100
+            arrow_spread: str = "▲" if spread >= 0 else "▼"
+            st.metric("现价 vs 成本", f"{arrow_spread} {abs(spread):+.2f}%", help=f"收盘价 {close:.2f} vs 平均成本 {avg_cost:.2f}")
+
+        # 历史曲线（近 10 期）
+        if len(chip_items) > 1:
+            st.markdown("**近 10 期集中度趋势**")
+            history: list[dict[str, Any]] = list(reversed(chip_items[-10:]))
+            chart_rows: list[dict[str, Any]] = [
+                {
+                    "date": r.get("date", ""),
+                    "90% 集中度": r.get("chip_concentration_90"),
+                    "70% 集中度": r.get("chip_concentration_70"),
+                }
+                for r in history
+            ]
+            st.line_chart(chart_rows, x="date", y=["90% 集中度", "70% 集中度"], height=240)
+    except Exception as e:
+        st.warning(f"筹码数据加载失败: {e}")
