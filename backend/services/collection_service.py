@@ -11,7 +11,7 @@ from backend.collectors import BaseProvider, create_providers
 from backend.collectors.westock import WeStockProvider
 from backend.config import get_config
 from backend.services.asset_service import AssetService
-from backend.storage.database import get_db
+from backend.storage.database import get_db, get_connection_sync
 from backend.utils import build_fund_flow_summary
 
 # 全局并发信号量：限制同一时间并发写入 sqlite 的协程数。
@@ -186,7 +186,6 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 payload = payload_builder(data, source, collected_at)
-                from backend.storage.database import get_connection_sync
                 with _WRITE_LOCK:
                     conn = get_connection_sync()
                     try:
@@ -243,7 +242,6 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 payload = payload_builder(all_items, source, collected_at)
-                from backend.storage.database import get_connection_sync
                 with _WRITE_LOCK:
                     conn = get_connection_sync()
                     try:
@@ -279,7 +277,6 @@ class CollectionService:
                 source = item.get("source", provider.name)
                 # 写入阶段加锁，保证多协程串行化 INSERT
                 with write_lock:
-                    from backend.storage.database import get_connection_sync
                     conn = get_connection_sync()
                     try:
                         self._save_raw_data(conn, symbol, source, "quote", raw_json, collected_at)
@@ -1258,7 +1255,7 @@ class CollectionService:
             item.get("investing_cashflow"),
             item.get("financing_cashflow"),
             item.get("capex"),
-            item.get("raw_json"),
+            json.dumps(item, ensure_ascii=False, default=str),
             item.get("source", source),
             item.get("collected_at", collected_at),
         )
@@ -1796,7 +1793,6 @@ class CollectionService:
             results[name]["failed"] = payload["failed"]
 
         # 阶段 2：持锁 commit。锁内仅做同步 DB 写入（毫秒级），不再持有网络 IO。
-        from backend.storage.database import get_connection_sync
         try:
             with write_lock:
                 conn = get_connection_sync()

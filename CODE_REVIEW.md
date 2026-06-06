@@ -283,32 +283,6 @@
 
 **修复**: 用 keyed invalidation 或 namespace 化 `@st.cache_data`。
 
-### [MINOR] `backend/main.py:74-76` — `lifespan shutdown` 不关 provider clients
-
-**问题**: 6 个 HTTP Provider 都有 `close()` 但 lifespan 关闭 scheduler 后不调它们。`httpx.AsyncClient.aclose()` 跳过 → Windows Proactor 偶发"Unclosed client"警告。
-
-**修复**: lifespan shutdown 时遍历 `_get_collection_service()._providers` 调 `close()`。
-
-### [MINOR] `docs/api/portfolio.md:253` — `/positions/realized-pnl` 分页 doc 过时
-
-**问题**: 文档说"端点不暴露分页参数"；实际 `backend/api/portfolio.py:282-291` 已接受 `page`/`page_size`。
-
-**修复**: 文档删除 "TODO 后续版本补充" 段。
-
-### [NIT] `ui/pages/portfolio.py:28` — `_fetch_accounts` cache TTL 15s 偏短
-
-**问题**: 账户列表几乎不变，30s+ 都行；与 `asset_detail` 的 30s 不一致。
-
-**修复**: 改为 60s。
-
-### [NIT] `ui/pages/ai_reports.py:110` — 手动生成按钮缺 `help=`
-
-**问题**: `st.button("🔄 手动生成报告")` 无 help。
-
-**修复**: 加 `help="立即为所有启用标的生成 AI 报告"`.
-
----
-
 ## 项目亮点
 
 - **SQL 注入防护** 🟢 — 100% 参数化查询
@@ -404,16 +378,6 @@
 
 ---
 
-### [MAJOR] `schema.py:271-535` + `docs/architecture.md:276-292` — 核心表清单未同步 11 张新表
-
-**问题**: 第 5 轮新增 11 张表（`etfs` / `etf_nav` / `etf_financials` / `etf_fund_holdings` / `sectors` / `sector_constituents` / `us_financials` / `hk_financials` / `us_hk_ipo_calendar` / `us_hk_exdiv_calendar` / `chip_distribution` / `margintrade` / `blocktrade` / `lhb`），`docs/architecture.md` "核心表清单" 段（13 张）**未追加**。新表存在 `docs/architecture.md` 无入口、新人 onboarding 看不到这些实体。
-
-**影响**: 文档与代码 drift；后续 agent 审查/AI 报告生成会基于过时清单。
-
-**修复**: `docs/architecture.md` "核心表" 段补全至 26 张表（每张 1-2 行说明实体用途 + 关联关系）；同步更新 `docs/prd.md` 涉及 ETF/板块/财务数据的章节。
-
----
-
 ### [MINOR] `portfolio_service.py:613-693` + `docs/api/portfolio.md:253` — realized-pnl 翻页 doc 与响应结构不统一
 
 **问题**: 端点 `GET /positions/realized-pnl` 实际接受 `page`/`page_size` 并返回 `{"items": [...], "total": N, "page": N, "page_size": N}` 结构（无 `page_info` 包裹），但文档描述 "TODO 后续版本补充分页"，与代码不同步。
@@ -434,47 +398,11 @@
 
 ---
 
-### [MINOR] `jobs.py:195-213` — cleanup 任务仅清理 `raw_data`，13 张新表无清理路径
-
-**问题**: 已登记 CRITICAL#3 "cleanup 写锁"修复后，cleanup 任务**只 `DELETE FROM raw_data WHERE collected_at < now() - 30 days`**。第 5 轮新增 13 张表（`etf_nav` / `chip_distribution` / `margintrade` / `blocktrade` / `lhb` / `ipo_calendar` 等）**无清理路径**，5-10 年后单表可膨胀到 GB 级（chip_distribution 单标的 60 天 × 100 标的 = 6000 行/年）。
-
-**影响**: 长期使用下数据库增长失控；`raw_data` 30 天清理是补丁但治标不治本。
-
-**修复**: cleanup 任务扩为注册表驱动：`for table, retention_days in CLEANUP_RULES.items(): DELETE FROM {table} WHERE collected_at < now() - retention_days`。
-
----
-
-### [MINOR] `backend/services/collection_service.py:1066-1074` — `us_financials.raw_json` insert 路径不传
-
-**问题**: 多数 `_insert_*` 方法把 `provider.raw_packets` 写到 `raw_data.raw_json`，但 `us_financials` / `hk_financials` 的 `_insert_*` **漏传** `raw_json` 字段（推测 SQL `INSERT INTO us_financials ...` 列表中没有 `raw_json` 列）。审计时 `raw_data` 表有财务原始 JSON，但 `us_financials` 表无法回溯到原始数据。
-
-**影响**: 双写原则破坏；与已登记 MINOR#9 "evidence_builder raw_packets 合并"放大版同源。
-
-**修复**: 补 `raw_json` 列到 `us_financials` / `hk_financials` 的 INSERT 列表；写一个通用 `_insert_with_raw()` helper。
-
----
-
 ### [NIT] `scheduler/jobs.py:198-209` — `_run_cleanup` 函数体内 import 风格
 
 **问题**: 与 `NIT#7 "tencent_news.py 中文用 \u 转义"` 同模式——`from backend.storage.database import init_db_sync` 等写在函数体内而非模块顶部。可读性 + 启动期 import 顺序依赖。
 
 **修复**: 提到模块顶部。
-
----
-
-### [NIT] `collection_service.py:9, 33, 95, 1458...` — 23 处函数内 import
-
-**问题**: 第 5 轮新增代码中 `from backend.storage.X import Y` / `from backend.services.Z import W` 散落在 23 个方法体内，违反 PEP8 风格且让"模块依赖图"无法静态分析。
-
-**修复**: 全部提到模块顶部；按 stdlib / third-party / local 顺序。
-
----
-
-### [NIT] `westock.py:62-75` — `_detect_error` 正则贪婪匹配（已登记 MAJOR 同源，但影响扩大至 9 个新方法）
-
-**问题**: 已登记 MAJOR"westock _detect_error 错误信息不可读"——`return m.group(0).strip()` 回显触发短语。**第 5 轮新增的 chip/margintrade/blocktrade/lhb/ipo/exdiv/etf/sector/us-finance/hk-finance 10 个新 westock 方法都受此 bug 影响**，`run_logs.error_message` 全是"查询行情失败 : "。
-
-**影响扩散**: 原 MAJOR 影响 1 个方法，**现在影响 11 个方法**。建议作为"已登记 MAJOR 的扩散面"在原条目追加注释"已扩散至 11 个方法"，**不另开新条**。
 
 ---
 

@@ -273,22 +273,41 @@ Streamlit 发起 GET /api/v1/data/quotes/{symbol}
 
 ## 6. 数据库 Schema
 
-### 6.1 核心表清单（13 张）
+### 6.1 核心表清单（29 张）
+
+> 第 5 轮新增 17 张表（`minute_klines` / `dividends` / `profit_forecasts` / `shareholders` / `shareholder_count_history` 5 张阶段 11/12 补充表 + `etf_basic` / `etf_holdings` / `etf_nav_history` / `etf_holders` / `etf_financial` 5 张阶段 14 ETF 表 + `sector_daily_quote` 阶段 8 板块首页 + `us_financials` 阶段 15 港美财务 + `ipo_exdiv_calendar` 阶段 16 港美日历 + `chip_distribution` / `margintrade_data` / `blocktrade_data` / `lhb_data` 阶段 17 4 张表）。DDL 集中在 `backend/storage/schema.py::TABLE_DDLS`；新增/重命名字段需同步本节。
 
 | 表名 | 用途 | 关键字段 | 唯一约束 / 索引 |
 |---|---|---|---|
-| `tracked_assets` | 用户追踪标的 | symbol, name, market, asset_type, enabled, tags | `UNIQUE(symbol)` |
+| `tracked_assets` | 用户追踪标的 | symbol, name, market, asset_type, enabled, tags | `UNIQUE(symbol)` + `idx_tracked_assets_enabled` |
 | `market_quotes` | 实时行情快照 | symbol, price, change_pct, volume, amount, collected_at | `UNIQUE(symbol, collected_at)` + `idx_market_quotes_symbol_collected` |
 | `kline_daily` | 日 K 线 | symbol, date, OHLCV, change_pct | `UNIQUE(symbol, date)` |
-| `financial_reports` | 财务报表 | symbol, report_period, revenue, net_profit, eps, roe, gross_margin | `UNIQUE(symbol, report_period)` + `idx_financial_reports_symbol` |
-| `fund_flows` | 资金流向 | symbol, date, main_net_inflow, super_large/large/medium/small | `UNIQUE(symbol, date)` + `idx_fund_flows_symbol_date` |
-| `technical_indicators` | 技术指标 | symbol, date, MA5/10/20/60, MACD, RSI, BOLL, volume_ma | `UNIQUE(symbol, date)` |
-| `news_items` | 新闻/公告/研报 | title, source, url, content, summary, sentiment, importance, related_symbols | `UNIQUE INDEX idx_news_items_url_unique (url) WHERE url IS NOT NULL AND url != ''` + `idx_news_items_published_at` |
-| `ai_reports` | AI 分析报告 | symbol, action, confidence, risk_level, summary, reasons, data_used, generated_at | `UNIQUE INDEX idx_ai_reports_symbol_date ON (symbol, date(generated_at))` |
+| `financial_reports` | A 股财务报表 | symbol, report_period, revenue, net_profit, eps, roe, gross_margin, debt_ratio, net_margin | `UNIQUE(symbol, report_period)` + `idx_financial_reports_symbol` |
+| `fund_flows` | A 股资金流向 | symbol, date, main_net_inflow, super_large/large/medium/small, net_inflow_ratio | `UNIQUE(symbol, date)` + `idx_fund_flows_symbol_date` |
+| `technical_indicators` | 技术指标 | symbol, date, MA5/10/20/60, MACD(DIF/DEA/histogram), RSI(6/14), BOLL, volume_ma5/20 | `UNIQUE(symbol, date)` |
+| `news_items` | 新闻/公告/研报 | title, source, url, content, summary, sentiment, importance, related_symbols, published_at | `UNIQUE INDEX idx_news_items_url_unique (url) WHERE url IS NOT NULL AND url != ''` + `idx_news_items_published_at` |
+| `ai_reports` | AI 分析报告 | symbol, action, confidence, risk_level, summary, bullish_reasons, bearish_reasons, key_risks, data_used, generated_at | `UNIQUE INDEX idx_ai_reports_symbol_date ON (symbol, date(generated_at))` |
 | `run_logs` | 任务运行记录 | task_name, status, started_at, finished_at, error_message, affected_assets | `idx_run_logs_task_name (task_name, started_at DESC)` |
-| `raw_data` | 原始采集数据 | symbol, source, data_type, raw_json, collected_at | `idx_raw_data_symbol_type (symbol, data_type)` |
+| `raw_data` | 原始采集数据（审计） | symbol(可空), source, data_type, raw_json, collected_at | `idx_raw_data_symbol_type (symbol, data_type)` |
 | `accounts` | 交易账户 | name, broker, currency, notes, deleted_at | `UNIQUE(name)` |
-| `transactions` | 交易记录 | account_id, symbol, type, quantity, price, fee, trade_date | `idx_transactions_account_symbol` + `idx_transactions_deleted_at` |
+| `transactions` | 交易记录 | account_id(FK→accounts), symbol, type(buy/sell/dividend/split), quantity, price, fee, currency, trade_date | `idx_transactions_account_symbol` + `idx_transactions_deleted_at` |
+| `minute_klines` | 分钟 K 线（1/5/15/30/60/120m） | symbol, time, price, volume, avg_price, source | `UNIQUE(symbol, time, source)` + `idx_minute_klines_symbol_time` |
+| `dividends` | 分红/送股 | symbol, ex_date, cash_dividend, share_bonus, record_date, announce_date, dividend_year, source | `UNIQUE(symbol, ex_date, source)` + `idx_dividends_symbol_exdate` |
+| `profit_forecasts` | 业绩预告 | symbol, report_period, forecast_type, profit_lower/upper, change_lower/upper, summary, source | `UNIQUE(symbol, report_period, forecast_type, source)` + `idx_profit_forecasts_symbol_period` |
+| `shareholders` | 前 N 大股东 | symbol, report_period, rank, name, shares, ratio, change_amount, source | `UNIQUE(symbol, report_period, rank, source)` + `idx_shareholders_symbol_period` |
+| `shareholder_count_history` | 股东人数历史 | symbol, report_date, total_holders, avg_shares, source | `UNIQUE(symbol, report_date, source)` + `idx_shareholder_count_history_symbol_date` |
+| `etf_basic` | ETF 基本面+净值+涨跌 | code, date, etf_type, track_index_code/name, manage_institution, close_price, nav, disc, return_1m/3m/6m/1y/3y, max_drawdown_* | `UNIQUE(code, date, source)` + `idx_etf_basic_code_date` |
+| `etf_holdings` | ETF 成分股 | code, constituent_code, constituent_name, ratio, date, source | `UNIQUE(code, constituent_code, date, source)` + `idx_etf_holdings_code_date` |
+| `etf_nav_history` | ETF 历史净值 | code, date, nav, nav_change, nav_change_pct, acc_nav, source | `UNIQUE(code, date, source)` + `idx_etf_nav_history_code_date` |
+| `etf_holders` | ETF 持有人结构 | code, report_date, holder_account, individual_holder_share/ratio, institution_holder_share/ratio, top10_share/ratio, source | `UNIQUE(code, report_date, source)` + `idx_etf_holders_code_report` |
+| `etf_financial` | ETF 资产配置 | code, date, total_assets, stock_ratio, bond_ratio, commodity_ratio, fund_ratio, key_asset_ratio, source | `UNIQUE(code, date, source)` + `idx_etf_financial_code_date` |
+| `sector_daily_quote` | 行业/概念板块日行情 | name, date, sector_type(industry/concept/fund_flow), symbol, change_pct, turnover_rate, change_pct_5d/20d, lead_stock, main_net_inflow, main_net_inflow_5d, up_down_ratio, rank, zxj | `UNIQUE(name, date, sector_type, source)` + `idx_sector_daily_quote_date_type` |
+| `us_financials` | 港美股三表 | symbol, end_date, period_type(annual/quarter), currency(USD/HKD), period_mark, revenue, net_income, gross_profit, operating_income, ebitda, ebit, basic_eps, diluted_eps, total_assets, total_liabilities, total_equity, operating_cashflow, investing_cashflow, financing_cashflow, capex, raw_json | `UNIQUE(symbol, end_date, period_type, source)` + `idx_us_financials_symbol_period` |
+| `ipo_exdiv_calendar` | 港美 IPO+除权日历 | event_type(ipo/exdiv), event_date, symbol, name, market(hk/us), stage(ipo 各阶段), price, listing_date, sgrq, ssrq, ex_div_date, pay_date, report_end_date, dividend_per_share, currency, dividend_plan, source | `UNIQUE(event_type, event_date, symbol, source)` + `idx_ipo_exdiv_calendar_date_type` |
+| `chip_distribution` | 筹码分布（A 股） | symbol, date, close_price, chip_profit_rate, chip_avg_cost, chip_concentration_90, chip_concentration_70, source | `UNIQUE(symbol, date, source)` + `idx_chip_distribution_symbol_date` |
+| `margintrade_data` | 融资融券（A 股） | symbol, date, close_price, change_pct, finance_value, security_value, finance_buy_value, finance_refund_value, trading_value, trading_value_dif, finance_value_dod, security_value_dod, source | `UNIQUE(symbol, date, source)` + `idx_margintrade_symbol_date` |
+| `blocktrade_data` | 大宗交易（A 股） | symbol, date, close_price, change_pct, turnover_price, turnover_value, close_discount_rate, buy_department, sell_department, source | `UNIQUE(symbol, date, source)` + `idx_blocktrade_symbol_date` |
+| `lhb_data` | 龙虎榜（A 股） | symbol, date, name, close_price, change_pct, net_buy_amount, buy_department, sell_department, reason, source | `UNIQUE(symbol, date, source)` + `idx_lhb_symbol_date` |
 | （positions） | **持仓 — 实时计算视图** | （非持久化） | 由 portfolio_service.py 聚合计算 |
 
 ### 6.2 投资组合表与算法
@@ -346,40 +365,63 @@ Streamlit 发起 GET /api/v1/data/quotes/{symbol}
 
 ### 7.1 Provider 接口
 
-`BaseProvider`（`backend/collectors/base.py`）提供 6 个带默认空实现的方法（`search` / `quote` / `kline` / `finance` / `fund_flow` / `technical`），子类按需 override；`close()` 是 lifecycle 钩子；ABC 继承保留以允许未来 sentinel 抽象方法。
+`backend/collectors/base.py` 已将原 `BaseProvider` 拆分为两个 ABC，子类按需双继承：
+
+- `StructuredProvider` — 结构化数据（行情/K线/财务/资金/技术指标），提供默认空实现的 6 个方法（`search` / `quote` / `kline` / `finance` / `fund_flow` / `technical`） + `close()` 生命周期钩子。
+- `NewsProvider` — 新闻数据，提供 `fetch_news()` + `close()`。
+- `BaseProvider` 保留为 `(StructuredProvider, NewsProvider)` 多继承占位，旧代码可继续继承。
 
 ```python
-class BaseProvider(ABC):
-    @abstractmethod
-    async def search(self, keyword: str) -> list[dict]: ...
-
-    @abstractmethod
-    async def quote(self, symbols: list[str]) -> list[dict]: ...
-
-    @abstractmethod
+class StructuredProvider(ABC):
+    async def search(self, keyword: str) -> list[dict]: ...      # 默认返回 []
+    async def quote(self, symbols: list[str]) -> list[dict]: ... # 默认返回 []
     async def kline(self, symbol: str, period: str = "daily") -> list[dict]: ...
-
-    @abstractmethod
-    async def finance(self, symbol: str) -> dict: ...
-
-    @abstractmethod
+    async def finance(self, symbol: str) -> dict: ...            # 默认返回 {}
     async def fund_flow(self, symbol: str) -> dict: ...
-
-    @abstractmethod
     async def technical(self, symbol: str) -> dict: ...
-```
 
-`WeStockProvider` 额外提供扩展方法（分时/分红/股东/预告）：
-
-```python
-async def minute(self, symbol: str, days: int = 1) -> list[dict]: ...
-async def dividend(self, symbol: str) -> list[dict]: ...
-async def shareholder(self, symbol: str) -> dict: ...
-async def reserve(self, symbol: str) -> dict: ...
-async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]: ...
+class NewsProvider(ABC):
+    async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]: ...
 ```
 
 新闻类 Provider（RSS / Tencent / Sina / SearchEngine）实现 `fetch_news()` 或 `search()`，结构化方法返回空 dict。
+
+`WeStockProvider` 因同时提供结构化 + 新闻数据，需双继承两个 ABC，并额外实现 19 个扩展方法（覆盖第 5 轮新增 ETF / 板块 / 港美财务 / 日历 / 筹码 / 融资融券 / 大宗 / 龙虎榜）：
+
+```python
+class WeStockProvider(StructuredProvider, NewsProvider):
+    # --- 6 个基础结构化方法 ---
+    async def search(self, keyword: str) -> list[dict]: ...
+    async def quote(self, symbols: list[str]) -> list[dict]: ...
+    async def kline(self, symbol: str, period: str = "daily") -> list[dict]: ...
+    async def finance(self, symbol: str) -> dict: ...
+    async def fund_flow(self, symbol: str) -> dict: ...
+    async def technical(self, symbol: str) -> dict: ...
+
+    # --- 1 个基础新闻方法 ---
+    async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]: ...
+
+    # --- 18 个扩展方法（分时/分红/股东/预告 + ETF + 板块 + 港美财务 + 日历 + 筹码等） ---
+    async def minute(self, symbol: str, days: int = 1) -> list[dict]: ...                # 分钟 K 线
+    async def dividend(self, symbol: str) -> list[dict]: ...                             # 分红/送股
+    async def shareholder(self, symbol: str) -> dict: ...                                # 前 N 大股东
+    async def reserve(self, symbol: str) -> dict: ...                                    # 业绩预告/储备
+    async def etf_info(self, symbol: str) -> dict: ...                                   # ETF 基本面
+    async def etf_holdings(self, symbol: str) -> list[dict]: ...                         # ETF 成分股
+    async def etf_nav(self, symbol: str, start: str, end: str) -> list[dict]: ...        # ETF 净值
+    async def etf_holders(self, symbol: str) -> dict: ...                                # ETF 持有人
+    async def etf_financial(self, symbol: str) -> dict: ...                              # ETF 资产配置
+    async def board_sectors(self) -> list[dict]: ...                                     # 行业/概念板块
+    async def hot_sectors(self, limit: int = 10) -> list[dict]: ...                      # 热门板块
+    async def us_finance(self, symbol: str) -> list[dict]: ...                           # 美股三表
+    async def hk_finance(self, symbol: str) -> list[dict]: ...                           # 港股三表
+    async def ipo_calendar(self, market: str) -> list[dict]: ...                         # 港美 IPO 日历
+    async def exdiv_calendar(self, symbol: str) -> list[dict]: ...                       # 港美除权日历
+    async def chip_distribution(self, symbol: str) -> dict | None: ...                  # 筹码分布
+    async def margintrade(self, symbol: str) -> dict | None: ...                         # 融资融券
+    async def blocktrade(self, symbol: str, date: str) -> dict | None: ...               # 大宗交易
+    async def lhb(self, symbol: str, date: str) -> dict | None: ...                      # 龙虎榜
+```
 
 ### 7.2 配置驱动的 Provider 实例化
 
