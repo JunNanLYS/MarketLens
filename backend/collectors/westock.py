@@ -771,3 +771,181 @@ class WeStockProvider(BaseProvider):
             "source": "westock",
             "collected_at": self._now(),
         }
+
+    # ------------------------------------------------------------------
+    # 阶段 15：港美股财务（us_finance / hk_finance）
+    # westock CLI:
+    #   - finance usAAPL                  → 默认 3 表 (income/balance/cashflow)
+    #   - finance hk00700 --type zhsy     → 综合损益表
+    #   - finance hk00700 --type zcfz     → 资产负债表
+    #   - finance hk00700 --type xjll     → 现金流量表
+    # ------------------------------------------------------------------
+
+    async def us_finance(
+        self,
+        symbol: str,
+        ftype: str = "income",
+        num: int = 4,
+    ) -> list[dict]:
+        """美股财务（us 前缀）：type ∈ {income, balance, cashflow}。
+
+        返回多期 list[dict]，每期对应 1 行（end_date / period_type）。
+        """
+        tables, err = await self._run_cli(
+            f"finance {symbol} --type {ftype} --num {num}"
+        )
+        if err or not tables:
+            return []
+        results: list[dict] = []
+        for table in tables:
+            for row in table:
+                results.append(self._normalize_us_finance_row(row, symbol, ftype))
+        return results
+
+    async def hk_finance(
+        self,
+        symbol: str,
+        ftype: str = "zhsy",
+        num: int = 4,
+    ) -> list[dict]:
+        """港股财务（hk 前缀）：type ∈ {zhsy, zcfz, xjll}（中文拼音首字母）。"""
+        tables, err = await self._run_cli(
+            f"finance {symbol} --type {ftype} --num {num}"
+        )
+        if err or not tables:
+            return []
+        results: list[dict] = []
+        for table in tables:
+            for row in table:
+                results.append(self._normalize_hk_finance_row(row, symbol, ftype))
+        return results
+
+    # ------------------------------------------------------------------
+    # 阶段 15：2 个 _normalize（美股/港股 字段映射）
+    # 美股 CLI 字段示例（实测 usAAPL）:
+    #   income 表:  _date / BasicEPS / Sales / NetIncome / EBITDA / EBIT / ...
+    #   balance 表: EndDate / TotalAssets / TotalLiabilities / TotalEquity / ...
+    #   cashflow 表: EndDate / CFO / CFI / CFF / Capex / ...
+    # 港股 zhsy 表:  _date / BasicEPS / OperatingIncome / OperatingProfit / ...
+    # 港股 zcfz 表:  EndDate / TotalAssets / TotalLiability / SEWithoutMI / ...
+    # 港股 xjll 表:  EndDate / NetOperateCashFlow / NetInvestCashFlow / ...
+    # ------------------------------------------------------------------
+
+    def _normalize_us_finance_row(
+        self, raw: dict, symbol: str, ftype: str
+    ) -> dict:
+        # 区分季度（_Q 后缀）和年度（无后缀）
+        period_type = "quarter" if any(
+            str(k).endswith("_Q") for k in raw.keys() if k != "SecuCode"
+        ) else "annual"
+        # 优先取 EndDate，否则用 _date
+        end_date = raw.get("EndDate", "") or raw.get("_date", "")
+        # 选对应周期的字段（季度优先 _Q 后缀，年度无后缀）
+        suffix = "_Q" if period_type == "quarter" else ""
+        # period_mark 例: "2024Q1" / "2024FY"
+        end_str = str(end_date)
+        if end_str and len(end_str) >= 10:
+            year = end_str[:4]
+            month = end_str[5:7]
+            period_mark = f"{year}Q{(int(month) - 1) // 3 + 1}" if period_type == "quarter" else f"{year}FY"
+        else:
+            period_mark = ""
+
+        def _n(*keys: str) -> float | None:
+            for k in keys:
+                v = raw.get(k)
+                if v is not None and v != "" and v != "-":
+                    return _try_number(v)
+            return None
+
+        return {
+            "symbol": symbol,
+            "end_date": str(end_date)[:10] if end_date else "",
+            "period_type": period_type,
+            "currency": "USD",
+            "period_mark": period_mark,
+            # 利润表
+            "revenue": _n(f"Sales{suffix}", "Sales"),
+            "net_income": _n(f"NetIncome{suffix}", "NetIncome"),
+            "gross_profit": _n(f"GrossIncome{suffix}", "GrossIncome"),
+            "operating_income": _n(f"OperatingIncome{suffix}", "OperatingIncome"),
+            "ebitda": _n(f"EBITDA{suffix}", "EBITDA"),
+            "ebit": _n(f"EBIT{suffix}", "EBIT"),
+            "basic_eps": _n(f"BasicEPS{suffix}", "BasicEPS"),
+            "diluted_eps": _n(f"DilutedEPS{suffix}", "DilutedEPS"),
+            # 资产负债表
+            "total_assets": _n("TotalAssets"),
+            "total_liabilities": _n("TotalLiabilities"),
+            "total_equity": _n("TotalEquity", "TotalShareholderEquity"),
+            # 现金流表
+            "operating_cashflow": _n(f"CFO{suffix}", "CFO"),
+            "investing_cashflow": _n(f"CFI{suffix}", "CFI"),
+            "financing_cashflow": _n(f"CFF{suffix}", "CFF"),
+            "capex": _n(f"Capex{suffix}", "Capex"),
+            "raw_json": str(raw),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_hk_finance_row(
+        self, raw: dict, symbol: str, ftype: str
+    ) -> dict:
+        # 港股 zhsy 表字段例: BasicEPS / OperatingIncome / OperatingProfit /
+        #  NetAssetPS / ProfitToShareholders / OperatingIncome / ...
+        # zcfz 表字段例: TotalAssets / TotalLiability / SEWithoutMI / ...
+        # xjll 表字段例: NetOperateCashFlow / NetInvestCashFlow /
+        #  NetFinanceCashFlow / ...
+        period_type = "quarter" if raw.get("ReportType") in (
+            "第一季报", "中报", "第三季报"
+        ) else "annual"
+        end_date = raw.get("EndDate", "") or raw.get("_date", "")
+        end_str = str(end_date)
+        if end_str and len(end_str) >= 10:
+            year = end_str[:4]
+            report_type = raw.get("ReportType", "")
+            if report_type == "第一季报":
+                period_mark = f"{year}Q1"
+            elif report_type == "中报":
+                period_mark = f"{year}Q2"
+            elif report_type == "第三季报":
+                period_mark = f"{year}Q3"
+            else:
+                period_mark = f"{year}FY"
+        else:
+            period_mark = ""
+
+        def _n(*keys: str) -> float | None:
+            for k in keys:
+                v = raw.get(k)
+                if v is not None and v != "" and v != "-":
+                    return _try_number(v)
+            return None
+
+        return {
+            "symbol": symbol,
+            "end_date": str(end_date)[:10] if end_date else "",
+            "period_type": period_type,
+            "currency": "HKD",
+            "period_mark": period_mark,
+            # 利润表核心
+            "revenue": _n("OperatingRevenue", "OperatingRevenueTTM"),
+            "net_income": _n("ProfitToShareholders", "NPParentCompanyOwners"),
+            "gross_profit": _n("GrossProfit", "GrossProfitTTM"),
+            "operating_income": _n("OperatingIncome", "OperatingProfit"),
+            "ebitda": _n("EBITDA"),
+            "ebit": _n("EBIT"),
+            "basic_eps": _n("BasicEPS"),
+            "diluted_eps": _n("DilutedEPS"),
+            # 资产负债表核心
+            "total_assets": _n("TotalAssets"),
+            "total_liabilities": _n("TotalLiability"),
+            "total_equity": _n("SEWithoutMI", "TotalShareholderEquity"),
+            # 现金流表核心
+            "operating_cashflow": _n("NetOperateCashFlow"),
+            "investing_cashflow": _n("NetInvestCashFlow"),
+            "financing_cashflow": _n("NetFinanceCashFlow"),
+            "capex": _n("Capex"),
+            "raw_json": str(raw),
+            "source": "westock",
+            "collected_at": self._now(),
+        }

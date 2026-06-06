@@ -427,3 +427,69 @@ async def refresh_sectors(
                 summary[k] = {"success": r is not None}
     return {"summary": summary, "hot_limit": hot_limit}
 
+
+# ============================================================================
+# 阶段 15：港美股财务（2 GET 查询 + 1 POST refresh）
+# 走 /finance/us/{symbol} / /finance/hk/{symbol} / /finance-refresh/{symbol}
+# ============================================================================
+
+
+@router.get("/finance/us/{symbol}")
+def get_us_finance(
+    symbol: str,
+    period_type: str | None = Query(
+        None, description="annual | quarter，None 时返回所有"
+    ),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict:
+    """查询美股财务（us_financials 表）。"""
+    items = _service.get_us_financials(symbol, period_type=period_type, limit=limit)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"美股 {symbol} 无财务数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.get("/finance/hk/{symbol}")
+def get_hk_finance(
+    symbol: str,
+    period_type: str | None = Query(
+        None, description="annual | quarter，None 时返回所有"
+    ),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict:
+    """查询港股财务（us_financials 表，currency=HKD 区分）。"""
+    items = _service.get_us_financials(symbol, period_type=period_type, limit=limit)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"港股 {symbol} 无财务数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.post("/finance-refresh/{symbol}")
+async def refresh_finance(symbol: str, num: int = Query(4, ge=1, le=12)) -> dict:
+    """手动触发港美股财务采集（按 symbol 前缀自动选 us_finance / hk_finance）并落库。
+
+    自动判断：symbol 以 us 开头 → 美股；以 hk 开头 → 港股。
+    """
+    if symbol.startswith("us"):
+        results_list = [await _service.collect_us_finance(symbol, num=num)]
+    elif symbol.startswith("hk"):
+        results_list = [await _service.collect_hk_finance(symbol, num=num)]
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "INVALID_SYMBOL", "detail": f"symbol 必须以 us/hk 开头，实际 {symbol}"},
+        )
+    summary: dict[str, dict] = {}
+    for r in results_list:
+        if isinstance(r, Exception):
+            summary["finance"] = {"success": False, "error": str(r)}
+        else:
+            summary["finance"] = {"success": r is not None, "items": len(r) if isinstance(r, list) else 0}
+    return {"symbol": symbol, "summary": summary, "num": num}
+

@@ -76,6 +76,12 @@ class EvidenceBuilder:
             shareholders = await EvidenceBuilder._build_shareholders(conn, symbol)
             forecasts = await EvidenceBuilder._build_profit_forecasts(conn, symbol)
             sector_ctx = await EvidenceBuilder._build_sector_context(conn, symbol)
+            # 美股财务：仅 us 前缀的标的才查询（避免浪费 IO）
+            us_finance = (
+                await EvidenceBuilder._build_us_finance(conn, symbol)
+                if symbol.startswith("us")
+                else None
+            )
 
             data_sources = []
             if quote:
@@ -98,6 +104,8 @@ class EvidenceBuilder:
                 data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
             if sector_ctx:
                 data_sources.append({"type": "sector_context", "source": sector_ctx.get("source", ""), "collected_at": sector_ctx.get("collected_at", "")})
+            if us_finance:
+                data_sources.append({"type": "us_finance", "source": us_finance.get("source", ""), "collected_at": us_finance.get("collected_at", "")})
 
             return {
                 "symbol": symbol,
@@ -111,6 +119,7 @@ class EvidenceBuilder:
                 "shareholders": shareholders,
                 "forecasts": forecasts,
                 "sector_context": sector_ctx,
+                "us_finance": us_finance,
                 "data_sources": data_sources,
             }
         finally:
@@ -601,6 +610,47 @@ class EvidenceBuilder:
             "top_fund_inflow": top_fund_inflow,
             "source": source,
             "collected_at": collected_at,
+        }
+
+    @staticmethod
+    async def _build_us_finance(conn, symbol: str) -> dict | None:
+        """查询美股财务（us_financials 表，period_type=annual 最新 4 期）。"""
+        cursor = await conn.execute(
+            """SELECT * FROM us_financials WHERE symbol = ?
+               AND period_type = 'annual'
+               ORDER BY end_date DESC LIMIT 4""",
+            (symbol,),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return None
+        annual = [dict(r) for r in rows]
+
+        cursor = await conn.execute(
+            """SELECT * FROM us_financials WHERE symbol = ?
+               AND period_type = 'quarter'
+               ORDER BY end_date DESC LIMIT 4""",
+            (symbol,),
+        )
+        quarterly = [dict(r) for r in await cursor.fetchall()]
+
+        # 派生 YoY 增长率（最近一年 vs 去年）
+        yoy = {}
+        if len(annual) >= 2:
+            curr = annual[0]
+            prev = annual[1]
+            for k in ("revenue", "net_income", "operating_income", "ebitda", "basic_eps"):
+                c, p = curr.get(k), prev.get(k)
+                if c is not None and p is not None and p != 0:
+                    yoy[f"{k}_yoy"] = round((c - p) / p * 100, 2)
+
+        return {
+            "annual": annual,
+            "quarterly": quarterly,
+            "yoy": yoy,
+            "currency": annual[0].get("currency"),
+            "source": annual[0].get("source"),
+            "collected_at": annual[0].get("collected_at"),
         }
 
     @staticmethod

@@ -754,6 +754,91 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
 
+    async def _fetch_us_finance(self, symbol: str, ftype: str = "income", num: int = 4) -> dict:
+        """美股财务 fetch（多期，--type income/balance/cashflow）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.us_finance(symbol, ftype=ftype, num=num)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append(self._us_finance_row_tuple(item, source, collected_at))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集美股财务失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    async def _fetch_hk_finance(self, symbol: str, ftype: str = "zhsy", num: int = 4) -> dict:
+        """港股财务 fetch（多期，--type zhsy/zcfz/xjll）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.hk_finance(symbol, ftype=ftype, num=num)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append(self._us_finance_row_tuple(item, source, collected_at))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集港股财务失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    @staticmethod
+    def _us_finance_row_tuple(item: dict, source: str, collected_at: str) -> tuple:
+        """统一组装 us_financials 表的 row tuple。"""
+        return (
+            item.get("symbol", ""),
+            item.get("end_date", ""),
+            item.get("period_type", "annual"),
+            item.get("currency"),
+            item.get("period_mark"),
+            item.get("revenue"),
+            item.get("net_income"),
+            item.get("gross_profit"),
+            item.get("operating_income"),
+            item.get("ebitda"),
+            item.get("ebit"),
+            item.get("basic_eps"),
+            item.get("diluted_eps"),
+            item.get("total_assets"),
+            item.get("total_liabilities"),
+            item.get("total_equity"),
+            item.get("operating_cashflow"),
+            item.get("investing_cashflow"),
+            item.get("financing_cashflow"),
+            item.get("capex"),
+            item.get("raw_json"),
+            item.get("source", source),
+            item.get("collected_at", collected_at),
+        )
+
     async def _fetch_sector_board(self) -> dict:
         """板块首页 fetch：3 张表（行业涨幅/概念涨幅/行业资金流入 Top5）合并。
 
@@ -1055,6 +1140,28 @@ class CollectionService:
                 source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_us_financials(conn: sqlite3.Connection, payload: dict) -> int:
+        """美股/港股财务 统一落库（共用 us_financials 表）。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "us_financial", raw_json, collected_at
+            )
+        if not payload["rows"]:
+            return 0
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO us_financials
+               (symbol, end_date, period_type, currency, period_mark,
+                revenue, net_income, gross_profit, operating_income,
+                ebitda, ebit, basic_eps, diluted_eps,
+                total_assets, total_liabilities, total_equity,
+                operating_cashflow, investing_cashflow, financing_cashflow, capex,
+                raw_json, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
         )
         return cur.rowcount
 
@@ -1690,6 +1797,88 @@ class CollectionService:
                 continue
         return None
 
+    async def collect_us_finance(
+        self, symbol: str, num: int = 4
+    ) -> list[dict] | None:
+        """采集美股财务（3 个 type × num 期 = 12 行）并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                all_items: list[dict] = []
+                for ftype in ("income", "balance", "cashflow"):
+                    items = await provider.us_finance(symbol, ftype=ftype, num=num)
+                    if items:
+                        all_items.extend(items)
+                if not all_items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in all_items:
+                    rows.append(self._us_finance_row_tuple(item, source, collected_at))
+                payload = {
+                    "symbol": symbol,
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_us_financials(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return all_items
+            except Exception as e:
+                logger.warning("Provider {} 采集美股财务失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_hk_finance(
+        self, symbol: str, num: int = 4
+    ) -> list[dict] | None:
+        """采集港股财务（3 个 type × num 期 = 12 行）并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                all_items: list[dict] = []
+                for ftype in ("zhsy", "zcfz", "xjll"):
+                    items = await provider.hk_finance(symbol, ftype=ftype, num=num)
+                    if items:
+                        all_items.extend(items)
+                if not all_items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in all_items:
+                    rows.append(self._us_finance_row_tuple(item, source, collected_at))
+                payload = {
+                    "symbol": symbol,
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_us_financials(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return all_items
+            except Exception as e:
+                logger.warning("Provider {} 采集港股财务失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
     async def collect_sector_board(self) -> dict | None:
         """采集板块首页（3 张表）并落库。"""
         for provider in self._get_structured_providers():
@@ -2000,6 +2189,36 @@ class CollectionService:
         with get_db() as conn:
             row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+
+    def get_us_financials(
+        self,
+        symbol: str,
+        period_type: str | None = None,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询港美股财务，按 end_date 降序。
+
+        Args:
+            symbol: 港美股代码（usAAPL / hk00700）。
+            period_type: annual | quarter，None 时返回所有。
+            limit: 返回行数上限。
+            source: 数据源过滤。
+        """
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if period_type is not None:
+            conditions.append("period_type = ?")
+            params.append(period_type)
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM us_financials WHERE {where} ORDER BY end_date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
     def get_sector_quotes(
         self,

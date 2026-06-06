@@ -388,6 +388,45 @@ TABLE_DDLS: list[str] = [
         UNIQUE(name, date, sector_type, source)
     )
     """,
+    # ------------------------------------------------------------------
+    # 阶段 15：港美股财务（us_financials）
+    # westock CLI finance usAAPL（默认 income/balance/cashflow 3 表）
+    # westock CLI finance hk<sym> --type zhsy/zcfz/xjll
+    # UNIQUE 含 period_type 区分 annual/quarter，含 currency 区分 USD/HKD
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS us_financials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        period_type TEXT NOT NULL,
+        currency TEXT,
+        period_mark TEXT,
+        -- 利润表核心
+        revenue REAL,
+        net_income REAL,
+        gross_profit REAL,
+        operating_income REAL,
+        ebitda REAL,
+        ebit REAL,
+        basic_eps REAL,
+        diluted_eps REAL,
+        -- 资产负债表核心
+        total_assets REAL,
+        total_liabilities REAL,
+        total_equity REAL,
+        -- 现金流表核心
+        operating_cashflow REAL,
+        investing_cashflow REAL,
+        financing_cashflow REAL,
+        capex REAL,
+        -- 兜底
+        raw_json TEXT,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, end_date, period_type, source)
+    )
+    """,
 ]
 
 INDEX_DDLS: list[str] = [
@@ -483,6 +522,10 @@ INDEX_DDLS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_sector_daily_quote_date_type
     ON sector_daily_quote(date DESC, sector_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_us_financials_symbol_period
+    ON us_financials(symbol, end_date DESC, period_type)
     """,
 ]
 
