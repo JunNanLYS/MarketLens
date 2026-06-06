@@ -495,22 +495,6 @@ async with _WRITE_LOCK:
 
 ---
 
-### [MINOR] `ui/pages/asset_detail.py:241-243` — 9-tab 详情页缺少新增 4 域数据对应 tab
-
-**问题**: 第 5 轮新增 14 张表的数据（ETF / sector / us-hk finance / chip / lhb / ipo calendar / exdiv calendar）有 4 类没有对应 UI tab：
-- 分红/送股（exdiv_calendar）— 没有 tab
-- IPO 日历 — 没有 tab
-- 龙虎榜（lhb）— 没有 tab
-- 融资融券（margintrade）— 没有 tab
-
-用户在详情页看不到这些数据，只能通过 API 取。
-
-**影响**: 核心数据"采集了但不可见"，违背 evidence-driven 设计意图。
-
-**修复**: 在 `ui/pages/asset_detail.py` 追加 4 个 tab（每个一个 `_render_*_tab(asset_id)` 函数 + `@st.cache_data` 包装）。
-
----
-
 ### [MINOR] `westock.py:1115-1147` — `blocktrade` / `lhb` 落库时 `turnover_price` / `buy_department` / `sell_department` 硬编码 None
 
 **问题**: 4 个新采集方法的归一化层把 westock 返回的 `成交价格` / `买方营业部` / `卖方营业部` 等核心信息**未映射到列**（仅写 trade_date / symbol / volume / amount），落库时这些列写 None。**审计回查时核心信息缺失**。
@@ -538,16 +522,6 @@ async with _WRITE_LOCK:
 **影响**: 双写原则破坏；与已登记 MINOR#9 "evidence_builder raw_packets 合并"放大版同源。
 
 **修复**: 补 `raw_json` 列到 `us_financials` / `hk_financials` 的 INSERT 列表；写一个通用 `_insert_with_raw()` helper。
-
----
-
-### [MINOR] `docs/api/data.md:1-405` — 19 个新端点完全无文档
-
-**问题**: 第 5 轮新增 19 个端点（ETF/sector/us-hk-finance/chip/margintrade/blocktrade/lhb/ipo/exdiv）**完全没有写入 `docs/api/data.md`**。已登记 MAJOR 段"neodata.md 字段名错"、"assets.md 字段名错"、本轮"portfolio.md 翻页过时" 都属同模式——文档严重 drift。
-
-**影响**: 用户/AI agent 无法发现这些端点；与"API 规范 🟢"自评不符。
-
-**修复**: 1 个 PR 把 `docs/api/data.md` 重写，按"端点 → 参数 → 响应 → 错误码"模板覆盖全部 19 端点；CI 加"路由列表 vs 文档列表"一致性检查。
 
 ---
 

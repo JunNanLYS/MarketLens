@@ -33,7 +33,10 @@ def get_quote(symbol: str) -> dict:
 
 
 @router.post("/quotes/{symbol}/refresh")
-async def refresh_quote(symbol: str) -> dict:
+async def refresh_quote(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     result = await _service.collect_quote_single(symbol)
     if result is None:
         raise HTTPException(status_code=502, detail={"error": "REFRESH_FAILED", "detail": f"标的 '{symbol}' 数据刷新失败"})
@@ -87,7 +90,11 @@ def get_technical(symbol: str) -> dict:
 
 
 @router.post("/intraday/{symbol}")
-async def get_intraday(symbol: str, days: int = Query(1, ge=1, le=5)) -> dict:
+async def get_intraday(
+    symbol: str,
+    days: int = Query(1, ge=1, le=5),
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     result = await _service.collect_intraday(symbol, days=days)
     if result is None:
         raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 分时数据采集失败"})
@@ -95,7 +102,10 @@ async def get_intraday(symbol: str, days: int = Query(1, ge=1, le=5)) -> dict:
 
 
 @router.post("/shareholder/{symbol}")
-async def get_shareholder(symbol: str) -> dict:
+async def get_shareholder(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     result = await _service.collect_shareholder(symbol)
     if result is None:
         raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 股东结构数据采集失败"})
@@ -103,7 +113,10 @@ async def get_shareholder(symbol: str) -> dict:
 
 
 @router.post("/dividend/{symbol}")
-async def get_dividend(symbol: str) -> dict:
+async def get_dividend(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     items = await _service.collect_dividend(symbol)
     if items is None:
         raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 分红数据采集失败"})
@@ -111,7 +124,10 @@ async def get_dividend(symbol: str) -> dict:
 
 
 @router.post("/reserve/{symbol}")
-async def get_reserve(symbol: str) -> dict:
+async def get_reserve(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     result = await _service.collect_reserve(symbol)
     if result is None:
         raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 业绩预告采集失败"})
@@ -204,7 +220,10 @@ def get_minute_klines(
 
 
 @router.post("/dividend/{symbol}/refresh")
-async def refresh_dividend(symbol: str) -> dict:
+async def refresh_dividend(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发分红数据采集并落库。"""
     items = await _service.collect_dividend(symbol)
     if items is None:
@@ -216,7 +235,10 @@ async def refresh_dividend(symbol: str) -> dict:
 
 
 @router.post("/shareholder/{symbol}/refresh")
-async def refresh_shareholder(symbol: str) -> dict:
+async def refresh_shareholder(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发股东结构采集并落库（双表单事务）。"""
     result = await _service.collect_shareholder(symbol)
     if result is None:
@@ -228,7 +250,10 @@ async def refresh_shareholder(symbol: str) -> dict:
 
 
 @router.post("/reserve/{symbol}/refresh")
-async def refresh_reserve(symbol: str) -> dict:
+async def refresh_reserve(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发业绩预告采集并落库。"""
     result = await _service.collect_reserve(symbol)
     if result is None:
@@ -240,7 +265,11 @@ async def refresh_reserve(symbol: str) -> dict:
 
 
 @router.post("/minute/{symbol}/refresh")
-async def refresh_minute(symbol: str, days: int = Query(1, ge=1, le=5)) -> dict:
+async def refresh_minute(
+    symbol: str,
+    days: int = Query(1, ge=1, le=5),
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发分时数据采集并落库。"""
     items = await _service.collect_intraday(symbol, days=days)
     if items is None:
@@ -499,10 +528,19 @@ async def refresh_finance(
     return {"symbol": symbol, "summary": summary, "num": num}
 
 
-# 财务采集路由表：symbol 前缀 → 采集方法。扩展新市场（如 jp/uk）时只需追加一行。
+# 财务采集路由表：symbol 前缀 → 采集方法（lambda 包装 _service 实例方法，
+# 避免直接引用 unbound method 导致 self 缺失）。扩展新市场（如 jp/uk）时只需追加一行。
+def _collect_us(symbol: str, num: int) -> object:
+    return _service.collect_us_finance(symbol, num=num)
+
+
+def _collect_hk(symbol: str, num: int) -> object:
+    return _service.collect_hk_finance(symbol, num=num)
+
+
 _FINANCE_DISPATCH: dict[str, object] = {
-    "us": CollectionService.collect_us_finance,
-    "hk": CollectionService.collect_hk_finance,
+    "us": _collect_us,
+    "hk": _collect_hk,
 }
 
 

@@ -439,7 +439,7 @@ async def test_refresh_dividend_success(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/dividend/sh600519/refresh")
+    resp = client.post("/api/v1/data/dividend/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["symbol"] == "sh600519"
@@ -452,7 +452,7 @@ async def test_refresh_dividend_failure(monkeypatch: pytest.MonkeyPatch) -> None
     svc = _mock_service(collect_dividend=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/dividend/sh600519/refresh")
+    resp = client.post("/api/v1/data/dividend/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -467,7 +467,7 @@ async def test_refresh_shareholder_success(monkeypatch: pytest.MonkeyPatch) -> N
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/shareholder/sh600519/refresh")
+    resp = client.post("/api/v1/data/shareholder/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 200
     body = resp.json()
     assert "top_shareholders" in body
@@ -480,7 +480,7 @@ async def test_refresh_shareholder_failure(monkeypatch: pytest.MonkeyPatch) -> N
     svc = _mock_service(collect_shareholder=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/shareholder/sh600519/refresh")
+    resp = client.post("/api/v1/data/shareholder/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -496,7 +496,7 @@ async def test_refresh_reserve_success(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/reserve/sh600519/refresh")
+    resp = client.post("/api/v1/data/reserve/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["forecast_type"] == "略增"
@@ -508,7 +508,7 @@ async def test_refresh_reserve_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     svc = _mock_service(collect_reserve=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/reserve/sh600519/refresh")
+    resp = client.post("/api/v1/data/reserve/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -522,7 +522,7 @@ async def test_refresh_minute_success(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/minute/sh600519/refresh?days=1")
+    resp = client.post("/api/v1/data/minute/sh600519/refresh?days=1", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["symbol"] == "sh600519"
@@ -535,7 +535,7 @@ async def test_refresh_minute_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     svc = _mock_service(collect_intraday=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/minute/sh600519/refresh")
+    resp = client.post("/api/v1/data/minute/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -545,6 +545,6 @@ async def test_refresh_minute_days_validation(monkeypatch: pytest.MonkeyPatch) -
     svc = _mock_service()
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/minute/sh600519/refresh?days=99")
+    resp = client.post("/api/v1/data/minute/sh600519/refresh?days=99", headers={"X-API-Key": "marketlens-local"})
     assert resp.status_code == 422
     svc.collect_intraday.assert_not_awaited()
