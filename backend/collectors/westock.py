@@ -949,3 +949,199 @@ class WeStockProvider(BaseProvider):
             "source": "westock",
             "collected_at": self._now(),
         }
+
+    # ------------------------------------------------------------------
+    # 阶段 16：港美 IPO + exdiv 日历
+    # westock CLI:
+    #   - ipo hk / ipo us                        → 新股日历
+    #   - exdiv hk<sym> / exdiv us<sym>         → 除权日历
+    # A 股 ipo / exdiv 数据源死，不接
+    # ------------------------------------------------------------------
+
+    async def ipo_calendar(self, market: str) -> list[dict]:
+        """新股日历（市场过滤，market ∈ {hk, us}）。"""
+        tables, err = await self._run_cli(f"ipo {market}")
+        if err or not tables or not tables[0]:
+            return []
+        return [self._normalize_ipo_row(row, market) for row in tables[0]]
+
+    async def exdiv_calendar(self, symbol: str) -> list[dict]:
+        """除权日历（港美单只股票）。A 股 exdiv 数据源死，此方法仅用于 hk/us。"""
+        tables, err = await self._run_cli(f"exdiv {symbol}")
+        if err or not tables or not tables[0]:
+            return []
+        return [self._normalize_exdiv_row(row, symbol) for row in tables[0]]
+
+    def _normalize_ipo_row(self, raw: dict, market: str) -> dict:
+        """ipo 输出: stage / code / name / price / sgrq / ssrq / hy。
+        美股 IPO 输出列名是 status 而非 stage（兼容两种）。
+        """
+        # event_date 优先 sgrq（申购日），无则 listingDate（美股），最后 ssrq
+        event_date = (
+            raw.get("sgrq", "")
+            or raw.get("listingDate", "")
+            or raw.get("ssrq", "")
+        )
+        return {
+            "event_type": "ipo",
+            "event_date": event_date,
+            "symbol": raw.get("code", ""),
+            "name": raw.get("name", ""),
+            "market": market,
+            "stage": raw.get("stage") or raw.get("status", ""),
+            "price": _try_number(raw.get("price")),
+            "listing_date": raw.get("ssrq", "") or raw.get("listingDate", ""),
+            "sgrq": raw.get("sgrq", ""),
+            "ssrq": raw.get("ssrq", ""),
+            "ex_div_date": None,
+            "pay_date": None,
+            "report_end_date": None,
+            "dividend_per_share": None,
+            "currency": None,
+            "dividend_plan": None,
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_exdiv_row(self, raw: dict, symbol: str) -> dict:
+        """exdiv 输出: code / name / exDivDate / payDate / reportEndDate /
+        dividendPerShare / currency / dividendPlan。"""
+        sym = raw.get("code", "") or symbol
+        name = raw.get("name", "")
+        market = "hk" if sym.startswith("hk") else "us" if sym.startswith("us") else ""
+        return {
+            "event_type": "exdiv",
+            "event_date": raw.get("exDivDate", ""),
+            "symbol": sym,
+            "name": name,
+            "market": market,
+            "stage": None,
+            "price": None,
+            "listing_date": None,
+            "sgrq": None,
+            "ssrq": None,
+            "ex_div_date": raw.get("exDivDate", ""),
+            "pay_date": raw.get("payDate", ""),
+            "report_end_date": raw.get("reportEndDate", ""),
+            "dividend_per_share": _try_number(raw.get("dividendPerShare")),
+            "currency": raw.get("currency", ""),
+            "dividend_plan": raw.get("dividendPlan", ""),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    # ------------------------------------------------------------------
+    # 阶段 17：筹码 / 融资融券 / 大宗 / 龙虎榜
+    # westock CLI:
+    #   - chip sh600519         → 筹码成本（仅 A 股）
+    #   - margintrade sh600519  → 融资融券（仅 A 股）
+    #   - blocktrade sh600519 --date 2026-06-01 → 大宗交易（仅 A 股，需日期）
+    #   - lhb sh600519 --date 2026-06-01       → 龙虎榜（仅 A 股，需日期）
+    # ------------------------------------------------------------------
+
+    async def chip_distribution(self, symbol: str) -> dict | None:
+        """筹码成本分布（4 字段：profit_rate/avg_cost/concentration 90/70）。"""
+        tables, err = await self._run_cli(f"chip {symbol}")
+        if err or not tables or not tables[0]:
+            return {
+                "symbol": symbol, "source": "westock", "collected_at": self._now(),
+            }
+        return self._normalize_chip_row(tables[0][0], symbol)
+
+    async def margintrade(self, symbol: str) -> dict | None:
+        """融资融券（单条：finance/security value + DoD）。"""
+        tables, err = await self._run_cli(f"margintrade {symbol}")
+        if err or not tables or not tables[0]:
+            return {
+                "symbol": symbol, "source": "westock", "collected_at": self._now(),
+            }
+        return self._normalize_margintrade_row(tables[0][0], symbol)
+
+    async def blocktrade(self, symbol: str, date: str) -> dict | None:
+        """大宗交易（单只 + 指定日期）。"""
+        tables, err = await self._run_cli(f"blocktrade {symbol} --date {date}")
+        if err or not tables:
+            return None
+        if not tables[0]:
+            return {
+                "symbol": symbol, "date": date,
+                "source": "westock", "collected_at": self._now(),
+            }
+        return self._normalize_blocktrade_row(tables[0][0], symbol, date)
+
+    async def lhb(self, symbol: str, date: str) -> dict | None:
+        """龙虎榜（单只 + 指定日期）。无数据时返回 None。"""
+        tables, err = await self._run_cli(f"lhb {symbol} --date {date}")
+        if err or not tables or not tables[0]:
+            return None
+        return self._normalize_lhb_row(tables[0][0], symbol, date)
+
+    def _normalize_chip_row(self, raw: dict, symbol: str) -> dict:
+        """chip 输出: code/name/date/closePrice/chipProfitRate/chipAvgCost/
+        chipConcentration90/chipConcentration70。"""
+        return {
+            "symbol": symbol,
+            "date": raw.get("date", ""),
+            "close_price": _try_number(raw.get("closePrice")),
+            "chip_profit_rate": _try_number(raw.get("chipProfitRate")),
+            "chip_avg_cost": _try_number(raw.get("chipAvgCost")),
+            "chip_concentration_90": _try_number(raw.get("chipConcentration90")),
+            "chip_concentration_70": _try_number(raw.get("chipConcentration70")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_margintrade_row(self, raw: dict, symbol: str) -> dict:
+        """margintrade 输出: code/name/date/closePrice/changePct/FinanceValue/
+        SecurityValue/FinanceBuyValue/FinanceRefundValue/TradingValue/
+        TradingValueDif/FinanceValueDOD/SecurityValueDOD。"""
+        return {
+            "symbol": symbol,
+            "date": raw.get("date", ""),
+            "close_price": _try_number(raw.get("closePrice")),
+            "change_pct": _try_number(raw.get("changePct")),
+            "finance_value": _try_number(raw.get("FinanceValue")),
+            "security_value": _try_number(raw.get("SecurityValue")),
+            "finance_buy_value": _try_number(raw.get("FinanceBuyValue")),
+            "finance_refund_value": _try_number(raw.get("FinanceRefundValue")),
+            "trading_value": _try_number(raw.get("TradingValue")),
+            "trading_value_dif": _try_number(raw.get("TradingValueDif")),
+            "finance_value_dod": _try_number(raw.get("FinanceValueDOD")),
+            "security_value_dod": _try_number(raw.get("SecurityValueDOD")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_blocktrade_row(self, raw: dict, symbol: str, date: str) -> dict:
+        """blocktrade 输出（茅台 6-01 实测）: code/name/date/closePrice/changePct。
+        明细（tradingType/buySalesDepartment 等）位于表 2，本表只取表 1 概览。"""
+        return {
+            "symbol": symbol,
+            "date": date,
+            "close_price": _try_number(raw.get("closePrice")),
+            "change_pct": _try_number(raw.get("changePct")),
+            "turnover_price": None,
+            "turnover_value": None,
+            "close_discount_rate": None,
+            "buy_department": None,
+            "sell_department": None,
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_lhb_row(self, raw: dict, symbol: str, date: str) -> dict:
+        """lhb 输出: code/name/date/closePrice/changePct/netBuyAmount。
+        营业部买卖信息嵌套在 BlockTradingInfos JSON 中。"""
+        return {
+            "symbol": symbol,
+            "date": date,
+            "name": raw.get("name", ""),
+            "close_price": _try_number(raw.get("closePrice")),
+            "change_pct": _try_number(raw.get("changePct")),
+            "net_buy_amount": _try_number(raw.get("netBuyAmount")),
+            "buy_department": None,
+            "sell_department": None,
+            "reason": raw.get("reason", ""),
+            "source": "westock",
+            "collected_at": self._now(),
+        }

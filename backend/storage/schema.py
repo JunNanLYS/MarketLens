@@ -427,6 +427,112 @@ TABLE_DDLS: list[str] = [
         UNIQUE(symbol, end_date, period_type, source)
     )
     """,
+    # ------------------------------------------------------------------
+    # 阶段 16：港美 IPO + exdiv 日历（ipo_exdiv_calendar）
+    # A 股 ipo/exdiv 数据源死，仅 hk/us
+    # event_type 区分 ipo / exdiv；stage 区分 ipo 各阶段
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS ipo_exdiv_calendar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        symbol TEXT,
+        name TEXT,
+        market TEXT NOT NULL,
+        stage TEXT,
+        price REAL,
+        listing_date TEXT,
+        sgrq TEXT,
+        ssrq TEXT,
+        ex_div_date TEXT,
+        pay_date TEXT,
+        report_end_date TEXT,
+        dividend_per_share REAL,
+        currency TEXT,
+        dividend_plan TEXT,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(event_type, event_date, symbol, source)
+    )
+    """,
+    # ------------------------------------------------------------------
+    # 阶段 17：筹码/融资融券/大宗/龙虎榜（4 张表）
+    # westock CLI:
+    #   - chip sh600519      → 筹码成本 (仅 sh/sz/bj)
+    #   - margintrade sh600519 → 融资融券 (仅 sh/sz)
+    #   - blocktrade sh600519  → 大宗交易 (仅 sh/sz，需 --date)
+    #   - lhb sh600519        → 龙虎榜 (仅 sh/sz，需 --date)
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS chip_distribution (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        date TEXT NOT NULL,
+        close_price REAL,
+        chip_profit_rate REAL,
+        chip_avg_cost REAL,
+        chip_concentration_90 REAL,
+        chip_concentration_70 REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS margintrade_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        date TEXT NOT NULL,
+        close_price REAL,
+        change_pct REAL,
+        finance_value REAL,
+        security_value REAL,
+        finance_buy_value REAL,
+        finance_refund_value REAL,
+        trading_value REAL,
+        trading_value_dif REAL,
+        finance_value_dod REAL,
+        security_value_dod REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS blocktrade_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        date TEXT NOT NULL,
+        close_price REAL,
+        change_pct REAL,
+        turnover_price REAL,
+        turnover_value REAL,
+        close_discount_rate REAL,
+        buy_department TEXT,
+        sell_department TEXT,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS lhb_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        date TEXT NOT NULL,
+        name TEXT,
+        close_price REAL,
+        change_pct REAL,
+        net_buy_amount REAL,
+        buy_department TEXT,
+        sell_department TEXT,
+        reason TEXT,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(symbol, date, source)
+    )
+    """,
 ]
 
 INDEX_DDLS: list[str] = [
@@ -526,6 +632,26 @@ INDEX_DDLS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_us_financials_symbol_period
     ON us_financials(symbol, end_date DESC, period_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_ipo_exdiv_calendar_date_type
+    ON ipo_exdiv_calendar(event_date DESC, event_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_chip_distribution_symbol_date
+    ON chip_distribution(symbol, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_margintrade_symbol_date
+    ON margintrade_data(symbol, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_blocktrade_symbol_date
+    ON blocktrade_data(symbol, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_lhb_symbol_date
+    ON lhb_data(symbol, date DESC)
     """,
 ]
 

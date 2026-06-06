@@ -754,6 +754,243 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
 
+    async def _fetch_chip_distribution(self, symbol: str) -> dict:
+        """筹码成本 fetch（单条）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.chip_distribution(symbol)
+                if not data or not data.get("date"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("close_price"),
+                    data.get("chip_profit_rate"),
+                    data.get("chip_avg_cost"),
+                    data.get("chip_concentration_90"),
+                    data.get("chip_concentration_70"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集筹码成本失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
+    async def _fetch_margintrade(self, symbol: str) -> dict:
+        """融资融券 fetch（单条）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.margintrade(symbol)
+                if not data or not data.get("date"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("finance_value"),
+                    data.get("security_value"),
+                    data.get("finance_buy_value"),
+                    data.get("finance_refund_value"),
+                    data.get("trading_value"),
+                    data.get("trading_value_dif"),
+                    data.get("finance_value_dod"),
+                    data.get("security_value_dod"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集融资融券失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
+    async def _fetch_blocktrade(self, symbol: str, date: str) -> dict:
+        """大宗交易 fetch（单只 + 日期）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.blocktrade(symbol, date)
+                if not data:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("date", date),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("turnover_price"),
+                    data.get("turnover_value"),
+                    data.get("close_discount_rate"),
+                    data.get("buy_department"),
+                    data.get("sell_department"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集大宗交易失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
+    async def _fetch_lhb(self, symbol: str, date: str) -> dict:
+        """龙虎榜 fetch（单只 + 日期）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.lhb(symbol, date)
+                if not data:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("date", date),
+                    data.get("name"),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("net_buy_amount"),
+                    data.get("buy_department"),
+                    data.get("sell_department"),
+                    data.get("reason"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集龙虎榜失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
+    async def _fetch_ipo_calendar(self, market: str) -> dict:
+        """新股日历 fetch（market=hk/us）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.ipo_calendar(market)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集新股日历失败: {} - {}", provider.name, market, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    async def _fetch_exdiv_calendar(self, symbol: str) -> dict:
+        """除权日历 fetch（港美单只）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.exdiv_calendar(symbol)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集除权日历失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    @staticmethod
+    def _ipo_exdiv_row_tuple(item: dict, source: str, collected_at: str) -> tuple:
+        """统一组装 ipo_exdiv_calendar 表的 row tuple。"""
+        return (
+            item.get("event_type", ""),
+            item.get("event_date", ""),
+            item.get("symbol"),
+            item.get("name"),
+            item.get("market", ""),
+            item.get("stage"),
+            item.get("price"),
+            item.get("listing_date"),
+            item.get("sgrq"),
+            item.get("ssrq"),
+            item.get("ex_div_date"),
+            item.get("pay_date"),
+            item.get("report_end_date"),
+            item.get("dividend_per_share"),
+            item.get("currency"),
+            item.get("dividend_plan"),
+            item.get("source", source),
+            item.get("collected_at", collected_at),
+        )
+
     async def _fetch_us_finance(self, symbol: str, ftype: str = "income", num: int = 4) -> dict:
         """美股财务 fetch（多期，--type income/balance/cashflow）。"""
         success = 0
@@ -1140,6 +1377,103 @@ class CollectionService:
                 source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_chip_distribution(conn: sqlite3.Connection, payload: dict) -> int:
+        """筹码成本落库。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "chip_distribution", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO chip_distribution
+               (symbol, date, close_price, chip_profit_rate, chip_avg_cost,
+                chip_concentration_90, chip_concentration_70, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_margintrade(conn: sqlite3.Connection, payload: dict) -> int:
+        """融资融券落库。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "margintrade", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO margintrade_data
+               (symbol, date, close_price, change_pct,
+                finance_value, security_value, finance_buy_value, finance_refund_value,
+                trading_value, trading_value_dif, finance_value_dod, security_value_dod,
+                source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_blocktrade(conn: sqlite3.Connection, payload: dict) -> int:
+        """大宗交易落库。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "blocktrade", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO blocktrade_data
+               (symbol, date, close_price, change_pct,
+                turnover_price, turnover_value, close_discount_rate,
+                buy_department, sell_department, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_lhb(conn: sqlite3.Connection, payload: dict) -> int:
+        """龙虎榜落库。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "lhb", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO lhb_data
+               (symbol, date, name, close_price, change_pct, net_buy_amount,
+                buy_department, sell_department, reason, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_ipo_exdiv(conn: sqlite3.Connection, payload: dict) -> int:
+        """港美 IPO + exdiv 统一落库（共用 ipo_exdiv_calendar 表）。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"] or "calendar", source,
+                "ipo_exdiv", raw_json, collected_at,
+            )
+        if not payload["rows"]:
+            return 0
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO ipo_exdiv_calendar
+               (event_type, event_date, symbol, name, market, stage,
+                price, listing_date, sgrq, ssrq,
+                ex_div_date, pay_date, report_end_date,
+                dividend_per_share, currency, dividend_plan,
+                source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
         )
         return cur.rowcount
 
@@ -1797,6 +2131,257 @@ class CollectionService:
                 continue
         return None
 
+    async def collect_chip_distribution(self, symbol: str) -> dict | None:
+        """采集筹码成本并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.chip_distribution(symbol)
+                if not data or not data.get("date"):
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("close_price"),
+                    data.get("chip_profit_rate"),
+                    data.get("chip_avg_cost"),
+                    data.get("chip_concentration_90"),
+                    data.get("chip_concentration_70"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_chip_distribution(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集筹码成本失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_margintrade(self, symbol: str) -> dict | None:
+        """采集融资融券并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.margintrade(symbol)
+                if not data or not data.get("date"):
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("finance_value"),
+                    data.get("security_value"),
+                    data.get("finance_buy_value"),
+                    data.get("finance_refund_value"),
+                    data.get("trading_value"),
+                    data.get("trading_value_dif"),
+                    data.get("finance_value_dod"),
+                    data.get("security_value_dod"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_margintrade(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集融资融券失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_blocktrade(self, symbol: str, date: str) -> dict | None:
+        """采集大宗交易并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.blocktrade(symbol, date)
+                if not data:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("date", date),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("turnover_price"),
+                    data.get("turnover_value"),
+                    data.get("close_discount_rate"),
+                    data.get("buy_department"),
+                    data.get("sell_department"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_blocktrade(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集大宗交易失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_lhb(self, symbol: str, date: str) -> dict | None:
+        """采集龙虎榜并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.lhb(symbol, date)
+                if not data:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("date", date),
+                    data.get("name"),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("net_buy_amount"),
+                    data.get("buy_department"),
+                    data.get("sell_department"),
+                    data.get("reason"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_lhb(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集龙虎榜失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_ipo_calendar(self, market: str) -> list[dict] | None:
+        """采集新股日历（hk/us）并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.ipo_calendar(market)
+                if not items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in items:
+                    rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
+                payload = {
+                    "symbol": market,
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_ipo_exdiv(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return items
+            except Exception as e:
+                logger.warning("Provider {} 采集新股日历失败: {}", provider.name, e)
+                continue
+        return None
+
+    async def collect_exdiv_calendar(self, symbol: str) -> list[dict] | None:
+        """采集除权日历（港美）并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.exdiv_calendar(symbol)
+                if not items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in items:
+                    rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
+                payload = {
+                    "symbol": symbol,
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_ipo_exdiv(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return items
+            except Exception as e:
+                logger.warning("Provider {} 采集除权日历失败: {}", provider.name, e)
+                continue
+        return None
+
     async def collect_us_finance(
         self, symbol: str, num: int = 4
     ) -> list[dict] | None:
@@ -2189,6 +2774,115 @@ class CollectionService:
         with get_db() as conn:
             row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+
+    def get_chip_distribution(
+        self,
+        symbol: str,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询筹码成本，按 date 降序。"""
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM chip_distribution WHERE {where} ORDER BY date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_margintrade(
+        self,
+        symbol: str,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询融资融券。"""
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM margintrade_data WHERE {where} ORDER BY date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_blocktrade(
+        self,
+        symbol: str,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询大宗交易。"""
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM blocktrade_data WHERE {where} ORDER BY date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_lhb(
+        self,
+        symbol: str,
+        limit: int = 20,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询龙虎榜。"""
+        conditions: list[str] = ["symbol = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM lhb_data WHERE {where} ORDER BY date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_ipo_exdiv_calendar(
+        self,
+        event_type: str | None = None,
+        market: str | None = None,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """查询 ipo/exdiv 日历。
+
+        Args:
+            event_type: ipo | exdiv，None 时返回所有
+            market: hk | us，None 时返回所有
+            symbol: 过滤特定 symbol
+            limit: 返回行数上限
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if event_type is not None:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if market is not None:
+            conditions.append("market = ?")
+            params.append(market)
+        if symbol is not None:
+            conditions.append("symbol = ?")
+            params.append(symbol)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        params.append(limit)
+        sql = f"SELECT * FROM ipo_exdiv_calendar WHERE {where} ORDER BY event_date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
     def get_us_financials(
         self,

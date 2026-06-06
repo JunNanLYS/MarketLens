@@ -493,3 +493,172 @@ async def refresh_finance(symbol: str, num: int = Query(4, ge=1, le=12)) -> dict
             summary["finance"] = {"success": r is not None, "items": len(r) if isinstance(r, list) else 0}
     return {"symbol": symbol, "summary": summary, "num": num}
 
+
+# ============================================================================
+# 阶段 16：港美 ipo + exdiv 日历（2 GET 查询 + 1 POST refresh）
+# 走 /calendar/{event_type} + /calendar-refresh
+# A 股 ipo/exdiv 数据源死，仅 hk/us
+# ============================================================================
+
+
+@router.get("/calendar/ipo")
+def get_ipo_calendar(
+    market: str = Query("hk", description="hk | us，A 股数据源死"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """查询新股日历（落库后的港美新股）。"""
+    items = _service.get_ipo_exdiv_calendar(
+        event_type="ipo", market=market, limit=limit
+    )
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"{market} 市场无新股日历数据，请先 POST /calendar-refresh"},
+        )
+    return {"items": items, "total": len(items), "market": market}
+
+
+@router.get("/calendar/exdiv/{symbol}")
+def get_exdiv_calendar(symbol: str) -> dict:
+    """查询单只股票的除权日历（港美）。"""
+    items = _service.get_ipo_exdiv_calendar(
+        event_type="exdiv", symbol=symbol, limit=50
+    )
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"{symbol} 无除权数据，请先 POST /calendar-refresh"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.post("/calendar-refresh")
+async def refresh_calendar(
+    market: str = Query("hk", description="hk | us"),
+    exdiv_symbol: str | None = Query(
+        None, description="exdiv 采集的股票代码（不填则跳过 exdiv）"
+    ),
+) -> dict:
+    """手动触发新股日历（ipo）+ 除权日历（exdiv）采集并落库。
+
+    两个 collect 并发（asyncio.gather），任一失败不影响其它。
+    """
+    results = await asyncio.gather(
+        _service.collect_ipo_calendar(market),
+        _service.collect_exdiv_calendar(exdiv_symbol) if exdiv_symbol else _noop(),
+        return_exceptions=True,
+    )
+    summary: dict[str, dict] = {}
+    keys = ["ipo", "exdiv"]
+    for k, r in zip(keys, results, strict=True):
+        if isinstance(r, Exception):
+            summary[k] = {"success": False, "error": str(r)}
+        elif r is None:
+            summary[k] = {"success": False, "error": "no data (or skipped)"}
+        elif isinstance(r, list):
+            summary[k] = {"success": True, "items": len(r)}
+        else:
+            summary[k] = {"success": True}
+    return {"summary": summary, "market": market, "exdiv_symbol": exdiv_symbol}
+
+
+async def _noop() -> None:
+    """占位 noop（asyncio.gather 需要可 await 对象）。"""
+    return None
+
+
+# ============================================================================
+# 阶段 17：筹码 / 融资融券 / 大宗 / 龙虎榜（4 GET 查询 + 1 POST refresh）
+# 4 个维度都仅 A 股支持；blocktrade/lhb 需指定日期
+# ============================================================================
+
+
+@router.get("/chip/{symbol}")
+def get_chip(symbol: str, limit: int = Query(20, ge=1, le=200)) -> dict:
+    """查询筹码成本分布。"""
+    items = _service.get_chip_distribution(symbol, limit=limit)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"{symbol} 无筹码数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.get("/margintrade/{symbol}")
+def get_margintrade(symbol: str, limit: int = Query(20, ge=1, le=200)) -> dict:
+    """查询融资融券。"""
+    items = _service.get_margintrade(symbol, limit=limit)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"{symbol} 无融资融券数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.get("/blocktrade/{symbol}")
+def get_blocktrade(symbol: str, limit: int = Query(20, ge=1, le=200)) -> dict:
+    """查询大宗交易。"""
+    items = _service.get_blocktrade(symbol, limit=limit)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"{symbol} 无大宗交易数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.get("/lhb/{symbol}")
+def get_lhb(symbol: str, limit: int = Query(20, ge=1, le=200)) -> dict:
+    """查询龙虎榜。"""
+    items = _service.get_lhb(symbol, limit=limit)
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": f"{symbol} 无龙虎榜数据"},
+        )
+    return {"symbol": symbol, "items": items, "total": len(items)}
+
+
+@router.post("/chip-refresh/{symbol}")
+async def refresh_chip_margintrade(symbol: str) -> dict:
+    """手动触发筹码 + 融资融券采集（同一 refresh，无日期参数）。"""
+    results = await asyncio.gather(
+        _service.collect_chip_distribution(symbol),
+        _service.collect_margintrade(symbol),
+        return_exceptions=True,
+    )
+    keys = ["chip", "margintrade"]
+    summary: dict[str, dict] = {}
+    for k, r in zip(keys, results, strict=True):
+        if isinstance(r, Exception):
+            summary[k] = {"success": False, "error": str(r)}
+        else:
+            summary[k] = {"success": r is not None}
+    return {"symbol": symbol, "summary": summary}
+
+
+@router.post("/blocktrade-refresh/{symbol}")
+async def refresh_blocktrade(symbol: str, date: str = Query(..., description="YYYY-MM-DD")) -> dict:
+    """手动触发大宗交易采集（单只 + 指定日期）。"""
+    result = await _service.collect_blocktrade(symbol, date)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"{symbol} 大宗交易采集失败"},
+        )
+    return {"symbol": symbol, "date": date, "data": result}
+
+
+@router.post("/lhb-refresh/{symbol}")
+async def refresh_lhb(symbol: str, date: str = Query(..., description="YYYY-MM-DD")) -> dict:
+    """手动触发龙虎榜采集（单只 + 指定日期）。"""
+    result = await _service.collect_lhb(symbol, date)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COLLECT_FAILED", "detail": f"{symbol} 龙虎榜采集失败"},
+        )
+    return {"symbol": symbol, "date": date, "data": result}
+
