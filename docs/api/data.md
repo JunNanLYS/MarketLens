@@ -11,7 +11,7 @@
 | `GET` | 否 |
 | `POST` | 是（需 `X-API-Key` 头） |
 
-API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。所有 POST 端点（`/refresh`、`/intraday`、`/shareholder`、`/dividend`、`/reserve`）均受保护。
+API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。所有 POST 端点（`/refresh`、`/intraday`、`/shareholder`、`/dividend`、`/reserve`、`/etf-refresh`、`/sectors/refresh`、`/finance-refresh`、`/calendar-refresh`、`/chip-refresh`、`/blocktrade-refresh`、`/lhb-refresh`）均受保护。
 
 ---
 

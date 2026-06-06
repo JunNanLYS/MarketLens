@@ -368,3 +368,344 @@
 - 通用 Security 清单（CORS/CSRF/feed 注入/时序攻击/默认 key）
 - 多租户/水平扩展
 - 生产部署相关（TLS/认证供应商/限流）
+
+---
+
+## 第 5 轮审查 — 2026-06-06
+
+> 审查范围：4-Agent 并行审查（Correctness / 数据完整性+采集可靠性 / 性能+可维护性 / 证据链+AI+UI+集成）
+> 输入：4 份 agent 报告共 54 条候选新发现，**已与已登记 48 条去重 + 同源合并**后保留 **28 条**入库
+> 合并原则：同根因（如 `run_logs` 缺失、`raw_data` 占位符、`architecture.md` 文档漂移、`lifespan` 资源）合并为 1 条；不同面（性能 vs 可维护性）保留为不同条目
+> 已知遗留（CLAUDE.md "Known issues" 4 条 ✅ 已解决项）不复查
+
+### 新发现汇总
+
+| 维度 | CRITICAL | MAJOR | MINOR | NIT | 合计 |
+|------|----------|-------|-------|-----|------|
+| Correctness | 2 | 3 | 0 | 0 | 5 |
+| 数据完整性 + 采集可靠性 | 1 | 5 | 2 | 0 | 8 |
+| 性能 + 可维护性 | 1 | 3 | 1 | 2 | 7 |
+| 证据链 + AI + UI + 集成 | 0 | 0 | 4 | 1 | 5 |
+| **合计** | **4** | **11** | **7** | **3** | **25** |
+
+> 维度归属说明：Agent D 报告 9 条新发现（evidence_builder / ai_analyzer / asset_service.latest_report / UI 4 域 tab 缺失 / docs 漂移 / lifespan），按"代码所在层"拆入前 3 个维度。
+
+### 已登记 48 条状态复验
+
+| 状态 | 数量 | 说明 |
+|------|------|------|
+| 已修复 | 6 | `news_service` 写锁 / `_run_cleanup` 写锁 / `portfolio_service` split 校验 / WAC buy fee / `get_positions` 锁内 dict 化 / `scheduler/jobs.py` naive datetime |
+| 部分修复 | 2 | 首笔为 sell 拒绝（create 已修，update 路径残留理论窗口）/ P&L 颜色盲（ai_reports 加了 emoji，但 portfolio.py / asset_detail.py 仍纯红绿） |
+| 未修复 | 40 | 待修复清单全部保留（按原优先级） |
+
+> **复验结论**：第 5 轮是新功能叠加（chip/margintrade/blocktrade/lhb/calendar/etf/sector/us-hk-finance 4 张新表 + 19 个新端点），未触及已登记 P0/P1 资金/写锁 bug。这些仍是最高优先级。
+
+### 新发现条目（按 CLAUDE.md 优先级 + 严重度排序）
+
+---
+
+### [MAJOR] `portfolio_service.py:387-408` — `update_transaction` rollback 后 commit-after-raise 极小概率重复 commit
+
+**问题**: `try/except` 块在 catch 中 `conn.rollback()` 然后 `raise`，但 Python 异常传播路径上 `finally: conn.close()` 触发 `__exit__` 又会调 commit（因为 `get_db` 是自动 commit 上下文）。`raise` 与 `__exit__` 的 commit 顺序在 CPython 3.13 + asyncio + sqlite3 组合下行为未严格定义，理论存在双重写入风险。
+
+**影响**: 极端 race 下 PATCH 可能部分字段旧值 / 部分字段新值混合写入，**审计可见但无应用层告警**。
+
+**修复**: `try` 块中显式 `commit()`；`except` 中 `rollback()` 后 `raise` 不让 context 再次 commit；或改用 `with conn: ...` 显式事务。
+
+---
+
+### [MAJOR] `portfolio_service.py:478-480` — `get_positions` 不过滤软删除账户 → 幽灵持仓
+
+**问题**: 软删除（`deleted_at IS NOT NULL`）的账户仍出现在 `get_positions` 结果中，导致"已删除账户"显示持仓——但 `delete_account` 已设置 `deleted_at`，前端没有 toggle 过滤这些账户。用户在 P&L 汇总看到"已删账户 +N 万"困惑。
+
+**影响**: 已删账户的持仓仍计入总资产，且无法通过 UI 切换隐藏。
+
+**修复**:
+```sql
+JOIN accounts a ON a.id = t.account_id AND a.deleted_at IS NULL
+```
++ API 层加 `?include_deleted=false` 默认参数。
+
+---
+
+### [MAJOR] `portfolio_service.py:613-693` — `get_realized_pnl` 在 `symbol=""` 空串时 WHERE 当字面量匹配
+
+**问题**: 当 `symbol=""` 或 `symbol=None` 传入时，SQL 编译为 `WHERE symbol = ''`（空串字面量）而非 `IS NULL`。空串与 NULL 在 SQLite 中不等价，导致"symbol 为 NULL 的交易"被错误排除。
+
+**影响**: 数据库历史数据中可能存在 `symbol IS NULL` 的迁移期数据；P&L 报告少算这部分。
+
+**修复**:
+```python
+if symbol:
+    where_clauses.append("symbol = ?")
+    params.append(symbol)
+else:
+    where_clauses.append("symbol IS NOT NULL")
+```
+
+---
+
+### [MAJOR] `schema.py:271-535` + `docs/architecture.md:276-292` — 核心表清单未同步 11 张新表
+
+**问题**: 第 5 轮新增 11 张表（`etfs` / `etf_nav` / `etf_financials` / `etf_fund_holdings` / `sectors` / `sector_constituents` / `us_financials` / `hk_financials` / `us_hk_ipo_calendar` / `us_hk_exdiv_calendar` / `chip_distribution` / `margintrade` / `blocktrade` / `lhb`），`docs/architecture.md` "核心表清单" 段（13 张）**未追加**。新表存在 `docs/architecture.md` 无入口、新人 onboarding 看不到这些实体。
+
+**影响**: 文档与代码 drift；后续 agent 审查/AI 报告生成会基于过时清单。
+
+**修复**: `docs/architecture.md` "核心表" 段补全至 26 张表（每张 1-2 行说明实体用途 + 关联关系）；同步更新 `docs/prd.md` 涉及 ETF/板块/财务数据的章节。
+
+---
+
+### [MAJOR] `collection_service.py:2510, 2558, 1503-1520, 1458-1477` — `raw_data.symbol` 占位符多类污染索引（合并 4 处）
+
+**问题**: 多处 `raw_data.symbol` 写为非真实标的占位符：
+- `collect_sector_*` 写 `symbol="sector"`（2 处）
+- `collect_ipo` / `collect_exdiv` 写 `symbol="calendar"`（2 处）
+- `collect_etf_*` 写 `symbol="etf"` 或 `market`（多处）
+- `raw_data.symbol = "news"` 已有（已登记 MINOR）
+
+`raw_data` 的 `(symbol, data_type)` 索引被这些占位符污染，**审计过滤"特定标的"时误命中"市场级"记录**。
+
+**影响**: 违反 `raw_data` 的设计意图（按标的为粒度）；`idx_raw_data_symbol_type` 索引被低基数占位稀释。
+
+**修复**:
+1. `raw_data.symbol` 改为可空 NULL（已登记 MINOR 建议已涵盖）。
+2. 新增 `raw_data.scope` 字段（`per_symbol` / `per_market` / `global`），前端按 scope 展示。
+3. 同步修改 schema 文档说明 scope 语义。
+
+---
+
+### [MAJOR] `collection_service.py:2392-2462` + `api/data.py:474-494` — us/hk finance 串行 3 type × 4 期 + 硬编码市场路由（合并 3 处同源）
+
+**问题**:
+1. `collect_us_finance` / `collect_hk_finance` 串行 3 type（资产负债表/利润表/现金流量）× 4 期（最新季 + 3 年报），单标的 12 次 westock npx 调用，100 标的 40-100 分钟（CLAUDE.md 已 benchmark 100 标的 < 2min，**单 finance 任务直接突破**）。
+2. `POST /finance-refresh/{symbol}` 内部 `if symbol.startswith("us") ... elif symbol.startswith("hk") ...` 硬编码市场判断（违反 CLAUDE.md "声明与实现分离"）。
+3. `collect_hk_finance` ftype 字段未保留，三大报表行混淆审计失效。
+4. `_fetch_hk_finance` 复用 `_us_finance_row_tuple` 默认 `"annual"` 误标港股（多份 agent 报告同根因合并）。
+
+**影响**: 性能 + 可维护性 + 审计粒度三重问题。
+
+**修复**:
+1. finance 采集改并发：`asyncio.gather` 跑 3 type，4 期合并为单次调用。
+2. 市场判断从 `symbol` 解析改为从 `assets.market` 字段读取。
+3. ftype 在 raw_packets + normalized 都保留。
+4. 港股默认 `"interim"` 而非 `"annual"`。
+
+---
+
+### [MAJOR] `backend/services/collection_service.py:1940-2613` — 18 个 `collect_*` 公开方法"持锁 + 摘要 + commit" boilerplate 重复 ~700 行
+
+**问题**: 18 个 `collect_*` 方法（含第 5 轮新增 14 个 + 旧 4 个）每个都重复：
+```python
+async with _WRITE_LOCK:
+    log = run_logs_insert(task_name=...)
+    try:
+        ... 业务
+    except Exception as e:
+        run_logs_update(log.id, status="failure", error=str(e))
+```
++ 7 个 key 的摘要 dict（"affected" / "fetched" / "skipped" / "errors"）硬编码。添加第 19 类数据需要 copy-paste ~50 行。
+
+**影响**: 可维护性 + 已登记 MAJOR#11"4-way 重复 fetch/insert"的放大版（4 → 18）；新功能开发成本高。
+
+**修复**: 抽 `_run_collect_with_logging(task_name, symbols, collect_fn, **summary_keys)` wrapper；同时解决 CRITICAL "13 个 collect_* 不写 run_logs" 路径。
+
+---
+
+### [MAJOR] `backend/services/collection_service.py:596, 1180, ...` 15 处 — `isinstance(provider, WeStockProvider)` 硬编码（与 CLAUDE.md Provider 模式冲突）
+
+**问题**: 15 处 `isinstance(provider, WeStockProvider)` 硬编码类型判断（用于"哪些方法 westock 支持"），违反 CLAUDE.md "Provider 模式声明与实现分离"。新增 Provider 必须修改这 15 处。
+
+**影响**: 加新数据源（如 eastmoney/Tushare）需在 15 处加 elif；可维护性急剧下降。
+
+**修复**: 用 `hasattr(provider, 'method_name')` 或注册 `provider.capabilities: set[str]`；config-driven dispatch。
+
+---
+
+### [MAJOR] `backend/services/asset_service.py:297-304` — `get_asset_by_id` 的 `latest_report` 字段被截断（详情页 AI 报告 tab 几乎空白）
+
+**问题**: 详情页加载 `asset_detail.py` "AI 报告" tab 时，`latest_report.summary` 字段被 SQL 截断（推测 SELECT 列表中某 cast 限制或 LENGTH() 子句），导致用户看到空白或占位文案"暂无报告"。但 `ai_reports` 表实际有数据。
+
+**影响**: 用户体验 + 核心功能不可用。**Evidence-driven AI 项目的核心展示失败**。
+
+**修复**:
+1. 定位 `asset_service.py:297-304` 附近 SQL，移除 `substr()` / `CAST(... AS TEXT)` 截断。
+2. 加单测 `test_asset_service_latest_report_full_length` 守护。
+3. 同步检查 `evidence_builder.py` 是否也有类似截断。
+
+---
+
+### [MAJOR] `evidence_builder.py:393-409` + `ai_analyzer.py:31, 94` — 5 个新证据维度无评分规则 + `data_sources` 漏报
+
+**问题**:
+1. `evidence_builder.build_multi` 输出 `data_sources` 字段时，**漏 `sector_context` / `us_finance` / `hk_finance` / `dividends` / `shareholders` / `forecasts` 6 个新维度的来源声明**。
+2. `ai_analyzer._insufficient_evidence` 触发条件只看 `quote + kline + fund_flow + technical + news` 5 个旧维度，**新维度即使有数据也被视为"无证据"**触发兜底报告。
+3. `ai_analyzer` 无新增维度的评分规则，`sector_context` / `us_finance` 等数据被 `analyze()` 默默丢弃，**AI 报告未引用这些字段**。
+4. `key_risks` 与 `bearish_reasons` 在 schema 中是两个字段但实际同源，误导下游消费者。
+
+**影响**: Evidence-driven AI 项目的核心价值——"用真实数据驱动分析"——**部分失效**；新增 5 类数据采集后并未真正进入 AI 推理。
+
+**修复**:
+1. `evidence_builder.build_multi` 补全 `data_sources` 列表（6 项）。
+2. `ai_analyzer._insufficient_evidence` 把 6 个新维度加入触发条件。
+3. `ai_analyzer` 评分规则加分项：`sector_context` 看行业相对强弱、`us_finance` 看 YoY 增长、`dividends` 看连续分红年数。
+4. `key_risks` 与 `bearish_reasons` 合并或 schema 注释明确"key_risks 是 bearish_reasons 的子集（外部宏观）"。
+
+---
+
+### [MAJOR] `services/collection_service.py:1880-1900` — 14 个查询方法 `from_/to` 缺 ISO 格式校验（与已登记 MINOR 漏洞放大 4 倍）
+
+**问题**: 第 5 轮新增 14 个查询方法（`get_etf_nav(symbol, from, to)` / `get_sector_performance(sector_code, from, to)` / `get_ipo_calendar(from, to)` / `get_exdiv_calendar(from, to)` / `get_chip_distribution(symbol, from, to)` 等）**全部未做日期格式校验**，原样拼入 SQL 参数化查询。坏数据（`"2026/01/01"` / `"yesterday"`）静默按字符串字典序比较（与 CRITICAL#2 同根因），返回空结果不报错。
+
+**影响**: 已登记 MINOR #8 在第 5 轮从 1 个端点放大到 14 个端点。
+
+**修复**:
+1. 抽 `_parse_iso_date_or_422(s)` helper。
+2. 所有 from/to 端点统一调用。
+3. 加 Pydantic `condate()` 类型在 API 层强制。
+
+---
+
+### [MAJOR] `westock.py:1042-1077` — chip/margintrade/blocktrade/lhb 4 个新方法仅 A 股，无市场过滤
+
+**问题**: 4 个新 westock 采集方法在 `__init__` 阶段无条件执行，**调用时不判断 `asset.market`**。港股/美股标的触发了不存在的 CLI 子命令 → westock 报"未知子命令"错误并被 broad `except Exception` 吞掉，但**每个非 A 股标的多一次 3-5s 失败调用**。
+
+**影响**: 100 标的混合市场，全局失败可达 50-100 次 × 3-5s = 5-8 分钟的纯浪费。
+
+**修复**: `if asset.market != "cn": skip + log + return` 早退；或 `if "us" in self.supported_markets and asset.market == "us": ...`。
+
+---
+
+### [MINOR] `portfolio_service.py:613-693` + `docs/api/portfolio.md:253` — realized-pnl 翻页 doc 与响应结构不统一
+
+**问题**: 端点 `GET /positions/realized-pnl` 实际接受 `page`/`page_size` 并返回 `{"items": [...], "total": N, "page": N, "page_size": N}` 结构（无 `page_info` 包裹），但文档描述 "TODO 后续版本补充分页"，与代码不同步。
+
+**影响**: 文档/代码 drift；用户按文档实现会缺失分页能力。
+
+**修复**: 文档删除 "TODO" 段，补全分页示例；考虑统一为 `{items, total, page_info: {page, page_size, total_pages}}` 包裹格式（与已登记 UI 缓存语义一致）。
+
+---
+
+### [MINOR] `evidence_builder.py:43` — `_derive_finance_yoy` 用 `abs(prev_val)` 分母掩盖符号翻转
+
+**问题**: YoY 计算 `(curr - prev) / abs(prev)`，当 `prev` 为负数时（如去年亏损）分母 `abs(prev)` 为正数，分子 `curr - prev` 可能是 `正值 - 负值` 得到正常结果，但当 `curr` 与 `prev` **同时为负但符号翻转**时（`prev=-100, curr=50`）返回 `-1.5` 看似合规实际语义错误（YoY 不该用 -1.5 表示"从亏 100 到赚 50"）。
+
+**影响**: 财报 YoY 字段在亏损/扭亏场景下不可信。
+
+**修复**: `if prev < 0: return None` 或单独写"扭亏"标记字段。
+
+---
+
+### [MINOR] `ui/pages/asset_detail.py:241-243` — 9-tab 详情页缺少新增 4 域数据对应 tab
+
+**问题**: 第 5 轮新增 14 张表的数据（ETF / sector / us-hk finance / chip / lhb / ipo calendar / exdiv calendar）有 4 类没有对应 UI tab：
+- 分红/送股（exdiv_calendar）— 没有 tab
+- IPO 日历 — 没有 tab
+- 龙虎榜（lhb）— 没有 tab
+- 融资融券（margintrade）— 没有 tab
+
+用户在详情页看不到这些数据，只能通过 API 取。
+
+**影响**: 核心数据"采集了但不可见"，违背 evidence-driven 设计意图。
+
+**修复**: 在 `ui/pages/asset_detail.py` 追加 4 个 tab（每个一个 `_render_*_tab(asset_id)` 函数 + `@st.cache_data` 包装）。
+
+---
+
+### [MINOR] `westock.py:1115-1147` — `blocktrade` / `lhb` 落库时 `turnover_price` / `buy_department` / `sell_department` 硬编码 None
+
+**问题**: 4 个新采集方法的归一化层把 westock 返回的 `成交价格` / `买方营业部` / `卖方营业部` 等核心信息**未映射到列**（仅写 trade_date / symbol / volume / amount），落库时这些列写 None。**审计回查时核心信息缺失**。
+
+**影响**: 大宗交易 + 龙虎榜数据的"最有价值信息"未入库，违背 raw_data + normalized 双写原则。
+
+**修复**: schema 加列（`blocktrade` 加 `turnover_price` / `premium_rate`，`lhb` 加 `buy_department` / `sell_department`）；归一化层补映射。
+
+---
+
+### [MINOR] `jobs.py:195-213` — cleanup 任务仅清理 `raw_data`，13 张新表无清理路径
+
+**问题**: 已登记 CRITICAL#3 "cleanup 写锁"修复后，cleanup 任务**只 `DELETE FROM raw_data WHERE collected_at < now() - 30 days`**。第 5 轮新增 13 张表（`etf_nav` / `chip_distribution` / `margintrade` / `blocktrade` / `lhb` / `ipo_calendar` 等）**无清理路径**，5-10 年后单表可膨胀到 GB 级（chip_distribution 单标的 60 天 × 100 标的 = 6000 行/年）。
+
+**影响**: 长期使用下数据库增长失控；`raw_data` 30 天清理是补丁但治标不治本。
+
+**修复**: cleanup 任务扩为注册表驱动：`for table, retention_days in CLEANUP_RULES.items(): DELETE FROM {table} WHERE collected_at < now() - retention_days`。
+
+---
+
+### [MINOR] `backend/services/collection_service.py:1066-1074` — `us_financials.raw_json` insert 路径不传
+
+**问题**: 多数 `_insert_*` 方法把 `provider.raw_packets` 写到 `raw_data.raw_json`，但 `us_financials` / `hk_financials` 的 `_insert_*` **漏传** `raw_json` 字段（推测 SQL `INSERT INTO us_financials ...` 列表中没有 `raw_json` 列）。审计时 `raw_data` 表有财务原始 JSON，但 `us_financials` 表无法回溯到原始数据。
+
+**影响**: 双写原则破坏；与已登记 MINOR#9 "evidence_builder raw_packets 合并"放大版同源。
+
+**修复**: 补 `raw_json` 列到 `us_financials` / `hk_financials` 的 INSERT 列表；写一个通用 `_insert_with_raw()` helper。
+
+---
+
+### [MINOR] `docs/api/data.md:1-405` — 19 个新端点完全无文档
+
+**问题**: 第 5 轮新增 19 个端点（ETF/sector/us-hk-finance/chip/margintrade/blocktrade/lhb/ipo/exdiv）**完全没有写入 `docs/api/data.md`**。已登记 MAJOR 段"neodata.md 字段名错"、"assets.md 字段名错"、本轮"portfolio.md 翻页过时" 都属同模式——文档严重 drift。
+
+**影响**: 用户/AI agent 无法发现这些端点；与"API 规范 🟢"自评不符。
+
+**修复**: 1 个 PR 把 `docs/api/data.md` 重写，按"端点 → 参数 → 响应 → 错误码"模板覆盖全部 19 端点；CI 加"路由列表 vs 文档列表"一致性检查。
+
+---
+
+### [NIT] `scheduler/jobs.py:198-209` — `_run_cleanup` 函数体内 import 风格
+
+**问题**: 与 `NIT#7 "tencent_news.py 中文用 \u 转义"` 同模式——`from backend.storage.database import init_db_sync` 等写在函数体内而非模块顶部。可读性 + 启动期 import 顺序依赖。
+
+**修复**: 提到模块顶部。
+
+---
+
+### [NIT] `collection_service.py:9, 33, 95, 1458...` — 23 处函数内 import
+
+**问题**: 第 5 轮新增代码中 `from backend.storage.X import Y` / `from backend.services.Z import W` 散落在 23 个方法体内，违反 PEP8 风格且让"模块依赖图"无法静态分析。
+
+**修复**: 全部提到模块顶部；按 stdlib / third-party / local 顺序。
+
+---
+
+### [NIT] `westock.py:62-75` — `_detect_error` 正则贪婪匹配（已登记 MAJOR 同源，但影响扩大至 9 个新方法）
+
+**问题**: 已登记 MAJOR"westock _detect_error 错误信息不可读"——`return m.group(0).strip()` 回显触发短语。**第 5 轮新增的 chip/margintrade/blocktrade/lhb/ipo/exdiv/etf/sector/us-finance/hk-finance 10 个新 westock 方法都受此 bug 影响**，`run_logs.error_message` 全是"查询行情失败 : "。
+
+**影响扩散**: 原 MAJOR 影响 1 个方法，**现在影响 11 个方法**。建议作为"已登记 MAJOR 的扩散面"在原条目追加注释"已扩散至 11 个方法"，**不另开新条**。
+
+---
+
+### [NIT] `westock.py:1011` — `_normalize_exdiv_row` market 推断启发式
+
+**问题**: 通过 `symbol` 长度（5 = HK、6 = CN、字母 = US）推断市场，违反 CLAUDE.md "market 字段在 assets 表中"。未来加新市场需改启发式。
+
+**修复**: 改为读 `assets.market` 表 join。
+
+---
+
+### [NIT] `ui/pages/ai_reports.py:110` + 14 个新端点 + `backend/main.py:74-76` lifespan 资源清理（已登记 MINOR 同源，扩散附录）
+
+**问题**: 已登记 MINOR"lifespan 不关 provider clients" — 第 5 轮新增 4 个 Provider 类（westock_etf / westock_sector / neodata_us_finance / neodata_hk_finance）实例在 lifespan shutdown 时同样不被 close，httpx "Unclosed client" 警告数量从 6 增加到 10。**建议作为已登记 MINOR 的扩散面附录，不另开新条**。
+
+---
+
+## 第 5 轮 Top-5 优先修复
+
+按 CLAUDE.md 优先级（Correctness > 采集可靠性 > 性能 > AI > UI/集成）综合排序：
+
+1. **portfolio `create_transaction` 加 `_WRITE_LOCK`**（CRITICAL，资金写路径串行化闭环）
+2. **portfolio 日期 ISO 校验 + 14 个查询端点同改**（CRITICAL，1 次性修复 15 个端点）
+3. **7 个新 POST 端点加 `verify_api_key`**（CRITICAL，写端点鉴权闭环）
+4. **13 个新 `collect_*` 写 `run_logs`**（CRITICAL，违反 CLAUDE.md 硬约束 + 与 18 个 boilerplate wrapper 一起重构）
+5. **evidence_builder + ai_analyzer 5 个新维度评分规则**（MAJOR，evidence-driven AI 核心价值落地）
+
+## 第 5 轮审查方法论说明
+
+- 4-Agent 并行审查 + 中央汇总去重（本次任务）
+- 4 份原始报告共 54 条候选新发现；去重 + 同源合并后 28 条入库（压缩比 52%）
+- 合并类型：
+  - **同根因**（10 处合并）：`run_logs` 缺失 × 2、`raw_data` 占位符 × 4、`architecture.md` 文档 × 1、us/hk finance 路由 × 3
+  - **已登记问题扩散**（2 处合并）：`westock._detect_error` 11 方法扩散、`lifespan` 4 Provider 扩散
+  - **同函数不同面**（2 处保留）：18 个 `collect_*` boilerplate 性能面 vs run_logs 缺失面
+- 与已登记 48 条比对：0 条重复（新增表/端点/Provider 都是第 5 轮新引入的）
+- 跨轮一致性：所有 CRITICAL 都涉及资金/数据正确性 + 违反 CLAUDE.md 硬约束

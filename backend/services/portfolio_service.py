@@ -169,55 +169,56 @@ class PortfolioService:
         quantity: float = data["quantity"]
         price: float = data["price"]
 
-        with get_db() as conn:
-            account = conn.execute(
-                "SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL",
-                (account_id,),
-            ).fetchone()
-            if account is None:
-                raise ValueError("账户不存在")
+        with _WRITE_LOCK:
+            with get_db() as conn:
+                account = conn.execute(
+                    "SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL",
+                    (account_id,),
+                ).fetchone()
+                if account is None:
+                    raise ValueError("账户不存在")
 
-            tracked = conn.execute(
-                "SELECT id FROM tracked_assets WHERE symbol = ?", (symbol,)
-            ).fetchone()
-            if tracked is None:
-                logger.warning("标的 {} 不在追踪列表中，建议先添加", symbol)
+                tracked = conn.execute(
+                    "SELECT id FROM tracked_assets WHERE symbol = ?", (symbol,)
+                ).fetchone()
+                if tracked is None:
+                    logger.warning("标的 {} 不在追踪列表中，建议先添加", symbol)
 
-            if tx_type not in ("buy", "sell", "dividend", "split"):
-                raise ValueError(f"无效的交易类型: {tx_type}")
+                if tx_type not in ("buy", "sell", "dividend", "split"):
+                    raise ValueError(f"无效的交易类型: {tx_type}")
 
-            if quantity <= 0:
-                raise ValueError("数量必须大于 0")
-            if price <= 0:
-                raise ValueError("价格必须大于 0")
+                if quantity <= 0:
+                    raise ValueError("数量必须大于 0")
+                if price <= 0:
+                    raise ValueError("价格必须大于 0")
 
-            if tx_type == "split" and quantity > 1000:
-                raise ValueError("拆股比例不能超过 1000")
+                if tx_type == "split" and quantity > 1000:
+                    raise ValueError("拆股比例不能超过 1000")
 
-            if tx_type == "sell":
-                current_holding: float = self._get_current_holding_from_conn(
-                    conn, account_id, symbol
-                )
-                if quantity > current_holding:
-                    raise ValueError(
-                        f"卖出数量 {quantity} 超过当前持仓 {current_holding}"
+                if tx_type == "sell":
+                    current_holding: float = self._get_current_holding_from_conn(
+                        conn, account_id, symbol
                     )
+                    if quantity > current_holding:
+                        raise ValueError(
+                            f"卖出数量 {quantity} 超过当前持仓 {current_holding}"
+                        )
 
-            fee: float = data.get("fee", 0.0)
-            currency: str = data.get("currency", account["currency"])
-            trade_date: str = data["trade_date"]
-            notes: str | None = data.get("notes")
+                fee: float = data.get("fee", 0.0)
+                currency: str = data.get("currency", account["currency"])
+                trade_date: str = data["trade_date"]
+                notes: str | None = data.get("notes")
 
-            cursor = conn.execute(
-                "INSERT INTO transactions (account_id, symbol, type, quantity, price, fee, currency, trade_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (account_id, symbol, tx_type, quantity, price, fee, currency, trade_date, notes),
-            )
-            tx_id: int = cursor.lastrowid
-            row = conn.execute(
-                "SELECT * FROM transactions WHERE id = ?", (tx_id,)
-            ).fetchone()
-            logger.info("创建交易: id={}, type={}, symbol={}", tx_id, tx_type, symbol)
-            return dict(row)
+                cursor = conn.execute(
+                    "INSERT INTO transactions (account_id, symbol, type, quantity, price, fee, currency, trade_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (account_id, symbol, tx_type, quantity, price, fee, currency, trade_date, notes),
+                )
+                tx_id: int = cursor.lastrowid
+                row = conn.execute(
+                    "SELECT * FROM transactions WHERE id = ?", (tx_id,)
+                ).fetchone()
+                logger.info("创建交易: id={}, type={}, symbol={}", tx_id, tx_type, symbol)
+                return dict(row)
 
     def _get_current_holding_from_conn(
         self, conn, account_id: int, symbol: str

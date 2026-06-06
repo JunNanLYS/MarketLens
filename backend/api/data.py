@@ -1,8 +1,9 @@
 ﻿import asyncio
 from datetime import date, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.api.neodata import verify_api_key
 from backend.services.collection_service import CollectionService
 
 router = APIRouter(prefix="/api/v1/data", tags=["data"])
@@ -333,6 +334,7 @@ async def refresh_etf(
     symbol: str,
     start: str = Query(..., description="净值起始日期 YYYY-MM-DD"),
     end: str = Query(..., description="净值结束日期 YYYY-MM-DD"),
+    _auth: None = Depends(verify_api_key),
 ) -> dict:
     """手动触发 ETF 全套数据采集（5 类）并落库。
 
@@ -405,6 +407,7 @@ def get_sector_hot(
 @router.post("/sectors/refresh")
 async def refresh_sectors(
     hot_limit: int = Query(10, ge=1, le=50),
+    _auth: None = Depends(verify_api_key),
 ) -> dict:
     """手动触发板块首页 + 热门板块 采集并落库。
 
@@ -471,7 +474,11 @@ def get_hk_finance(
 
 
 @router.post("/finance-refresh/{symbol}")
-async def refresh_finance(symbol: str, num: int = Query(4, ge=1, le=12)) -> dict:
+async def refresh_finance(
+    symbol: str,
+    num: int = Query(4, ge=1, le=12),
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发港美股财务采集（按 symbol 前缀自动选 us_finance / hk_finance）并落库。
 
     自动判断：symbol 以 us 开头 → 美股；以 hk 开头 → 港股。
@@ -538,6 +545,7 @@ async def refresh_calendar(
     exdiv_symbol: str | None = Query(
         None, description="exdiv 采集的股票代码（不填则跳过 exdiv）"
     ),
+    _auth: None = Depends(verify_api_key),
 ) -> dict:
     """手动触发新股日历（ipo）+ 除权日历（exdiv）采集并落库。
 
@@ -622,7 +630,10 @@ def get_lhb(symbol: str, limit: int = Query(20, ge=1, le=200)) -> dict:
 
 
 @router.post("/chip-refresh/{symbol}")
-async def refresh_chip_margintrade(symbol: str) -> dict:
+async def refresh_chip_margintrade(
+    symbol: str,
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发筹码 + 融资融券采集（同一 refresh，无日期参数）。"""
     results = await asyncio.gather(
         _service.collect_chip_distribution(symbol),
@@ -640,7 +651,11 @@ async def refresh_chip_margintrade(symbol: str) -> dict:
 
 
 @router.post("/blocktrade-refresh/{symbol}")
-async def refresh_blocktrade(symbol: str, date: str = Query(..., description="YYYY-MM-DD")) -> dict:
+async def refresh_blocktrade(
+    symbol: str,
+    date: str = Query(..., description="YYYY-MM-DD"),
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发大宗交易采集（单只 + 指定日期）。"""
     result = await _service.collect_blocktrade(symbol, date)
     if result is None:
@@ -652,7 +667,11 @@ async def refresh_blocktrade(symbol: str, date: str = Query(..., description="YY
 
 
 @router.post("/lhb-refresh/{symbol}")
-async def refresh_lhb(symbol: str, date: str = Query(..., description="YYYY-MM-DD")) -> dict:
+async def refresh_lhb(
+    symbol: str,
+    date: str = Query(..., description="YYYY-MM-DD"),
+    _auth: None = Depends(verify_api_key),
+) -> dict:
     """手动触发龙虎榜采集（单只 + 指定日期）。"""
     result = await _service.collect_lhb(symbol, date)
     if result is None:

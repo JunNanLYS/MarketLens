@@ -186,8 +186,8 @@ def list_transactions(
     account_id: int | None = None,
     symbol: str | None = Query(default=None, min_length=1),
     type: TransactionType | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
+    date_from: _date | None = Query(default=None, description="ISO 格式 YYYY-MM-DD"),
+    date_to: _date | None = Query(default=None, description="ISO 格式 YYYY-MM-DD"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> dict:
@@ -199,9 +199,9 @@ def list_transactions(
     if type is not None:
         filters["type"] = type
     if date_from is not None:
-        filters["date_from"] = date_from
+        filters["date_from"] = date_from.isoformat()
     if date_to is not None:
-        filters["date_to"] = date_to
+        filters["date_to"] = date_to.isoformat()
     return _service.get_transactions(
         filters=filters if filters else None, page=page, page_size=page_size
     )

@@ -70,6 +70,52 @@ class CollectionService:
             (task_name, status, started_at, finished_at, error_message, affected_assets),
         )
 
+    @staticmethod
+    def _with_run_log(task_name: str):
+        """装饰器：为 collect_* 方法自动写 run_logs 行。
+
+        - started_at / finished_at 记录 UTC
+        - status: 成功且有数据 → "success"；返回 None（所有 provider 失败）→ "failure"；
+                  异常 → "failure" + error_message
+        - affected_assets: 1（按 symbol/market 单点调用；collect_quotes 走原路径不适用）
+        """
+
+        def decorator(coro):
+            async def wrapper(self, *args, **kwargs):
+                started_at = self._now_iso()
+                status = "success"
+                error_message: str | None = None
+                result = None
+                try:
+                    result = await coro(self, *args, **kwargs)
+                    if result is None:
+                        status = "failure"
+                        error_message = "所有数据源均失败"
+                    return result
+                except Exception as e:
+                    status = "failure"
+                    error_message = str(e)[:500]
+                    raise
+                finally:
+                    finished_at = self._now_iso()
+                    try:
+                        with get_db() as conn:
+                            self._write_run_log(
+                                conn,
+                                task_name,
+                                status,
+                                started_at,
+                                finished_at,
+                                error_message,
+                                1,
+                            )
+                    except Exception as log_err:
+                        logger.warning("写入 run_logs 失败: task={} err={}", task_name, log_err)
+
+            return wrapper
+
+        return decorator
+
     async def _collect_quote_for_symbol(
         self, write_lock: threading.Lock, symbol: str
     ) -> dict | None:
@@ -1619,6 +1665,7 @@ class CollectionService:
         return {"summary": results, "errors": errors}
 
 
+    @_with_run_log("intraday_refresh")
     async def collect_intraday(self, symbol: str, days: int = 1) -> list[dict] | None:
         """实时采集分时数据并落库。
 
@@ -1666,6 +1713,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("shareholder_refresh")
     async def collect_shareholder(self, symbol: str) -> dict | None:
         """实时采集股东结构数据并落库（双表单事务）。"""
         for provider in self._get_structured_providers():
@@ -1738,6 +1786,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("reserve_refresh")
     async def collect_reserve(self, symbol: str) -> dict | None:
         """实时采集业绩预告并落库。"""
         for provider in self._get_structured_providers():
@@ -1786,6 +1835,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("dividend_refresh")
     async def collect_dividend(self, symbol: str) -> list[dict] | None:
         """实时采集分红记录并落库。"""
         for provider in self._get_structured_providers():
@@ -1936,6 +1986,7 @@ class CollectionService:
     # 阶段 14：ETF 5 个 collect_* 公开方法（手动触发采集 + 落库）
     # ------------------------------------------------------------------
 
+    @_with_run_log("etf_info_refresh")
     async def collect_etf_info(self, symbol: str) -> dict | None:
         """采集 ETF 基本信息并落库。"""
         for provider in self._get_structured_providers():
@@ -1997,6 +2048,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("etf_holdings_refresh")
     async def collect_etf_holdings(self, symbol: str) -> list[dict] | None:
         """采集 ETF 成分股并落库。"""
         for provider in self._get_structured_providers():
@@ -2040,6 +2092,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("etf_nav_refresh")
     async def collect_etf_nav(
         self, symbol: str, start: str, end: str
     ) -> list[dict] | None:
@@ -2086,6 +2139,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("etf_holders_refresh")
     async def collect_etf_holders(self, symbol: str) -> dict | None:
         """采集 ETF 持有人结构并落库。"""
         for provider in self._get_structured_providers():
@@ -2131,6 +2185,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("chip_distribution_refresh")
     async def collect_chip_distribution(self, symbol: str) -> dict | None:
         """采集筹码成本并落库。"""
         for provider in self._get_structured_providers():
@@ -2174,6 +2229,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("margintrade_refresh")
     async def collect_margintrade(self, symbol: str) -> dict | None:
         """采集融资融券并落库。"""
         for provider in self._get_structured_providers():
@@ -2222,6 +2278,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("blocktrade_refresh")
     async def collect_blocktrade(self, symbol: str, date: str) -> dict | None:
         """采集大宗交易并落库。"""
         for provider in self._get_structured_providers():
@@ -2267,6 +2324,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("lhb_refresh")
     async def collect_lhb(self, symbol: str, date: str) -> dict | None:
         """采集龙虎榜并落库。"""
         for provider in self._get_structured_providers():
@@ -2312,6 +2370,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("ipo_calendar_refresh")
     async def collect_ipo_calendar(self, market: str) -> list[dict] | None:
         """采集新股日历（hk/us）并落库。"""
         for provider in self._get_structured_providers():
@@ -2347,6 +2406,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("exdiv_calendar_refresh")
     async def collect_exdiv_calendar(self, symbol: str) -> list[dict] | None:
         """采集除权日历（港美）并落库。"""
         for provider in self._get_structured_providers():
@@ -2382,6 +2442,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("us_finance_refresh")
     async def collect_us_finance(
         self, symbol: str, num: int = 4
     ) -> list[dict] | None:
@@ -2423,6 +2484,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("hk_finance_refresh")
     async def collect_hk_finance(
         self, symbol: str, num: int = 4
     ) -> list[dict] | None:
@@ -2464,6 +2526,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("sector_board_refresh")
     async def collect_sector_board(self) -> dict | None:
         """采集板块首页（3 张表）并落库。"""
         for provider in self._get_structured_providers():
@@ -2516,6 +2579,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("sector_hot_refresh")
     async def collect_sector_hot(self, limit: int = 10) -> list[dict] | None:
         """采集热门板块并落库。"""
         for provider in self._get_structured_providers():
@@ -2568,6 +2632,7 @@ class CollectionService:
                 continue
         return None
 
+    @_with_run_log("etf_financial_refresh")
     async def collect_etf_financial(self, symbol: str) -> dict | None:
         """采集 ETF 资产配置并落库。"""
         for provider in self._get_structured_providers():

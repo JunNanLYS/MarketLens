@@ -162,8 +162,8 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 | `account_id` | int | 筛选账户 |
 | `symbol` | string | 筛选标的 |
 | `type` | string | 筛选类型 |
-| `date_from` | string | 起始日期 |
-| `date_to` | string | 结束日期 |
+| `date_from` | date (ISO `YYYY-MM-DD`) | 起始日期；非法格式返回 422 |
+| `date_to` | date (ISO `YYYY-MM-DD`) | 结束日期；非法格式返回 422 |
 | `page` | int | 页码，默认 1 |
 | `page_size` | int | 每页条数，默认 20 |
 
