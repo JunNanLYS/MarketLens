@@ -1,5 +1,10 @@
 """Database schema initialization."""
 
+import sqlite3
+
+import aiosqlite
+from loguru import logger
+
 from backend.storage.database import aget_db
 
 TABLE_DDLS: list[str] = [
@@ -158,7 +163,7 @@ TABLE_DDLS: list[str] = [
     """
     CREATE TABLE IF NOT EXISTS raw_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        symbol TEXT NOT NULL,
+        symbol TEXT,
         source TEXT NOT NULL,
         data_type TEXT NOT NULL,
         raw_json TEXT NOT NULL,
@@ -662,6 +667,7 @@ async def init_db(db_path: str | None = None) -> None:
             await conn.execute(ddl)
         for ddl in INDEX_DDLS:
             await conn.execute(ddl)
+        await _migrate_raw_data_symbol_nullable(conn)
 
 
 def init_db_sync(db_path: str | None = None) -> None:
@@ -671,3 +677,78 @@ def init_db_sync(db_path: str | None = None) -> None:
             conn.execute(ddl)
         for ddl in INDEX_DDLS:
             conn.execute(ddl)
+        _migrate_raw_data_symbol_nullable_sync(conn)
+
+
+def _migrate_raw_data_symbol_nullable_sync(conn: sqlite3.Connection) -> None:
+    """迁移：解除 raw_data.symbol 的 NOT NULL 约束。
+
+    SQLite 不支持 ALTER COLUMN / DROP NOT NULL；标准做法是按 SQLite 官方推荐
+    的 12-step 流程重建表。本地工具场景下表小，毫秒级即可完成。
+    若当前 schema 已经满足 symbol 可空（DDL 已更新）则跳过。
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='raw_data'"
+    ).fetchone()
+    if row is None or "symbol" not in (row[0] or ""):
+        return
+    create_sql = row[0]
+    if "NOT NULL" not in create_sql.split("symbol", 1)[1].split(",", 1)[0].upper():
+        # 已经是可空，无需迁移
+        return
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("ALTER TABLE raw_data RENAME TO raw_data__notnull_backup")
+    conn.execute(
+        """
+        CREATE TABLE raw_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            source TEXT NOT NULL,
+            data_type TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            collected_at TIMESTAMP NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """INSERT INTO raw_data (id, symbol, source, data_type, raw_json, collected_at)
+           SELECT id, symbol, source, data_type, raw_json, collected_at
+           FROM raw_data__notnull_backup"""
+    )
+    conn.execute("DROP TABLE raw_data__notnull_backup")
+    conn.execute("PRAGMA foreign_keys=ON")
+    logger.info("raw_data.symbol 已迁移为可空（重建表完成）")
+
+
+async def _migrate_raw_data_symbol_nullable(conn: aiosqlite.Connection) -> None:
+    """异步版的 _migrate_raw_data_symbol_nullable_sync。"""
+    row = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='raw_data'"
+    ).fetchone()
+    if row is None or "symbol" not in (row[0] or ""):
+        return
+    create_sql = row[0]
+    if "NOT NULL" not in create_sql.split("symbol", 1)[1].split(",", 1)[0].upper():
+        return
+    await conn.execute("PRAGMA foreign_keys=OFF")
+    await conn.execute("ALTER TABLE raw_data RENAME TO raw_data__notnull_backup")
+    await conn.execute(
+        """
+        CREATE TABLE raw_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            source TEXT NOT NULL,
+            data_type TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            collected_at TIMESTAMP NOT NULL
+        )
+        """
+    )
+    await conn.execute(
+        """INSERT INTO raw_data (id, symbol, source, data_type, raw_json, collected_at)
+           SELECT id, symbol, source, data_type, raw_json, collected_at
+           FROM raw_data__notnull_backup"""
+    )
+    await conn.execute("DROP TABLE raw_data__notnull_backup")
+    await conn.execute("PRAGMA foreign_keys=ON")
+    logger.info("raw_data.symbol 已迁移为可空（重建表完成）")

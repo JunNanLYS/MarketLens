@@ -140,7 +140,7 @@ class NewsService:
                             conn.execute(
                                 """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
                                    VALUES (?, ?, ?, ?, ?)""",
-                                ("news", news_data["source"], "news", raw_json, now),
+                                (None, news_data["source"], "news", raw_json, now),
                             )
                     except Exception:
                         logger.exception("新闻入库失败: title={}", news_data["title"])

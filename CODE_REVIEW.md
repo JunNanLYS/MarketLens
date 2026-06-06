@@ -414,67 +414,6 @@
 
 ---
 
-### [MAJOR] `collection_service.py:2510, 2558, 1503-1520, 1458-1477` — `raw_data.symbol` 占位符多类污染索引（合并 4 处）
-
-**问题**: 多处 `raw_data.symbol` 写为非真实标的占位符：
-- `collect_sector_*` 写 `symbol="sector"`（2 处）
-- `collect_ipo` / `collect_exdiv` 写 `symbol="calendar"`（2 处）
-- `collect_etf_*` 写 `symbol="etf"` 或 `market`（多处）
-- `raw_data.symbol = "news"` 已有（已登记 MINOR）
-
-`raw_data` 的 `(symbol, data_type)` 索引被这些占位符污染，**审计过滤"特定标的"时误命中"市场级"记录**。
-
-**影响**: 违反 `raw_data` 的设计意图（按标的为粒度）；`idx_raw_data_symbol_type` 索引被低基数占位稀释。
-
-**修复**:
-1. `raw_data.symbol` 改为可空 NULL（已登记 MINOR 建议已涵盖）。
-2. 新增 `raw_data.scope` 字段（`per_symbol` / `per_market` / `global`），前端按 scope 展示。
-3. 同步修改 schema 文档说明 scope 语义。
-
----
-
-### [MAJOR] `backend/services/collection_service.py:1940-2613` — 18 个 `collect_*` 公开方法"持锁 + 摘要 + commit" boilerplate 重复 ~700 行
-
-**问题**: 18 个 `collect_*` 方法（含第 5 轮新增 14 个 + 旧 4 个）每个都重复：
-```python
-async with _WRITE_LOCK:
-    log = run_logs_insert(task_name=...)
-    try:
-        ... 业务
-    except Exception as e:
-        run_logs_update(log.id, status="failure", error=str(e))
-```
-+ 7 个 key 的摘要 dict（"affected" / "fetched" / "skipped" / "errors"）硬编码。添加第 19 类数据需要 copy-paste ~50 行。
-
-**影响**: 可维护性 + 已登记 MAJOR#11"4-way 重复 fetch/insert"的放大版（4 → 18）；新功能开发成本高。
-
-**修复**: 抽 `_run_collect_with_logging(task_name, symbols, collect_fn, **summary_keys)` wrapper；同时解决 CRITICAL "13 个 collect_* 不写 run_logs" 路径。
-
----
-
-### [MAJOR] `services/collection_service.py:1880-1900` — 14 个查询方法 `from_/to` 缺 ISO 格式校验（与已登记 MINOR 漏洞放大 4 倍）
-
-**问题**: 第 5 轮新增 14 个查询方法（`get_etf_nav(symbol, from, to)` / `get_sector_performance(sector_code, from, to)` / `get_ipo_calendar(from, to)` / `get_exdiv_calendar(from, to)` / `get_chip_distribution(symbol, from, to)` 等）**全部未做日期格式校验**，原样拼入 SQL 参数化查询。坏数据（`"2026/01/01"` / `"yesterday"`）静默按字符串字典序比较（与 CRITICAL#2 同根因），返回空结果不报错。
-
-**影响**: 已登记 MINOR #8 在第 5 轮从 1 个端点放大到 14 个端点。
-
-**修复**:
-1. 抽 `_parse_iso_date_or_422(s)` helper。
-2. 所有 from/to 端点统一调用。
-3. 加 Pydantic `condate()` 类型在 API 层强制。
-
----
-
-### [MAJOR] `westock.py:1042-1077` — chip/margintrade/blocktrade/lhb 4 个新方法仅 A 股，无市场过滤
-
-**问题**: 4 个新 westock 采集方法在 `__init__` 阶段无条件执行，**调用时不判断 `asset.market`**。港股/美股标的触发了不存在的 CLI 子命令 → westock 报"未知子命令"错误并被 broad `except Exception` 吞掉，但**每个非 A 股标的多一次 3-5s 失败调用**。
-
-**影响**: 100 标的混合市场，全局失败可达 50-100 次 × 3-5s = 5-8 分钟的纯浪费。
-
-**修复**: `if asset.market != "cn": skip + log + return` 早退；或 `if "us" in self.supported_markets and asset.market == "us": ...`。
-
----
-
 ### [MINOR] `portfolio_service.py:613-693` + `docs/api/portfolio.md:253` — realized-pnl 翻页 doc 与响应结构不统一
 
 **问题**: 端点 `GET /positions/realized-pnl` 实际接受 `page`/`page_size` 并返回 `{"items": [...], "total": N, "page": N, "page_size": N}` 结构（无 `page_info` 包裹），但文档描述 "TODO 后续版本补充分页"，与代码不同步。
@@ -492,16 +431,6 @@ async with _WRITE_LOCK:
 **影响**: 财报 YoY 字段在亏损/扭亏场景下不可信。
 
 **修复**: `if prev < 0: return None` 或单独写"扭亏"标记字段。
-
----
-
-### [MINOR] `westock.py:1115-1147` — `blocktrade` / `lhb` 落库时 `turnover_price` / `buy_department` / `sell_department` 硬编码 None
-
-**问题**: 4 个新采集方法的归一化层把 westock 返回的 `成交价格` / `买方营业部` / `卖方营业部` 等核心信息**未映射到列**（仅写 trade_date / symbol / volume / amount），落库时这些列写 None。**审计回查时核心信息缺失**。
-
-**影响**: 大宗交易 + 龙虎榜数据的"最有价值信息"未入库，违背 raw_data + normalized 双写原则。
-
-**修复**: schema 加列（`blocktrade` 加 `turnover_price` / `premium_rate`，`lhb` 加 `buy_department` / `sell_department`）；归一化层补映射。
 
 ---
 

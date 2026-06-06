@@ -1,4 +1,5 @@
 ﻿import asyncio
+import json
 import re
 import shlex
 import shutil
@@ -1040,7 +1041,13 @@ class WeStockProvider(BaseProvider):
     # ------------------------------------------------------------------
 
     async def chip_distribution(self, symbol: str) -> dict | None:
-        """筹码成本分布（4 字段：profit_rate/avg_cost/concentration 90/70）。"""
+        """筹码成本分布（4 字段：profit_rate/avg_cost/concentration 90/70）。
+
+        仅 A 股（sh/sz/bj）支持；港美股标的早退返回 None，避免触发 westock CLI 不存在的子命令。
+        """
+        if not symbol.startswith(_A_SHARE_PREFIXES):
+            logger.debug("chip_distribution 仅支持 A 股，跳过: {}", symbol)
+            return None
         tables, err = await self._run_cli(f"chip {symbol}")
         if err or not tables or not tables[0]:
             return {
@@ -1049,7 +1056,13 @@ class WeStockProvider(BaseProvider):
         return self._normalize_chip_row(tables[0][0], symbol)
 
     async def margintrade(self, symbol: str) -> dict | None:
-        """融资融券（单条：finance/security value + DoD）。"""
+        """融资融券（单条：finance/security value + DoD）。
+
+        仅 A 股（sh/sz/bj）支持；港美股标的早退返回 None。
+        """
+        if not symbol.startswith(_A_SHARE_PREFIXES):
+            logger.debug("margintrade 仅支持 A 股，跳过: {}", symbol)
+            return None
         tables, err = await self._run_cli(f"margintrade {symbol}")
         if err or not tables or not tables[0]:
             return {
@@ -1058,7 +1071,18 @@ class WeStockProvider(BaseProvider):
         return self._normalize_margintrade_row(tables[0][0], symbol)
 
     async def blocktrade(self, symbol: str, date: str) -> dict | None:
-        """大宗交易（单只 + 指定日期）。"""
+        """大宗交易（单只 + 指定日期）。
+
+        仅 A 股（sh/sz/bj）支持；港美股标的早退返回 None。
+
+        返回结构包含两段信息：
+        - 概览（tables[0][0]）: closePrice / changePct
+        - 明细（tables[1]）: 成交价 / 成交额 / 折溢率 / 买卖营业部（按行展开，
+          buy_department / sell_department 以 JSON 列表存于 TEXT 列）
+        """
+        if not symbol.startswith(_A_SHARE_PREFIXES):
+            logger.debug("blocktrade 仅支持 A 股，跳过: {}", symbol)
+            return None
         tables, err = await self._run_cli(f"blocktrade {symbol} --date {date}")
         if err or not tables:
             return None
@@ -1067,14 +1091,24 @@ class WeStockProvider(BaseProvider):
                 "symbol": symbol, "date": date,
                 "source": "westock", "collected_at": self._now(),
             }
-        return self._normalize_blocktrade_row(tables[0][0], symbol, date)
+        return self._normalize_blocktrade_row(tables, symbol, date)
 
     async def lhb(self, symbol: str, date: str) -> dict | None:
-        """龙虎榜（单只 + 指定日期）。无数据时返回 None。"""
+        """龙虎榜（单只 + 指定日期）。无数据时返回 None。
+
+        仅 A 股（sh/sz/bj）支持；港美股标的早退返回 None。
+
+        返回结构包含两段信息：
+        - 概览（tables[0][0]）: closePrice / changePct / netBuyAmount
+        - 明细（tables[1]）: 买方营业部 / 卖方营业部（多行 JSON 列表）
+        """
+        if not symbol.startswith(_A_SHARE_PREFIXES):
+            logger.debug("lhb 仅支持 A 股，跳过: {}", symbol)
+            return None
         tables, err = await self._run_cli(f"lhb {symbol} --date {date}")
         if err or not tables or not tables[0]:
             return None
-        return self._normalize_lhb_row(tables[0][0], symbol, date)
+        return self._normalize_lhb_row(tables, symbol, date)
 
     def _normalize_chip_row(self, raw: dict, symbol: str) -> dict:
         """chip 输出: code/name/date/closePrice/chipProfitRate/chipAvgCost/
@@ -1112,36 +1146,154 @@ class WeStockProvider(BaseProvider):
             "collected_at": self._now(),
         }
 
-    def _normalize_blocktrade_row(self, raw: dict, symbol: str, date: str) -> dict:
-        """blocktrade 输出（茅台 6-01 实测）: code/name/date/closePrice/changePct。
-        明细（tradingType/buySalesDepartment 等）位于表 2，本表只取表 1 概览。"""
+    def _normalize_blocktrade_row(
+        self, tables: list[list[dict[str, str]]], symbol: str, date: str
+    ) -> dict:
+        """大宗交易归一化。
+
+        概览来自 tables[0][0]（closePrice / changePct）。明细来自 tables[1]：
+        westock CLI 在表 2 输出每笔成交（成交价 / 成交额 / 折溢率 / 买卖方向 / 营业部）。
+        buy_department / sell_department 列以 JSON 列表存多条记录（同一 (symbol, date)
+        可对应多笔大宗交易）；turnover_value 取合计，turnover_price / close_discount_rate
+        取首笔以保持稳定性。tables[1] 缺失或列名不匹配时回落 None（向后兼容老 CLI 输出）。
+        """
+        overview = tables[0][0] if tables and tables[0] else {}
+        detail_rows = self._extract_detail_rows(tables, skip_first=True)
+        # 汇总明细（多笔合并）
+        turnover_value: float | None = None
+        turnover_price: float | None = None
+        close_discount_rate: float | None = None
+        buy_departments: list[str] = []
+        sell_departments: list[str] = []
+        for row in detail_rows:
+            tv = _try_number(
+                row.get("turnoverValue")
+                or row.get("成交金额")
+                or row.get("amount")
+                or ""
+            )
+            if isinstance(tv, (int, float)):
+                turnover_value = (turnover_value or 0) + float(tv)
+            tp_raw = row.get("turnoverPrice") or row.get("成交价格") or row.get("price") or ""
+            tp = _try_number(tp_raw)
+            if isinstance(tp, (int, float)) and turnover_price is None:
+                turnover_price = float(tp)
+            dr_raw = row.get("discountRate") or row.get("closeDiscountRate") or row.get("折溢率") or ""
+            dr = _try_number(dr_raw)
+            if isinstance(dr, (int, float)) and close_discount_rate is None:
+                close_discount_rate = float(dr)
+            # 营业部：多种列名兼容 + 通过 tradingType / direction 区分买卖方向
+            dept = (
+                row.get("buySalesDepartment")
+                or row.get("营业部")
+                or row.get("department")
+                or ""
+            ).strip()
+            direction = (
+                row.get("tradingType")
+                or row.get("direction")
+                or row.get("买卖方向")
+                or ""
+            ).strip()
+            if not dept:
+                continue
+            # 方向判断：包含 "买"/"buy"/"BUY" 视为买方；包含 "卖"/"sell"/"SELL" 视为卖方；
+            # 缺失方向时归入买方（保守）
+            d_lower = direction.lower()
+            if "卖" in direction or "sell" in d_lower:
+                sell_departments.append(dept)
+            else:
+                buy_departments.append(dept)
         return {
             "symbol": symbol,
             "date": date,
-            "close_price": _try_number(raw.get("closePrice")),
-            "change_pct": _try_number(raw.get("changePct")),
-            "turnover_price": None,
-            "turnover_value": None,
-            "close_discount_rate": None,
-            "buy_department": None,
-            "sell_department": None,
+            "close_price": _try_number(overview.get("closePrice")),
+            "change_pct": _try_number(overview.get("changePct")),
+            "turnover_price": turnover_price,
+            "turnover_value": turnover_value,
+            "close_discount_rate": close_discount_rate,
+            "buy_department": json.dumps(buy_departments, ensure_ascii=False) if buy_departments else None,
+            "sell_department": json.dumps(sell_departments, ensure_ascii=False) if sell_departments else None,
             "source": "westock",
             "collected_at": self._now(),
         }
 
-    def _normalize_lhb_row(self, raw: dict, symbol: str, date: str) -> dict:
-        """lhb 输出: code/name/date/closePrice/changePct/netBuyAmount。
-        营业部买卖信息嵌套在 BlockTradingInfos JSON 中。"""
+    def _normalize_lhb_row(
+        self, tables: list[list[dict[str, str]]], symbol: str, date: str
+    ) -> dict:
+        """龙虎榜归一化。
+
+        概览来自 tables[0][0]（closePrice / changePct / netBuyAmount）。
+        明细来自 tables[1]：营业部买卖明细（多行）；营业部名称以 JSON 列表
+        存于 buy_department / sell_department TEXT 列。tables[1] 缺失或列名
+        不匹配时回落 None（向后兼容老 CLI 输出）。
+        """
+        overview = tables[0][0] if tables and tables[0] else {}
+        detail_rows = self._extract_detail_rows(tables, skip_first=True)
+        buy_departments: list[str] = []
+        sell_departments: list[str] = []
+        for row in detail_rows:
+            # 兼容多种列名
+            dept = (
+                row.get("buySalesDepartment")
+                or row.get("营业部")
+                or row.get("department")
+                or row.get("name")
+                or ""
+            ).strip()
+            direction = (
+                row.get("tradingType")
+                or row.get("direction")
+                or row.get("买卖方向")
+                or row.get("side")
+                or ""
+            ).strip()
+            if not dept:
+                continue
+            d_lower = direction.lower()
+            if "卖" in direction or "sell" in d_lower:
+                sell_departments.append(dept)
+            elif "买" in direction or "buy" in d_lower:
+                buy_departments.append(dept)
+            else:
+                # 方向不明：尝试从 amount 正负判断
+                amt = _try_number(
+                    row.get("buyAmount") or row.get("amount") or row.get("金额") or ""
+                )
+                if isinstance(amt, (int, float)):
+                    if amt >= 0:
+                        buy_departments.append(dept)
+                    else:
+                        sell_departments.append(dept)
+                else:
+                    buy_departments.append(dept)
         return {
             "symbol": symbol,
             "date": date,
-            "name": raw.get("name", ""),
-            "close_price": _try_number(raw.get("closePrice")),
-            "change_pct": _try_number(raw.get("changePct")),
-            "net_buy_amount": _try_number(raw.get("netBuyAmount")),
-            "buy_department": None,
-            "sell_department": None,
-            "reason": raw.get("reason", ""),
+            "name": overview.get("name", ""),
+            "close_price": _try_number(overview.get("closePrice")),
+            "change_pct": _try_number(overview.get("changePct")),
+            "net_buy_amount": _try_number(overview.get("netBuyAmount")),
+            "buy_department": json.dumps(buy_departments, ensure_ascii=False) if buy_departments else None,
+            "sell_department": json.dumps(sell_departments, ensure_ascii=False) if sell_departments else None,
+            "reason": overview.get("reason", ""),
             "source": "westock",
             "collected_at": self._now(),
         }
+
+    @staticmethod
+    def _extract_detail_rows(
+        tables: list[list[dict[str, str]]], *, skip_first: bool
+    ) -> list[dict[str, str]]:
+        """从多张 markdown 表汇总明细行。
+
+        默认跳过 tables[0]（概览表），返回 tables[1:] 全部行。
+        兼容某些 CLI 把明细放在 tables[0] 后续行的情况（skip_first=False）。
+        """
+        rows: list[dict[str, str]] = []
+        if not tables:
+            return rows
+        start = 1 if skip_first else 0
+        for tbl in tables[start:]:
+            rows.extend(tbl)
+        return rows

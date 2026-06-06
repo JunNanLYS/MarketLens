@@ -51,12 +51,17 @@ class CollectionService:
     @staticmethod
     def _save_raw_data(
         conn: sqlite3.Connection,
-        symbol: str,
+        symbol: str | None,
         source: str,
         data_type: str,
         raw_json: str,
         collected_at: str,
     ) -> None:
+        """写入 raw_data 行；symbol 可空（用于板块/日历/新闻等"市场级"数据）。
+
+        占位符策略：板块首页/热门板块/港美 IPO/新闻 写入时 symbol=None，
+        避免污染 idx_raw_data_symbol_type 索引。
+        """
         conn.execute(
             """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
                VALUES (?, ?, ?, ?, ?)""",
@@ -124,6 +129,133 @@ class CollectionService:
             return wrapper
 
         return decorator
+
+    async def _run_collect_with_lock(
+        self,
+        target: str | None,
+        provider_method_name: str,
+        payload_builder,
+        insert_fn,
+        provider_args: dict | None = None,
+        validate_fn=None,
+        error_label: str = "数据",
+        abort_on_invalid: bool = False,
+    ):
+        """采集 + 落库公共流程（供 19 个 collect_* 公开方法复用）。
+
+        模板步骤：
+        1. 遍历所有结构化 Provider，跳过非 WeStockProvider；
+        2. 调用 provider.{provider_method_name}(target or **provider_args)；
+           target=None 时只传 provider_args（适用于 board_sectors / hot_sectors 无参方法）；
+        3. 用 validate_fn(data) 校验（默认 truthy）；
+           - 通过 → 进入落库流程；
+           - 不通过 + abort_on_invalid=False → 试下一个 provider；
+           - 不通过 + abort_on_invalid=True → 立即 return None（不再尝试）；
+        4. 调 payload_builder(data, source, collected_at) 组装 payload；
+        5. 持 _WRITE_LOCK + sync 连接，调用 insert_fn(conn, payload)，commit + close；
+        6. 返回 data（provider 方法的原始结果）；
+        7. 整 provider 循环跑完未返回 → None。
+
+        Args:
+            target: 标的代码 / 市场名 / 任意标识；透传给 provider 方法作第一个位置参数；
+                None 时只透传 provider_args（如 board_sectors 无参方法）。
+            provider_method_name: provider 实例上调用的方法名（如 "etf_info"）。
+            payload_builder: 闭包 (data, source, collected_at) -> dict；
+                payload 必须含 "raw_packets" 列表 + "row"（单条）或 "rows"（多条）。
+            insert_fn: 落库的 staticmethod 引用（_insert_etf_basic 等）。
+            provider_args: 透传给 provider 方法的额外 kwargs。
+            validate_fn: 数据校验函数；None 时默认用 bool(data) 判空。
+            error_label: 异常日志里的中文数据名（如 "ETF 基础信息"）。
+            abort_on_invalid: 校验失败时是"试下一个 provider"（False）还是"立即返回 None"（True）；
+                旧 collect_* 多用前者（try all providers），新 etf/chip/margintrade 等用后者。
+        """
+        validator = validate_fn if validate_fn is not None else (lambda d: bool(d))
+        for provider in self._get_structured_providers():
+            if not self._is_westock_only(provider):
+                continue
+            try:
+                method = getattr(provider, provider_method_name)
+                if target is None:
+                    data = await method(**(provider_args or {}))
+                else:
+                    data = await method(target, **(provider_args or {}))
+                if not validator(data):
+                    if abort_on_invalid:
+                        return None
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                payload = payload_builder(data, source, collected_at)
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        insert_fn(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集{}失败: {} - {}", provider.name, error_label, target, e)
+                continue
+        return None
+
+    async def _run_collect_multi_with_lock(
+        self,
+        target: str,
+        provider_method_name: str,
+        ftype_arg: str,
+        payload_builder,
+        insert_fn,
+        provider_args: dict | None = None,
+        ftype_values: tuple[str, ...] = ("income", "balance", "cashflow"),
+        error_label: str = "数据",
+    ):
+        """采集 + 落库公共流程（多子任务并发版，供 collect_us_finance / collect_hk_finance 复用）。
+
+        与 _run_collect_with_lock 的区别：单次 provider 调用内
+        用 asyncio.gather 并发调 3 个 ftype（如 income/balance/cashflow），
+        合并子结果（return_exceptions=True 隔离单 ftype 失败）→ 校验 → 落库。
+
+        provider 方法签名：await provider.{method}(target, ftype=<ftype>, **provider_args)
+        """
+        for provider in self._get_structured_providers():
+            if not self._is_westock_only(provider):
+                continue
+            try:
+                method = getattr(provider, provider_method_name)
+                results = await asyncio.gather(
+                    *(
+                        method(target, **{ftype_arg: ft, **(provider_args or {})})
+                        for ft in ftype_values
+                    ),
+                    return_exceptions=True,
+                )
+                all_items: list[dict] = []
+                for items in results:
+                    if isinstance(items, Exception):
+                        logger.warning("{} 子任务失败: {}", provider_method_name, items)
+                        continue
+                    if items:
+                        all_items.extend(items)
+                if not all_items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                payload = payload_builder(all_items, source, collected_at)
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        insert_fn(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return all_items
+            except Exception as e:
+                logger.warning("Provider {} 采集{}失败: {} - {}", provider.name, error_label, target, e)
+                continue
+        return None
 
     async def _collect_quote_for_symbol(
         self, write_lock: threading.Lock, symbol: str
@@ -1515,7 +1647,7 @@ class CollectionService:
         """港美 IPO + exdiv 统一落库（共用 ipo_exdiv_calendar 表）。"""
         for source, raw_json, collected_at in payload["raw_packets"]:
             CollectionService._save_raw_data(
-                conn, payload["symbol"] or "calendar", source,
+                conn, payload.get("symbol"), source,
                 "ipo_exdiv", raw_json, collected_at,
             )
         if not payload["rows"]:
@@ -1559,7 +1691,7 @@ class CollectionService:
         """板块首页/热门板块 统一落库（共用 sector_daily_quote 表）。"""
         for source, raw_json, collected_at in payload["raw_packets"]:
             CollectionService._save_raw_data(
-                conn, "sector", source, "sector_quote", raw_json, collected_at
+                conn, None, source, "sector_quote", raw_json, collected_at
             )
         if not payload["rows"]:
             return 0
@@ -1591,6 +1723,23 @@ class CollectionService:
             payload["row"],
         )
         return cur.rowcount
+
+    @staticmethod
+    def _insert_minute_klines(conn: sqlite3.Connection, payload: dict) -> int:
+        """分时数据落库（抽 helper 配套 staticmethod）。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "minute", raw_json, collected_at
+            )
+        if not payload["rows"]:
+            return 0
+        conn.executemany(
+            """INSERT OR IGNORE INTO minute_klines
+               (symbol, time, price, volume, avg_price, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
+        )
+        return len(payload["rows"])
 
     async def _collect_daily_close_for_symbol(
         self, write_lock: threading.Lock, symbol: str
@@ -1680,229 +1829,171 @@ class CollectionService:
 
         注：分时数据按需触发（API 主动调用），不在 daily_close 编排中拉取。
         """
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.minute(symbol, days=days)
-                if items:
-                    # 落库：持锁 + executemany INSERT OR IGNORE
-                    rows: list[tuple] = []
-                    for item in items:
-                        rows.append((
-                            symbol,
-                            item.get("time", ""),
-                            item.get("price"),
-                            item.get("volume"),
-                            item.get("avg_price"),
-                            item.get("source", provider.name),
-                            item.get("collected_at", self._now_iso()),
-                        ))
-                    from backend.storage.database import get_connection_sync
-                    with _WRITE_LOCK:
-                        conn = get_connection_sync()
-                        try:
-                            raw_json = json.dumps(items, ensure_ascii=False, default=str)
-                            self._save_raw_data(
-                                conn, symbol, provider.name, "minute",
-                                raw_json, self._now_iso(),
-                            )
-                            conn.executemany(
-                                """INSERT OR IGNORE INTO minute_klines
-                                   (symbol, time, price, volume, avg_price, source, collected_at)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                rows,
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                    return items
-            except Exception as e:
-                logger.warning("Provider {} 采集分时失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append((
+                    symbol,
+                    item.get("time", ""),
+                    item.get("price"),
+                    item.get("volume"),
+                    item.get("avg_price"),
+                    item.get("source", source),
+                    item.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="minute",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_minute_klines,
+            provider_args={"days": days},
+            error_label="分时",
+        )
 
     @_with_run_log("shareholder_refresh")
     async def collect_shareholder(self, symbol: str) -> dict | None:
         """实时采集股东结构数据并落库（双表单事务）。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                result = await provider.shareholder(symbol)
-                if result and result.get("top_shareholders"):
-                    # 落库：单事务双表
-                    collected_at = self._now_iso()
-                    source = provider.name
-                    report_period_fallback = (
-                        result.get("report_period")
-                        or result.get("end_date")
-                        or collected_at
-                    )
-                    top_rows: list[tuple] = []
-                    for sh in result["top_shareholders"]:
-                        top_rows.append((
-                            symbol,
-                            report_period_fallback,
-                            sh.get("rank"),
-                            sh.get("name"),
-                            sh.get("shares"),
-                            sh.get("ratio"),
-                            sh.get("change"),
-                            result.get("source", source),
-                            result.get("collected_at", collected_at),
-                        ))
-                    count_rows: list[tuple] = []
-                    for hc in result.get("holder_count_history", []):
-                        count_rows.append((
-                            symbol,
-                            hc.get("date", ""),
-                            hc.get("total_holders"),
-                            hc.get("avg_shares"),
-                            result.get("source", source),
-                            result.get("collected_at", collected_at),
-                        ))
-                    from backend.storage.database import get_connection_sync
-                    with _WRITE_LOCK:
-                        conn = get_connection_sync()
-                        try:
-                            raw_json = json.dumps(result, ensure_ascii=False, default=str)
-                            self._save_raw_data(
-                                conn, symbol, source, "shareholder",
-                                raw_json, collected_at,
-                            )
-                            if top_rows:
-                                conn.executemany(
-                                    """INSERT OR IGNORE INTO shareholders
-                                       (symbol, report_period, rank, name, shares, ratio, change_amount,
-                                        source, collected_at)
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                    top_rows,
-                                )
-                            if count_rows:
-                                conn.executemany(
-                                    """INSERT OR IGNORE INTO shareholder_count_history
-                                       (symbol, report_date, total_holders, avg_shares, source, collected_at)
-                                       VALUES (?, ?, ?, ?, ?, ?)""",
-                                    count_rows,
-                                )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                    return result
-            except Exception as e:
-                logger.warning("Provider {} 采集股东结构失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(result, source, collected_at):
+            report_period_fallback = (
+                result.get("report_period")
+                or result.get("end_date")
+                or collected_at
+            )
+            top_rows: list[tuple] = []
+            for sh in result["top_shareholders"]:
+                top_rows.append((
+                    symbol,
+                    report_period_fallback,
+                    sh.get("rank"),
+                    sh.get("name"),
+                    sh.get("shares"),
+                    sh.get("ratio"),
+                    sh.get("change"),
+                    result.get("source", source),
+                    result.get("collected_at", collected_at),
+                ))
+            count_rows: list[tuple] = []
+            for hc in result.get("holder_count_history", []):
+                count_rows.append((
+                    symbol,
+                    hc.get("date", ""),
+                    hc.get("total_holders"),
+                    hc.get("avg_shares"),
+                    result.get("source", source),
+                    result.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": symbol,
+                "top_rows": top_rows,
+                "count_rows": count_rows,
+                "raw_packets": [
+                    (source, json.dumps(result, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(result):
+            return bool(result) and bool(result.get("top_shareholders"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="shareholder",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_shareholders,
+            validate_fn=_validate,
+            error_label="股东结构",
+        )
 
     @_with_run_log("reserve_refresh")
     async def collect_reserve(self, symbol: str) -> dict | None:
         """实时采集业绩预告并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                result = await provider.reserve(symbol)
-                if result and result.get("report_period"):
-                    # 落库：单条 INSERT OR IGNORE
-                    forecast_type = result.get("forecast_type") or "未知"
-                    collected_at = self._now_iso()
-                    source = provider.name
-                    from backend.storage.database import get_connection_sync
-                    with _WRITE_LOCK:
-                        conn = get_connection_sync()
-                        try:
-                            raw_json = json.dumps(result, ensure_ascii=False, default=str)
-                            self._save_raw_data(
-                                conn, symbol, source, "reserve",
-                                raw_json, collected_at,
-                            )
-                            conn.execute(
-                                """INSERT OR IGNORE INTO profit_forecasts
-                                   (symbol, report_period, forecast_type, profit_lower, profit_upper,
-                                    change_lower, change_upper, summary, source, collected_at)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                (
-                                    symbol,
-                                    result.get("report_period"),
-                                    forecast_type,
-                                    result.get("profit_lower"),
-                                    result.get("profit_upper"),
-                                    result.get("change_lower"),
-                                    result.get("change_upper"),
-                                    result.get("summary"),
-                                    result.get("source", source),
-                                    result.get("collected_at", collected_at),
-                                ),
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                    return result
-            except Exception as e:
-                logger.warning("Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(result, source, collected_at):
+            forecast_type = result.get("forecast_type") or "未知"
+            row = (
+                symbol,
+                result.get("report_period"),
+                forecast_type,
+                result.get("profit_lower"),
+                result.get("profit_upper"),
+                result.get("change_lower"),
+                result.get("change_upper"),
+                result.get("summary"),
+                result.get("source", source),
+                result.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(result, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(result):
+            return bool(result) and bool(result.get("report_period"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="reserve",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_profit_forecasts,
+            validate_fn=_validate,
+            error_label="业绩预告",
+        )
 
     @_with_run_log("dividend_refresh")
     async def collect_dividend(self, symbol: str) -> list[dict] | None:
         """实时采集分红记录并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.dividend(symbol)
-                if items:
-                    # 落库：executemany INSERT OR IGNORE
-                    collected_at = self._now_iso()
-                    source = provider.name
-                    rows: list[tuple] = []
-                    for item in items:
-                        year_val = item.get("dividend_year")
-                        if not isinstance(year_val, int):
-                            try:
-                                year_val = (
-                                    int(str(year_val).strip())
-                                    if year_val is not None and str(year_val).strip()
-                                    else None
-                                )
-                            except (ValueError, TypeError):
-                                year_val = None
-                        rows.append((
-                            symbol,
-                            item.get("ex_date", ""),
-                            item.get("cash_dividend"),
-                            item.get("share_bonus"),
-                            item.get("record_date"),
-                            item.get("announce_date"),
-                            year_val,
-                            item.get("source", source),
-                            item.get("collected_at", collected_at),
-                        ))
-                    from backend.storage.database import get_connection_sync
-                    with _WRITE_LOCK:
-                        conn = get_connection_sync()
-                        try:
-                            raw_json = json.dumps(items, ensure_ascii=False, default=str)
-                            self._save_raw_data(
-                                conn, symbol, source, "dividend",
-                                raw_json, collected_at,
-                            )
-                            conn.executemany(
-                                """INSERT OR IGNORE INTO dividends
-                                   (symbol, ex_date, cash_dividend, share_bonus,
-                                    record_date, announce_date, dividend_year, source, collected_at)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                rows,
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                    return items
-            except Exception as e:
-                logger.warning("Provider {} 采集分红记录失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                year_val = item.get("dividend_year")
+                if not isinstance(year_val, int):
+                    try:
+                        year_val = (
+                            int(str(year_val).strip())
+                            if year_val is not None and str(year_val).strip()
+                            else None
+                        )
+                    except (ValueError, TypeError):
+                        year_val = None
+                rows.append((
+                    symbol,
+                    item.get("ex_date", ""),
+                    item.get("cash_dividend"),
+                    item.get("share_bonus"),
+                    item.get("record_date"),
+                    item.get("announce_date"),
+                    year_val,
+                    item.get("source", source),
+                    item.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="dividend",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_dividends,
+            error_label="分红记录",
+        )
 
     def get_quote(self, symbol: str) -> dict | None:
         with get_db() as conn:
@@ -1998,458 +2089,367 @@ class CollectionService:
     @_with_run_log("etf_info_refresh")
     async def collect_etf_info(self, symbol: str) -> dict | None:
         """采集 ETF 基本信息并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.etf_info(symbol)
-                if not data or not data.get("date"):
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("date"),
-                    data.get("etf_type"),
-                    data.get("establish_date"),
-                    data.get("track_index_code"),
-                    data.get("track_index_name"),
-                    data.get("manage_institution"),
-                    data.get("close_price"),
-                    data.get("change_pct"),
-                    data.get("total_mv"),
-                    data.get("shares"),
-                    data.get("shares_chg"),
-                    data.get("nav"),
-                    data.get("disc"),
-                    data.get("ytd_return"),
-                    data.get("return_1m"),
-                    data.get("return_3m"),
-                    data.get("return_6m"),
-                    data.get("return_1y"),
-                    data.get("return_3y"),
-                    data.get("max_drawdown_1m"),
-                    data.get("max_drawdown_3m"),
-                    data.get("max_drawdown_6m"),
-                    data.get("max_drawdown_1y"),
-                    data.get("max_drawdown_3y"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_etf_basic(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集 ETF 基础信息失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("date"),
+                data.get("etf_type"),
+                data.get("establish_date"),
+                data.get("track_index_code"),
+                data.get("track_index_name"),
+                data.get("manage_institution"),
+                data.get("close_price"),
+                data.get("change_pct"),
+                data.get("total_mv"),
+                data.get("shares"),
+                data.get("shares_chg"),
+                data.get("nav"),
+                data.get("disc"),
+                data.get("ytd_return"),
+                data.get("return_1m"),
+                data.get("return_3m"),
+                data.get("return_6m"),
+                data.get("return_1y"),
+                data.get("return_3y"),
+                data.get("max_drawdown_1m"),
+                data.get("max_drawdown_3m"),
+                data.get("max_drawdown_6m"),
+                data.get("max_drawdown_1y"),
+                data.get("max_drawdown_3y"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(data):
+            return bool(data) and bool(data.get("date"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="etf_info",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_etf_basic,
+            validate_fn=_validate,
+            error_label="ETF 基础信息",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("etf_holdings_refresh")
     async def collect_etf_holdings(self, symbol: str) -> list[dict] | None:
         """采集 ETF 成分股并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.etf_holdings(symbol)
-                if not items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in items:
-                    rows.append((
-                        symbol,
-                        item.get("constituent_code", ""),
-                        item.get("constituent_name"),
-                        item.get("ratio"),
-                        item.get("date", ""),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
-                payload = {
-                    "symbol": symbol,
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_etf_holdings(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return items
-            except Exception as e:
-                logger.warning("Provider {} 采集 ETF 成分股失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append((
+                    symbol,
+                    item.get("constituent_code", ""),
+                    item.get("constituent_name"),
+                    item.get("ratio"),
+                    item.get("date", ""),
+                    item.get("source", source),
+                    item.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="etf_holdings",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_etf_holdings,
+            error_label="ETF 成分股",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("etf_nav_refresh")
     async def collect_etf_nav(
         self, symbol: str, start: str, end: str
     ) -> list[dict] | None:
         """采集 ETF 历史净值并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.etf_nav(symbol, start, end)
-                if not items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in items:
-                    rows.append((
-                        symbol,
-                        item.get("date", ""),
-                        item.get("nav"),
-                        item.get("nav_change"),
-                        item.get("nav_change_pct"),
-                        item.get("acc_nav"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
-                payload = {
-                    "symbol": symbol,
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_etf_nav(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return items
-            except Exception as e:
-                logger.warning("Provider {} 采集 ETF 净值失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append((
+                    symbol,
+                    item.get("date", ""),
+                    item.get("nav"),
+                    item.get("nav_change"),
+                    item.get("nav_change_pct"),
+                    item.get("acc_nav"),
+                    item.get("source", source),
+                    item.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="etf_nav",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_etf_nav,
+            provider_args={"start": start, "end": end},
+            error_label="ETF 净值",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("etf_holders_refresh")
     async def collect_etf_holders(self, symbol: str) -> dict | None:
         """采集 ETF 持有人结构并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.etf_holders(symbol)
-                if not data or not data.get("report_date"):
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("report_date"),
-                    data.get("holder_account"),
-                    data.get("individual_holder_share"),
-                    data.get("individual_holder_ratio"),
-                    data.get("institution_holder_share"),
-                    data.get("institution_holder_ratio"),
-                    data.get("top10_share"),
-                    data.get("top10_ratio"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_etf_holders(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集 ETF 持有人失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("report_date"),
+                data.get("holder_account"),
+                data.get("individual_holder_share"),
+                data.get("individual_holder_ratio"),
+                data.get("institution_holder_share"),
+                data.get("institution_holder_ratio"),
+                data.get("top10_share"),
+                data.get("top10_ratio"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(data):
+            return bool(data) and bool(data.get("report_date"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="etf_holders",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_etf_holders,
+            validate_fn=_validate,
+            error_label="ETF 持有人",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("chip_distribution_refresh")
     async def collect_chip_distribution(self, symbol: str) -> dict | None:
         """采集筹码成本并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.chip_distribution(symbol)
-                if not data or not data.get("date"):
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("date"),
-                    data.get("close_price"),
-                    data.get("chip_profit_rate"),
-                    data.get("chip_avg_cost"),
-                    data.get("chip_concentration_90"),
-                    data.get("chip_concentration_70"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_chip_distribution(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集筹码成本失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("date"),
+                data.get("close_price"),
+                data.get("chip_profit_rate"),
+                data.get("chip_avg_cost"),
+                data.get("chip_concentration_90"),
+                data.get("chip_concentration_70"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(data):
+            return bool(data) and bool(data.get("date"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="chip_distribution",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_chip_distribution,
+            validate_fn=_validate,
+            error_label="筹码成本",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("margintrade_refresh")
     async def collect_margintrade(self, symbol: str) -> dict | None:
         """采集融资融券并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.margintrade(symbol)
-                if not data or not data.get("date"):
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("date"),
-                    data.get("close_price"),
-                    data.get("change_pct"),
-                    data.get("finance_value"),
-                    data.get("security_value"),
-                    data.get("finance_buy_value"),
-                    data.get("finance_refund_value"),
-                    data.get("trading_value"),
-                    data.get("trading_value_dif"),
-                    data.get("finance_value_dod"),
-                    data.get("security_value_dod"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_margintrade(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集融资融券失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("date"),
+                data.get("close_price"),
+                data.get("change_pct"),
+                data.get("finance_value"),
+                data.get("security_value"),
+                data.get("finance_buy_value"),
+                data.get("finance_refund_value"),
+                data.get("trading_value"),
+                data.get("trading_value_dif"),
+                data.get("finance_value_dod"),
+                data.get("security_value_dod"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(data):
+            return bool(data) and bool(data.get("date"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="margintrade",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_margintrade,
+            validate_fn=_validate,
+            error_label="融资融券",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("blocktrade_refresh")
     async def collect_blocktrade(self, symbol: str, date: str) -> dict | None:
         """采集大宗交易并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.blocktrade(symbol, date)
-                if not data:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("date", date),
-                    data.get("close_price"),
-                    data.get("change_pct"),
-                    data.get("turnover_price"),
-                    data.get("turnover_value"),
-                    data.get("close_discount_rate"),
-                    data.get("buy_department"),
-                    data.get("sell_department"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_blocktrade(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集大宗交易失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("date", date),
+                data.get("close_price"),
+                data.get("change_pct"),
+                data.get("turnover_price"),
+                data.get("turnover_value"),
+                data.get("close_discount_rate"),
+                data.get("buy_department"),
+                data.get("sell_department"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="blocktrade",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_blocktrade,
+            provider_args={"date": date},
+            error_label="大宗交易",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("lhb_refresh")
     async def collect_lhb(self, symbol: str, date: str) -> dict | None:
         """采集龙虎榜并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.lhb(symbol, date)
-                if not data:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("date", date),
-                    data.get("name"),
-                    data.get("close_price"),
-                    data.get("change_pct"),
-                    data.get("net_buy_amount"),
-                    data.get("buy_department"),
-                    data.get("sell_department"),
-                    data.get("reason"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_lhb(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集龙虎榜失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("date", date),
+                data.get("name"),
+                data.get("close_price"),
+                data.get("change_pct"),
+                data.get("net_buy_amount"),
+                data.get("buy_department"),
+                data.get("sell_department"),
+                data.get("reason"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="lhb",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_lhb,
+            provider_args={"date": date},
+            error_label="龙虎榜",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("ipo_calendar_refresh")
     async def collect_ipo_calendar(self, market: str) -> list[dict] | None:
         """采集新股日历（hk/us）并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.ipo_calendar(market)
-                if not items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in items:
-                    rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
-                payload = {
-                    "symbol": market,
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_ipo_exdiv(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return items
-            except Exception as e:
-                logger.warning("Provider {} 采集新股日历失败: {}", provider.name, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
+            return {
+                "symbol": None,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=market,
+            provider_method_name="ipo_calendar",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_ipo_exdiv,
+            error_label="新股日历",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("exdiv_calendar_refresh")
     async def collect_exdiv_calendar(self, symbol: str) -> list[dict] | None:
         """采集除权日历（港美）并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.exdiv_calendar(symbol)
-                if not items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in items:
-                    rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
-                payload = {
-                    "symbol": symbol,
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_ipo_exdiv(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return items
-            except Exception as e:
-                logger.warning("Provider {} 采集除权日历失败: {}", provider.name, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="exdiv_calendar",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_ipo_exdiv,
+            error_label="除权日历",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("us_finance_refresh")
     async def collect_us_finance(
@@ -2460,49 +2460,29 @@ class CollectionService:
         3 个报表类型（income / balance / cashflow）改为 asyncio.gather 并发采集，
         避免 npx 冷启动串行阻塞（单标的 3 × 2-5s = 6-15s → max(单次) ≈ 5s）。
         """
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                # 3 type 并发采集，return_exceptions=True 防止单 type 失败影响整体
-                results = await asyncio.gather(
-                    *(provider.us_finance(symbol, ftype=ftype, num=num) for ftype in ("income", "balance", "cashflow")),
-                    return_exceptions=True,
-                )
-                all_items: list[dict] = []
-                for items in results:
-                    if isinstance(items, Exception):
-                        logger.warning("us_finance 子任务失败: {}", items)
-                        continue
-                    if items:
-                        all_items.extend(items)
-                if not all_items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in all_items:
-                    rows.append(self._us_finance_row_tuple(item, source, collected_at))
-                payload = {
-                    "symbol": symbol,
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_us_financials(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return all_items
-            except Exception as e:
-                logger.warning("Provider {} 采集美股财务失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(all_items, source, collected_at):
+            rows: list[tuple] = []
+            for item in all_items:
+                rows.append(self._us_finance_row_tuple(item, source, collected_at))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_multi_with_lock(
+            target=symbol,
+            provider_method_name="us_finance",
+            ftype_arg="ftype",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_us_financials,
+            provider_args={"num": num},
+            ftype_values=("income", "balance", "cashflow"),
+            error_label="美股财务",
+        )
 
     @_with_run_log("hk_finance_refresh")
     async def collect_hk_finance(
@@ -2512,199 +2492,152 @@ class CollectionService:
 
         3 个报表类型（zhsy 利润表 / zcfz 资产负债表 / xjll 现金流量表）改为 asyncio.gather 并发采集。
         """
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                results = await asyncio.gather(
-                    *(provider.hk_finance(symbol, ftype=ftype, num=num) for ftype in ("zhsy", "zcfz", "xjll")),
-                    return_exceptions=True,
-                )
-                all_items: list[dict] = []
-                for items in results:
-                    if isinstance(items, Exception):
-                        logger.warning("hk_finance 子任务失败: {}", items)
-                        continue
-                    if items:
-                        all_items.extend(items)
-                if not all_items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in all_items:
-                    rows.append(self._us_finance_row_tuple(item, source, collected_at))
-                payload = {
-                    "symbol": symbol,
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_us_financials(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return all_items
-            except Exception as e:
-                logger.warning("Provider {} 采集港股财务失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(all_items, source, collected_at):
+            rows: list[tuple] = []
+            for item in all_items:
+                rows.append(self._us_finance_row_tuple(item, source, collected_at))
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_multi_with_lock(
+            target=symbol,
+            provider_method_name="hk_finance",
+            ftype_arg="ftype",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_us_financials,
+            provider_args={"num": num},
+            ftype_values=("zhsy", "zcfz", "xjll"),
+            error_label="港股财务",
+        )
 
     @_with_run_log("sector_board_refresh")
     async def collect_sector_board(self) -> dict | None:
         """采集板块首页（3 张表）并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.board_sectors()
-                if not items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in items:
-                    rows.append((
-                        item.get("name", ""),
-                        item.get("date", ""),
-                        item.get("sector_type", "industry"),
-                        item.get("symbol"),
-                        item.get("change_pct"),
-                        item.get("turnover_rate"),
-                        item.get("change_pct_5d"),
-                        item.get("change_pct_20d"),
-                        item.get("lead_stock"),
-                        item.get("main_net_inflow"),
-                        item.get("main_net_inflow_5d"),
-                        item.get("up_down_ratio"),
-                        item.get("rank"),
-                        item.get("zxj"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
-                payload = {
-                    "symbol": "sector",
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_sector_quotes(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return items
-            except Exception as e:
-                logger.warning("Provider {} 采集板块首页失败: {}", provider.name, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append((
+                    item.get("name", ""),
+                    item.get("date", ""),
+                    item.get("sector_type", "industry"),
+                    item.get("symbol"),
+                    item.get("change_pct"),
+                    item.get("turnover_rate"),
+                    item.get("change_pct_5d"),
+                    item.get("change_pct_20d"),
+                    item.get("lead_stock"),
+                    item.get("main_net_inflow"),
+                    item.get("main_net_inflow_5d"),
+                    item.get("up_down_ratio"),
+                    item.get("rank"),
+                    item.get("zxj"),
+                    item.get("source", source),
+                    item.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": None,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=None,
+            provider_method_name="board_sectors",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_sector_quotes,
+            error_label="板块首页",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("sector_hot_refresh")
     async def collect_sector_hot(self, limit: int = 10) -> list[dict] | None:
         """采集热门板块并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                items = await provider.hot_sectors(limit=limit)
-                if not items:
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                rows: list[tuple] = []
-                for item in items:
-                    rows.append((
-                        item.get("name", ""),
-                        item.get("date", ""),
-                        item.get("sector_type", "industry"),
-                        item.get("symbol"),
-                        item.get("change_pct"),
-                        item.get("turnover_rate"),
-                        item.get("change_pct_5d"),
-                        item.get("change_pct_20d"),
-                        item.get("lead_stock"),
-                        item.get("main_net_inflow"),
-                        item.get("main_net_inflow_5d"),
-                        item.get("up_down_ratio"),
-                        item.get("rank"),
-                        item.get("zxj"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
-                payload = {
-                    "symbol": "sector",
-                    "rows": rows,
-                    "raw_packets": [
-                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_sector_quotes(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return items
-            except Exception as e:
-                logger.warning("Provider {} 采集热门板块失败: {}", provider.name, e)
-                continue
-        return None
+
+        def _build_payload(items, source, collected_at):
+            rows: list[tuple] = []
+            for item in items:
+                rows.append((
+                    item.get("name", ""),
+                    item.get("date", ""),
+                    item.get("sector_type", "industry"),
+                    item.get("symbol"),
+                    item.get("change_pct"),
+                    item.get("turnover_rate"),
+                    item.get("change_pct_5d"),
+                    item.get("change_pct_20d"),
+                    item.get("lead_stock"),
+                    item.get("main_net_inflow"),
+                    item.get("main_net_inflow_5d"),
+                    item.get("up_down_ratio"),
+                    item.get("rank"),
+                    item.get("zxj"),
+                    item.get("source", source),
+                    item.get("collected_at", collected_at),
+                ))
+            return {
+                "symbol": None,
+                "rows": rows,
+                "raw_packets": [
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        return await self._run_collect_with_lock(
+            target=None,
+            provider_method_name="hot_sectors",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_sector_quotes,
+            provider_args={"limit": limit},
+            error_label="热门板块",
+            abort_on_invalid=True,
+        )
 
     @_with_run_log("etf_financial_refresh")
     async def collect_etf_financial(self, symbol: str) -> dict | None:
         """采集 ETF 资产配置并落库。"""
-        for provider in self._get_structured_providers():
-            if not self._is_westock_only(provider):
-                continue
-            try:
-                data = await provider.etf_financial(symbol)
-                if not data or not data.get("date"):
-                    return None
-                collected_at = self._now_iso()
-                source = provider.name
-                row = (
-                    symbol,
-                    data.get("date"),
-                    data.get("total_assets"),
-                    data.get("stock_ratio"),
-                    data.get("bond_ratio"),
-                    data.get("commodity_ratio"),
-                    data.get("fund_ratio"),
-                    data.get("key_asset_ratio"),
-                    data.get("source", source),
-                    data.get("collected_at", collected_at),
-                )
-                payload = {
-                    "symbol": symbol,
-                    "row": row,
-                    "raw_packets": [
-                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
-                    ],
-                }
-                from backend.storage.database import get_connection_sync
-                with _WRITE_LOCK:
-                    conn = get_connection_sync()
-                    try:
-                        self._insert_etf_financial(conn, payload)
-                        conn.commit()
-                    finally:
-                        conn.close()
-                return data
-            except Exception as e:
-                logger.warning("Provider {} 采集 ETF 资产配置失败: {} - {}", provider.name, symbol, e)
-                continue
-        return None
+
+        def _build_payload(data, source, collected_at):
+            row = (
+                symbol,
+                data.get("date"),
+                data.get("total_assets"),
+                data.get("stock_ratio"),
+                data.get("bond_ratio"),
+                data.get("commodity_ratio"),
+                data.get("fund_ratio"),
+                data.get("key_asset_ratio"),
+                data.get("source", source),
+                data.get("collected_at", collected_at),
+            )
+            return {
+                "symbol": symbol,
+                "row": row,
+                "raw_packets": [
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                ],
+            }
+
+        def _validate(data):
+            return bool(data) and bool(data.get("date"))
+
+        return await self._run_collect_with_lock(
+            target=symbol,
+            provider_method_name="etf_financial",
+            payload_builder=_build_payload,
+            insert_fn=self._insert_etf_financial,
+            validate_fn=_validate,
+            error_label="ETF 资产配置",
+            abort_on_invalid=True,
+        )
 
     def get_dividends(
         self,
