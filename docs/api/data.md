@@ -1036,7 +1036,7 @@ X-API-Key: marketlens-local
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `sector_type` | string | — | industry \| concept \| fund_flow，None 时返回所有 |
-| `date` | string (date) | — | YYYY-MM-DD，None 时取最新 |
+| `date` | date | — | YYYY-MM-DD，None 时取最新；FastAPI 自动 ISO 422 校验 |
 | `limit` | integer | 50 | 取值范围 1-200 |
 
 ```http
@@ -1560,8 +1560,8 @@ GET /api/v1/data/blocktrade/sh600519?limit=5 HTTP/1.1
       "turnover_price": 1650.0,
       "turnover_value": 330000000.0,
       "close_discount_rate": -1.79,
-      "buy_department": "机构专用",
-      "sell_department": "海通证券上海某营业部",
+      "buy_department": "[\"机构专用\", \"华泰证券益田路\"]",
+      "sell_department": "[\"海通证券上海某营业部\"]",
       "source": "westock",
       "collected_at": "2026-06-04T16:00:00+08:00"
     }
@@ -1569,6 +1569,11 @@ GET /api/v1/data/blocktrade/sh600519?limit=5 HTTP/1.1
   "total": 1
 }
 ```
+
+> `buy_department` / `sell_department` 为 JSON 数组字符串（同一 (symbol, date) 可能多笔）；
+> 明细表 2 缺失或列名不匹配时回落 `null`（向后兼容旧 CLI 输出）。
+> 客户端需 `json.loads()` 解析。
+
 </details>
 
 <details>
@@ -1606,8 +1611,8 @@ GET /api/v1/data/lhb/sh600519?limit=5 HTTP/1.1
       "close_price": 1680.0,
       "change_pct": 0.5,
       "net_buy_amount": 85000000.0,
-      "buy_department": "东方证券上海某营业部",
-      "sell_department": "中信证券北京某营业部",
+      "buy_department": "[\"东方证券上海某营业部\"]",
+      "sell_department": "[\"中信证券北京某营业部\"]",
       "reason": "日涨幅偏离值达 7%",
       "source": "westock",
       "collected_at": "2026-06-04T16:00:00+08:00"
@@ -1616,6 +1621,11 @@ GET /api/v1/data/lhb/sh600519?limit=5 HTTP/1.1
   "total": 1
 }
 ```
+
+> `buy_department` / `sell_department` 为 JSON 数组字符串（同一 (symbol, date) 可能多条记录）；
+> 明细表 2 缺失或列名不匹配时回落 `null`（向后兼容旧 CLI 输出）。
+> 客户端需 `json.loads()` 解析。
+
 </details>
 
 <details>
@@ -1676,12 +1686,15 @@ X-API-Key: marketlens-local
       "turnover_price": 1650.0,
       "turnover_value": 330000000.0,
       "close_discount_rate": -1.79,
-      "buy_department": "机构专用",
-      "sell_department": "海通证券上海某营业部"
+      "buy_department": "[\"机构专用\", \"华泰证券益田路\"]",
+      "sell_department": "[\"海通证券上海某营业部\"]"
     }
   ]
 }
 ```
+
+> `buy_department` / `sell_department` 为 JSON 数组字符串（多笔合并）。
+
 </details>
 
 <details>
@@ -1717,13 +1730,16 @@ X-API-Key: marketlens-local
       "name": "贵州茅台",
       "close_price": 1680.0,
       "net_buy_amount": 85000000.0,
-      "buy_department": "东方证券上海某营业部",
-      "sell_department": "中信证券北京某营业部",
+      "buy_department": "[\"东方证券上海某营业部\"]",
+      "sell_department": "[\"中信证券北京某营业部\"]",
       "reason": "日涨幅偏离值达 7%"
     }
   ]
 }
 ```
+
+> `buy_department` / `sell_department` 为 JSON 数组字符串（多行合并）。
+
 </details>
 
 <details>

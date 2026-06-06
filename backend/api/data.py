@@ -399,19 +399,20 @@ def get_sector_board(
     sector_type: str | None = Query(
         None, description="industry | concept | fund_flow，None 时返回所有"
     ),
-    date: str | None = Query(None, description="YYYY-MM-DD，None 时取最新"),
+    date: date | None = Query(None, description="YYYY-MM-DD，None 时取最新"),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict:
     """查询板块首页数据（行业/概念涨幅榜 + 行业资金流入 Top5）。"""
+    date_str = date.isoformat() if date is not None else None
     items = _service.get_sector_quotes(
-        sector_type=sector_type, date=date, limit=limit
+        sector_type=sector_type, date=date_str, limit=limit
     )
     if not items:
         raise HTTPException(
             status_code=404,
             detail={"error": "NO_DATA", "detail": "无板块首页数据"},
         )
-    return {"items": items, "total": len(items), "sector_type": sector_type, "date": date}
+    return {"items": items, "total": len(items), "sector_type": sector_type, "date": date_str}
 
 
 @router.get("/sectors/hot")
