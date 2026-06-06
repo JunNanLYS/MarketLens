@@ -264,6 +264,103 @@ TABLE_DDLS: list[str] = [
         UNIQUE(symbol, report_date, source)
     )
     """,
+    # ------------------------------------------------------------------
+    # 阶段 14：ETF 全套（5 张表）
+    # westock CLI etf / etf-holdings / etf-nav / etf-holders / etf-financial
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS etf_basic (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        date TEXT NOT NULL,
+        etf_type TEXT,
+        establish_date TEXT,
+        track_index_code TEXT,
+        track_index_name TEXT,
+        manage_institution TEXT,
+        close_price REAL,
+        change_pct REAL,
+        total_mv REAL,
+        shares REAL,
+        shares_chg REAL,
+        nav REAL,
+        disc REAL,
+        ytd_return REAL,
+        return_1m REAL,
+        return_3m REAL,
+        return_6m REAL,
+        return_1y REAL,
+        return_3y REAL,
+        max_drawdown_1m REAL,
+        max_drawdown_3m REAL,
+        max_drawdown_6m REAL,
+        max_drawdown_1y REAL,
+        max_drawdown_3y REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(code, date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS etf_holdings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        constituent_code TEXT NOT NULL,
+        constituent_name TEXT,
+        ratio REAL,
+        date TEXT NOT NULL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(code, constituent_code, date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS etf_nav_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        date TEXT NOT NULL,
+        nav REAL,
+        nav_change REAL,
+        nav_change_pct REAL,
+        acc_nav REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(code, date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS etf_holders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        report_date TEXT NOT NULL,
+        holder_account INTEGER,
+        individual_holder_share REAL,
+        individual_holder_ratio REAL,
+        institution_holder_share REAL,
+        institution_holder_ratio REAL,
+        top10_share REAL,
+        top10_ratio REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(code, report_date, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS etf_financial (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        date TEXT NOT NULL,
+        total_assets REAL,
+        stock_ratio REAL,
+        bond_ratio REAL,
+        commodity_ratio REAL,
+        fund_ratio REAL,
+        key_asset_ratio REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(code, date, source)
+    )
+    """,
 ]
 
 INDEX_DDLS: list[str] = [
@@ -334,6 +431,27 @@ INDEX_DDLS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_shareholder_count_history_symbol_date
     ON shareholder_count_history(symbol, report_date DESC)
+    """,
+    # 阶段 14: ETF 表索引
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_basic_code_date
+    ON etf_basic(code, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_holdings_code_date
+    ON etf_holdings(code, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_nav_history_code_date
+    ON etf_nav_history(code, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_holders_code_report
+    ON etf_holders(code, report_date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_financial_code_date
+    ON etf_financial(code, date DESC)
     """,
 ]
 

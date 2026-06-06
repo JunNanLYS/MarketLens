@@ -583,6 +583,215 @@ class CollectionService:
         )
         return cur.rowcount
 
+    # ------------------------------------------------------------------
+    # 阶段 14：ETF 5 个 _fetch_*（仅网络 IO，不写库）
+    # ------------------------------------------------------------------
+
+    async def _fetch_etf_info(self, symbol: str) -> dict:
+        """ETF 基本信息 fetch（单条 row + raw_packets）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.etf_info(symbol)
+                if not data or not data.get("date"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("etf_type"),
+                    data.get("establish_date"),
+                    data.get("track_index_code"),
+                    data.get("track_index_name"),
+                    data.get("manage_institution"),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("total_mv"),
+                    data.get("shares"),
+                    data.get("shares_chg"),
+                    data.get("nav"),
+                    data.get("disc"),
+                    data.get("ytd_return"),
+                    data.get("return_1m"),
+                    data.get("return_3m"),
+                    data.get("return_6m"),
+                    data.get("return_1y"),
+                    data.get("return_3y"),
+                    data.get("max_drawdown_1m"),
+                    data.get("max_drawdown_3m"),
+                    data.get("max_drawdown_6m"),
+                    data.get("max_drawdown_1y"),
+                    data.get("max_drawdown_3y"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 基础信息失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
+    async def _fetch_etf_holdings(self, symbol: str) -> dict:
+        """ETF 成分股 fetch（多行 rows）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.etf_holdings(symbol)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append((
+                        symbol,
+                        item.get("constituent_code", ""),
+                        item.get("constituent_name"),
+                        item.get("ratio"),
+                        item.get("date", ""),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 成分股失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    async def _fetch_etf_nav(self, symbol: str, start: str, end: str) -> dict:
+        """ETF 历史净值 fetch（多行）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.etf_nav(symbol, start, end)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append((
+                        symbol,
+                        item.get("date", ""),
+                        item.get("nav"),
+                        item.get("nav_change"),
+                        item.get("nav_change_pct"),
+                        item.get("acc_nav"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 净值失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    async def _fetch_etf_holders(self, symbol: str) -> dict:
+        """ETF 持有人结构 fetch（单条）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.etf_holders(symbol)
+                if not data or not data.get("report_date"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("report_date"),
+                    data.get("holder_account"),
+                    data.get("individual_holder_share"),
+                    data.get("individual_holder_ratio"),
+                    data.get("institution_holder_share"),
+                    data.get("institution_holder_ratio"),
+                    data.get("top10_share"),
+                    data.get("top10_ratio"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 持有人失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
+    async def _fetch_etf_financial(self, symbol: str) -> dict:
+        """ETF 资产配置 fetch（单条）。"""
+        success = 0
+        failed = 0
+        row: tuple | None = None
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.etf_financial(symbol)
+                if not data or not data.get("date"):
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                )
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("total_assets"),
+                    data.get("stock_ratio"),
+                    data.get("bond_ratio"),
+                    data.get("commodity_ratio"),
+                    data.get("fund_ratio"),
+                    data.get("key_asset_ratio"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                success = 1
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 资产配置失败: {} - {}", provider.name, symbol, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+
     async def _fetch_shareholder(self, symbol: str) -> dict:
         """仅网络 IO，不写库；返回股东结构 + 股东户数历史 + 计数供上层落盘。
 
@@ -674,6 +883,104 @@ class CollectionService:
             )
             count_inserted = cur.rowcount
         return top_inserted, count_inserted
+
+    # ------------------------------------------------------------------
+    # 阶段 14：ETF 5 个 _insert_* 静态方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _insert_etf_basic(conn: sqlite3.Connection, payload: dict) -> int:
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "etf_basic", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO etf_basic
+               (code, date, etf_type, establish_date,
+                track_index_code, track_index_name, manage_institution,
+                close_price, change_pct, total_mv, shares, shares_chg,
+                nav, disc, ytd_return,
+                return_1m, return_3m, return_6m, return_1y, return_3y,
+                max_drawdown_1m, max_drawdown_3m, max_drawdown_6m,
+                max_drawdown_1y, max_drawdown_3y,
+                source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_etf_holdings(conn: sqlite3.Connection, payload: dict) -> int:
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "etf_holdings", raw_json, collected_at
+            )
+        if not payload["rows"]:
+            return 0
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO etf_holdings
+               (code, constituent_code, constituent_name, ratio, date, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_etf_nav(conn: sqlite3.Connection, payload: dict) -> int:
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "etf_nav", raw_json, collected_at
+            )
+        if not payload["rows"]:
+            return 0
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO etf_nav_history
+               (code, date, nav, nav_change, nav_change_pct, acc_nav, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_etf_holders(conn: sqlite3.Connection, payload: dict) -> int:
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "etf_holders", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO etf_holders
+               (code, report_date, holder_account,
+                individual_holder_share, individual_holder_ratio,
+                institution_holder_share, institution_holder_ratio,
+                top10_share, top10_ratio,
+                source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_etf_financial(conn: sqlite3.Connection, payload: dict) -> int:
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, payload["symbol"], source, "etf_financial", raw_json, collected_at
+            )
+        if payload["row"] is None:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO etf_financial
+               (code, date, total_assets, stock_ratio, bond_ratio,
+                commodity_ratio, fund_ratio, key_asset_ratio,
+                source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["row"],
+        )
+        return cur.rowcount
 
     async def _collect_daily_close_for_symbol(
         self, write_lock: threading.Lock, symbol: str
@@ -1070,6 +1377,249 @@ class CollectionService:
             return None
         return dict(row)
 
+    # ------------------------------------------------------------------
+    # 阶段 14：ETF 5 个 collect_* 公开方法（手动触发采集 + 落库）
+    # ------------------------------------------------------------------
+
+    async def collect_etf_info(self, symbol: str) -> dict | None:
+        """采集 ETF 基本信息并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.etf_info(symbol)
+                if not data or not data.get("date"):
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("etf_type"),
+                    data.get("establish_date"),
+                    data.get("track_index_code"),
+                    data.get("track_index_name"),
+                    data.get("manage_institution"),
+                    data.get("close_price"),
+                    data.get("change_pct"),
+                    data.get("total_mv"),
+                    data.get("shares"),
+                    data.get("shares_chg"),
+                    data.get("nav"),
+                    data.get("disc"),
+                    data.get("ytd_return"),
+                    data.get("return_1m"),
+                    data.get("return_3m"),
+                    data.get("return_6m"),
+                    data.get("return_1y"),
+                    data.get("return_3y"),
+                    data.get("max_drawdown_1m"),
+                    data.get("max_drawdown_3m"),
+                    data.get("max_drawdown_6m"),
+                    data.get("max_drawdown_1y"),
+                    data.get("max_drawdown_3y"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_etf_basic(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 基础信息失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_etf_holdings(self, symbol: str) -> list[dict] | None:
+        """采集 ETF 成分股并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.etf_holdings(symbol)
+                if not items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in items:
+                    rows.append((
+                        symbol,
+                        item.get("constituent_code", ""),
+                        item.get("constituent_name"),
+                        item.get("ratio"),
+                        item.get("date", ""),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                payload = {
+                    "symbol": symbol,
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_etf_holdings(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return items
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 成分股失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_etf_nav(
+        self, symbol: str, start: str, end: str
+    ) -> list[dict] | None:
+        """采集 ETF 历史净值并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.etf_nav(symbol, start, end)
+                if not items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in items:
+                    rows.append((
+                        symbol,
+                        item.get("date", ""),
+                        item.get("nav"),
+                        item.get("nav_change"),
+                        item.get("nav_change_pct"),
+                        item.get("acc_nav"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                payload = {
+                    "symbol": symbol,
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_etf_nav(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return items
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 净值失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_etf_holders(self, symbol: str) -> dict | None:
+        """采集 ETF 持有人结构并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.etf_holders(symbol)
+                if not data or not data.get("report_date"):
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("report_date"),
+                    data.get("holder_account"),
+                    data.get("individual_holder_share"),
+                    data.get("individual_holder_ratio"),
+                    data.get("institution_holder_share"),
+                    data.get("institution_holder_ratio"),
+                    data.get("top10_share"),
+                    data.get("top10_ratio"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_etf_holders(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 持有人失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
+    async def collect_etf_financial(self, symbol: str) -> dict | None:
+        """采集 ETF 资产配置并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                data = await provider.etf_financial(symbol)
+                if not data or not data.get("date"):
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                row = (
+                    symbol,
+                    data.get("date"),
+                    data.get("total_assets"),
+                    data.get("stock_ratio"),
+                    data.get("bond_ratio"),
+                    data.get("commodity_ratio"),
+                    data.get("fund_ratio"),
+                    data.get("key_asset_ratio"),
+                    data.get("source", source),
+                    data.get("collected_at", collected_at),
+                )
+                payload = {
+                    "symbol": symbol,
+                    "row": row,
+                    "raw_packets": [
+                        (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_etf_financial(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return data
+            except Exception as e:
+                logger.warning("Provider {} 采集 ETF 资产配置失败: {} - {}", provider.name, symbol, e)
+                continue
+        return None
+
     def get_dividends(
         self,
         symbol: str,
@@ -1160,6 +1710,95 @@ class CollectionService:
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
+
+    def get_etf_basic(
+        self,
+        symbol: str,
+        source: str | None = None,
+    ) -> dict | None:
+        """查询 ETF 基本信息（最新一条）。"""
+        conditions: list[str] = ["code = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        sql = f"SELECT * FROM etf_basic WHERE {where} ORDER BY date DESC LIMIT 1"
+        with get_db() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def get_etf_holdings(
+        self,
+        symbol: str,
+        limit: int = 50,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询 ETF 成分股（最新清单）。"""
+        conditions: list[str] = ["code = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM etf_holdings WHERE {where} ORDER BY date DESC, ratio DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_etf_nav(
+        self,
+        symbol: str,
+        limit: int = 60,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询 ETF 历史净值。"""
+        conditions: list[str] = ["code = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        sql = f"SELECT * FROM etf_nav_history WHERE {where} ORDER BY date DESC LIMIT ?"
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_etf_holders(
+        self,
+        symbol: str,
+        source: str | None = None,
+    ) -> dict | None:
+        """查询 ETF 持有人结构（最新一条）。"""
+        conditions: list[str] = ["code = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        sql = f"SELECT * FROM etf_holders WHERE {where} ORDER BY report_date DESC LIMIT 1"
+        with get_db() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def get_etf_financial(
+        self,
+        symbol: str,
+        source: str | None = None,
+    ) -> dict | None:
+        """查询 ETF 资产配置（最新一条）。"""
+        conditions: list[str] = ["code = ?"]
+        params: list[Any] = [symbol]
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions)
+        sql = f"SELECT * FROM etf_financial WHERE {where} ORDER BY date DESC LIMIT 1"
+        with get_db() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
 
     def get_minute_klines(
         self,

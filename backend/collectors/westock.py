@@ -530,3 +530,148 @@ class WeStockProvider(BaseProvider):
             "source": "westock",
             "collected_at": self._now(),
         }
+
+    # ------------------------------------------------------------------
+    # 阶段 14：ETF 全套（5 个方法 + 5 个 _normalize）
+    # westock CLI: etf / etf-holdings / etf-nav / etf-holders / etf-financial
+    # ------------------------------------------------------------------
+
+    async def etf_info(self, symbol: str) -> dict:
+        """获取 ETF 基本信息 + 行情（含 etfType/trackIndex/returns/drawdown）。
+
+        返回单条 dict（CLI 单行输出）。
+        """
+        tables, err = await self._run_cli(f"etf {symbol}")
+        if err or not tables or not tables[0]:
+            return {
+                "symbol": symbol,
+                "source": "westock",
+                "collected_at": self._now(),
+            }
+        return self._normalize_etf_info(tables[0][0], symbol)
+
+    async def etf_holdings(self, symbol: str) -> list[dict]:
+        """获取 ETF 成分股持仓（多行）。"""
+        tables, err = await self._run_cli(f"etf-holdings {symbol}")
+        if err or not tables or not tables[0]:
+            return []
+        return [self._normalize_etf_holding_row(row, symbol) for row in tables[0]]
+
+    async def etf_nav(self, symbol: str, start: str, end: str) -> list[dict]:
+        """获取 ETF 历史净值（多行，需 start/end 日期）。"""
+        tables, err = await self._run_cli(
+            f"etf-nav {symbol} --start {start} --end {end}"
+        )
+        if err or not tables or not tables[0]:
+            return []
+        return [self._normalize_etf_nav_row(row, symbol) for row in tables[0]]
+
+    async def etf_holders(self, symbol: str) -> dict:
+        """获取 ETF 持有人结构（单条 dict）。"""
+        tables, err = await self._run_cli(f"etf-holders {symbol}")
+        if err or not tables or not tables[0]:
+            return {
+                "symbol": symbol,
+                "source": "westock",
+                "collected_at": self._now(),
+            }
+        return self._normalize_etf_holders(tables[0][0], symbol)
+
+    async def etf_financial(self, symbol: str) -> dict:
+        """获取 ETF 资产配置（股票/债券/商品/基金占比，单条 dict）。"""
+        tables, err = await self._run_cli(f"etf-financial {symbol}")
+        if err or not tables or not tables[0]:
+            return {
+                "symbol": symbol,
+                "source": "westock",
+                "collected_at": self._now(),
+            }
+        return self._normalize_etf_financial(tables[0][0], symbol)
+
+    # ------------------------------------------------------------------
+    # 阶段 14：ETF 5 个 _normalize
+    # 兼容中英文字段别名（westock CLI 不同版本字段名可能不同）
+    # ------------------------------------------------------------------
+
+    def _normalize_etf_info(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "date": raw.get("date", ""),
+            "etf_type": raw.get("etfType", ""),
+            "establish_date": raw.get("establishDate", ""),
+            "track_index_code": raw.get("trackIndexCode", ""),
+            "track_index_name": raw.get("trackIndexName", ""),
+            "manage_institution": raw.get("manageInstitution", ""),
+            "close_price": _try_number(raw.get("closePrice", "")),
+            "change_pct": _try_number(raw.get("changePct", "")),
+            "total_mv": _try_number(raw.get("totalMV", "")),
+            "shares": _try_number(raw.get("shares", "")),
+            "shares_chg": _try_number(raw.get("sharesChg", "")),
+            "nav": _try_number(raw.get("nav", "")),
+            "disc": _try_number(raw.get("disc", "")),
+            "ytd_return": _try_number(raw.get("ytdReturn", "")),
+            "return_1m": _try_number(raw.get("return1M", "")),
+            "return_3m": _try_number(raw.get("return3M", "")),
+            "return_6m": _try_number(raw.get("return6M", "")),
+            "return_1y": _try_number(raw.get("return1Y", "")),
+            "return_3y": _try_number(raw.get("return3Y", "")),
+            "max_drawdown_1m": _try_number(raw.get("maxDrawdown1M", "")),
+            "max_drawdown_3m": _try_number(raw.get("maxDrawdown3M", "")),
+            "max_drawdown_6m": _try_number(raw.get("maxDrawdown6M", "")),
+            "max_drawdown_1y": _try_number(raw.get("maxDrawdown1Y", "")),
+            "max_drawdown_3y": _try_number(raw.get("maxDrawdown3Y", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_etf_holding_row(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "constituent_code": raw.get("code", ""),
+            "constituent_name": raw.get("name", ""),
+            "ratio": _try_number(raw.get("ratio", "")),
+            "date": raw.get("date", ""),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_etf_nav_row(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "date": raw.get("date", ""),
+            "nav": _try_number(raw.get("nav", "")),
+            "nav_change": _try_number(raw.get("navChange", "")),
+            "nav_change_pct": _try_number(raw.get("navChangePct", "")),
+            "acc_nav": _try_number(raw.get("accNav", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_etf_holders(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "report_date": raw.get("date", ""),
+            "holder_account": _try_number(raw.get("holderAccount", "")),
+            "individual_holder_share": _try_number(raw.get("individualHolderShare", "")),
+            "individual_holder_ratio": _try_number(raw.get("individualHolderRatio", "")),
+            "institution_holder_share": _try_number(raw.get("institutionHolderShare", "")),
+            "institution_holder_ratio": _try_number(raw.get("institutionHolderRatio", "")),
+            "top10_share": _try_number(raw.get("top10Share", "")),
+            "top10_ratio": _try_number(raw.get("top10Ratio", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_etf_financial(self, raw: dict, symbol: str) -> dict:
+        return {
+            "symbol": symbol,
+            "date": raw.get("date", ""),
+            "total_assets": _try_number(raw.get("totalAssets", "")),
+            "stock_ratio": _try_number(raw.get("stockRatio", "")),
+            "bond_ratio": _try_number(raw.get("bondRatio", "")),
+            "commodity_ratio": _try_number(raw.get("commodityRatio", "")),
+            "fund_ratio": _try_number(raw.get("fundRatio", "")),
+            "key_asset_ratio": _try_number(raw.get("keyAssetRatio", "")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }
