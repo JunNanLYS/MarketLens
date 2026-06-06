@@ -73,6 +73,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     if _scheduler_manager is not None:
         _scheduler_manager.shutdown()
+    # 关闭所有 Provider 持有的 httpx.AsyncClient，避免 Windows Proactor 偶发
+    # "Unclosed client" 警告及进程被强制 kill 时的 socket 泄漏。详见 CLAUDE.md
+    # "Resource cleanup" 硬约束。Service 持有 list[BaseProvider]，遍历调
+    # close()；BaseProvider.close() 是空默认实现（base.py:43,92），无 httpx 客户端
+    # 的 Provider 走空操作，有客户端的子类会覆盖 aclose()。单 Provider 失败
+    # 不阻断其他 Provider 的关闭。
+    from backend.scheduler.jobs import _get_collection_service, _get_news_service
+    try:
+        for provider in _get_collection_service()._get_structured_providers():
+            try:
+                await provider.close()
+            except Exception:
+                logger.exception("关闭 Provider 失败: {}", provider.name)
+        for provider in _get_news_service()._providers:
+            try:
+                await provider.close()
+            except Exception:
+                logger.exception("关闭 Provider 失败: {}", provider.name)
+    except Exception:
+        logger.exception("Provider 关闭阶段异常")
     logger.info("MarketLens 应用已关闭")
 
 
