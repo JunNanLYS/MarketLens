@@ -658,6 +658,20 @@ INDEX_DDLS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_lhb_symbol_date
     ON lhb_data(symbol, date DESC)
     """,
+    # 阶段 14/15: cleanup 任务按 collected_at 删除时需要的单列索引
+    # UNIQUE(code, date, source) 等隐式索引最左列为 code/symbol，无法加速 collected_at 过滤
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_basic_collected_at
+    ON etf_basic(collected_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_etf_holdings_collected_at
+    ON etf_holdings(collected_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_us_financials_collected_at
+    ON us_financials(collected_at DESC)
+    """,
 ]
 
 

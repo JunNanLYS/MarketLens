@@ -192,23 +192,73 @@ def _run_ai_report() -> None:
         logger.exception("定时任务执行异常: ai_report")
 
 
+# 过期数据清理注册表：表名 → (时间列名, 保留天数)
+# 时间列名语义：
+#   - collected_at: 采集时间戳，按"采集时间"滚动保留（适合 etf_basic/etf_holdings/us_financials
+#     等因 UNIQUE(code/symbol, date, source) 每日 upsert 的表，保留 N 天采集快照即可）
+#   - date / report_date / event_date / end_date: 数据所属业务日期，按"业务日期"滚动保留
+#     （适合按日增量写入的行情/榜单/事件类表）
+# 保留天数原则：
+#   - 行情/榜单/事件类（每日增量、价值随时间衰减）：365 天
+#   - 财报/净值/历史/大单/龙虎榜（业务分析价值高）：1825 天（5 年）
+# 调整策略：仅修改本字典即可，无需改清理逻辑。
+CLEANUP_RULES: dict[str, tuple[str, int]] = {
+    "raw_data": ("collected_at", 30),
+    "etf_basic": ("collected_at", 365),
+    "etf_holdings": ("collected_at", 365),
+    "etf_nav_history": ("date", 1825),
+    "etf_holders": ("report_date", 365),  # 表内业务日期列名为 report_date，非 date
+    "etf_financial": ("date", 1825),
+    "sector_daily_quote": ("date", 365),
+    "us_financials": ("collected_at", 1825),
+    "ipo_exdiv_calendar": ("event_date", 1825),
+    "chip_distribution": ("date", 365),
+    "margintrade_data": ("date", 365),
+    "blocktrade_data": ("date", 1825),
+    "lhb_data": ("date", 1825),
+    "profit_forecasts": ("report_period", 1825),
+}
+
+
 def _run_cleanup() -> None:
+    """按 CLEANUP_RULES 注册表清理 13 张新表 + raw_data 的过期数据。
+
+    策略：
+      - 注册表驱动：新增/调整保留策略仅需改 CLEANUP_RULES
+      - 单表失败不影响其他表（每个 DELETE 独立 try/except）
+      - 时间列名/保留天数均通过参数化绑定传入，避免 SQL 注入
+      - 表名/列名取自模块级常量 CLEANUP_RULES，安全
+    """
     try:
         logger.info("定时任务触发: cleanup")
         from backend.services.collection_service import _WRITE_LOCK
         from backend.storage.database import get_connection_sync
+        total_deleted: int = 0
         with _WRITE_LOCK:
             conn = get_connection_sync()
             try:
-                cursor = conn.execute(
-                    "DELETE FROM raw_data WHERE collected_at < datetime('now', '-30 days')"
-                )
-                deleted = cursor.rowcount
+                for table, (time_col, days) in CLEANUP_RULES.items():
+                    try:
+                        cursor = conn.execute(
+                            f"DELETE FROM {table} "  # 表名来自模块级常量，安全
+                            f"WHERE {time_col} < datetime('now', ?)",  # 同上
+                            (f"-{days} days",),
+                        )
+                        deleted: int = cursor.rowcount
+                        total_deleted += deleted
+                        if deleted > 0:
+                            logger.info(
+                                "清理了 {} 条 {} 过期数据 ({}>{}天)",
+                                deleted, table, time_col, days,
+                            )
+                    except Exception:
+                        # 单表失败不影响其他表：cleanup 是幂等可重入的
+                        logger.exception("清理表 {} 失败", table)
                 conn.commit()
             finally:
                 conn.close()
-        if deleted > 0:
-            logger.info("清理了 {} 条过期原始数据", deleted)
+        if total_deleted > 0:
+            logger.info("cleanup 本次共清理 {} 条过期数据", total_deleted)
     except Exception:
         logger.exception("定时任务执行异常: cleanup")
 
