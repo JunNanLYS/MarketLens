@@ -675,3 +675,99 @@ class WeStockProvider(BaseProvider):
             "source": "westock",
             "collected_at": self._now(),
         }
+
+    # ------------------------------------------------------------------
+    # 阶段 8 修正：板块首页 (board) + 热门板块 (hot board)
+    # ------------------------------------------------------------------
+
+    async def board_sectors(self) -> list[dict]:
+        """调 board，合并 3 张表（行业涨幅/概念涨幅/行业资金流入 Top5）为统一 list。
+
+        sector_type 字段强制注入，避免 UNIQUE(name, date, sector_type, source)
+        在 3 类数据合并时丢失分类信息。
+        """
+        tables, err = await self._run_cli("board")
+        if err or not tables:
+            return []
+        results: list[dict] = []
+        # board 返回 3 张表: [0] 行业涨幅 / [1] 概念涨幅 / [2] 行业资金流入 Top5
+        type_table_pairs: list[tuple[str, list[dict]]] = []
+        if len(tables) > 0 and tables[0] is not None:
+            type_table_pairs.append(("industry", tables[0]))
+        if len(tables) > 1 and tables[1] is not None:
+            type_table_pairs.append(("concept", tables[1]))
+        if len(tables) > 2 and tables[2] is not None:
+            type_table_pairs.append(("fund_flow", tables[2]))
+        for sector_type, table in type_table_pairs:
+            for row in table:
+                results.append(self._normalize_board_sector_row(row, sector_type))
+        return results
+
+    async def hot_sectors(self, limit: int = 10) -> list[dict]:
+        """调 hot board，返回热门板块（默认前 10）。
+
+        CLI 返回的每行带 symbol (如 pt01801161) + name + zdf (涨幅) + zxj (最新价) +
+        rank + rankdelta + stock_type (BK-HY-2=行业 / BK=概念)。
+        """
+        tables, err = await self._run_cli(f"hot board --limit {limit}")
+        if err or not tables or not tables[0]:
+            return []
+        return [self._normalize_hot_sector_row(row) for row in tables[0]]
+
+    def _normalize_board_sector_row(
+        self, raw: dict, sector_type: str
+    ) -> dict:
+        """board 输出字段:
+        - 行业/概念涨幅: name / changePct / turnoverRate / changePct5d /
+          changePct20d / leadStock
+        - 行业资金流入 Top5: name / changePct / mainNetInflow /
+          mainNetInflow5d / upDownRatio
+        """
+        return {
+            "name": raw.get("name", ""),
+            "date": raw.get("date", ""),
+            "sector_type": sector_type,
+            "symbol": None,
+            "change_pct": _try_number(raw.get("changePct")),
+            "turnover_rate": _try_number(raw.get("turnoverRate")),
+            "change_pct_5d": _try_number(raw.get("changePct5d")),
+            "change_pct_20d": _try_number(raw.get("changePct20d")),
+            "lead_stock": raw.get("leadStock"),
+            "main_net_inflow": _try_number(raw.get("mainNetInflow")),
+            "main_net_inflow_5d": _try_number(raw.get("mainNetInflow5d")),
+            "up_down_ratio": _try_number(raw.get("upDownRatio")),
+            "rank": None,
+            "zxj": None,
+            "source": "westock",
+            "collected_at": self._now(),
+        }
+
+    def _normalize_hot_sector_row(self, raw: dict) -> dict:
+        """hot board 输出: index / level / symbol / rank / rankdelta / date /
+        stock_type / name / zdf (涨幅) / zxj (最新价)。"""
+        # hot board 的 stock_type: BK-HY-2=行业 / BK=概念 → sector_type 映射
+        stype = raw.get("stock_type", "")
+        if stype.startswith("BK-HY"):
+            sector_type = "industry"
+        elif stype == "BK":
+            sector_type = "concept"
+        else:
+            sector_type = "industry"  # 默认行业
+        return {
+            "name": raw.get("name", ""),
+            "date": (raw.get("date", "") or "").split(" ")[0],
+            "sector_type": sector_type,
+            "symbol": raw.get("symbol"),
+            "change_pct": _try_number(raw.get("zdf")),
+            "turnover_rate": None,
+            "change_pct_5d": None,
+            "change_pct_20d": None,
+            "lead_stock": None,
+            "main_net_inflow": None,
+            "main_net_inflow_5d": None,
+            "up_down_ratio": None,
+            "rank": _try_number(raw.get("rank")),
+            "zxj": _try_number(raw.get("zxj")),
+            "source": "westock",
+            "collected_at": self._now(),
+        }

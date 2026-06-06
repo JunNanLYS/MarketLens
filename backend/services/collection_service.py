@@ -754,6 +754,100 @@ class CollectionService:
                 continue
         return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
 
+    async def _fetch_sector_board(self) -> dict:
+        """板块首页 fetch：3 张表（行业涨幅/概念涨幅/行业资金流入 Top5）合并。
+
+        返回 {"success": int, "failed": int, "rows": list[tuple], "raw_packets": list}
+        无 symbol 参数（板块是全市场级别）。
+        """
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.board_sectors()
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append((
+                        item.get("name", ""),
+                        item.get("date", ""),
+                        item.get("sector_type", "industry"),
+                        item.get("symbol"),
+                        item.get("change_pct"),
+                        item.get("turnover_rate"),
+                        item.get("change_pct_5d"),
+                        item.get("change_pct_20d"),
+                        item.get("lead_stock"),
+                        item.get("main_net_inflow"),
+                        item.get("main_net_inflow_5d"),
+                        item.get("up_down_ratio"),
+                        item.get("rank"),
+                        item.get("zxj"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集板块首页失败: {}", provider.name, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
+    async def _fetch_sector_hot(self, limit: int = 10) -> dict:
+        """热门板块 fetch（top N）。"""
+        success = 0
+        failed = 0
+        rows: list[tuple] = []
+        raw_packets: list[tuple[str, str, str]] = []
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.hot_sectors(limit=limit)
+                if not items:
+                    continue
+                collected_at = self._now_iso()
+                source = provider.name
+                raw_packets.append(
+                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                )
+                for item in items:
+                    rows.append((
+                        item.get("name", ""),
+                        item.get("date", ""),
+                        item.get("sector_type", "industry"),
+                        item.get("symbol"),
+                        item.get("change_pct"),
+                        item.get("turnover_rate"),
+                        item.get("change_pct_5d"),
+                        item.get("change_pct_20d"),
+                        item.get("lead_stock"),
+                        item.get("main_net_inflow"),
+                        item.get("main_net_inflow_5d"),
+                        item.get("up_down_ratio"),
+                        item.get("rank"),
+                        item.get("zxj"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                success = len(items)
+                break
+            except Exception as e:
+                logger.warning("Provider {} 采集热门板块失败: {}", provider.name, e)
+                failed += 1
+                continue
+        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+
     async def _fetch_etf_financial(self, symbol: str) -> dict:
         """ETF 资产配置 fetch（单条）。"""
         success = 0
@@ -961,6 +1055,26 @@ class CollectionService:
                 source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             payload["row"],
+        )
+        return cur.rowcount
+
+    @staticmethod
+    def _insert_sector_quotes(conn: sqlite3.Connection, payload: dict) -> int:
+        """板块首页/热门板块 统一落库（共用 sector_daily_quote 表）。"""
+        for source, raw_json, collected_at in payload["raw_packets"]:
+            CollectionService._save_raw_data(
+                conn, "sector", source, "sector_quote", raw_json, collected_at
+            )
+        if not payload["rows"]:
+            return 0
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO sector_daily_quote
+               (name, date, sector_type, symbol,
+                change_pct, turnover_rate, change_pct_5d, change_pct_20d,
+                lead_stock, main_net_inflow, main_net_inflow_5d, up_down_ratio,
+                rank, zxj, source, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            payload["rows"],
         )
         return cur.rowcount
 
@@ -1576,6 +1690,110 @@ class CollectionService:
                 continue
         return None
 
+    async def collect_sector_board(self) -> dict | None:
+        """采集板块首页（3 张表）并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.board_sectors()
+                if not items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in items:
+                    rows.append((
+                        item.get("name", ""),
+                        item.get("date", ""),
+                        item.get("sector_type", "industry"),
+                        item.get("symbol"),
+                        item.get("change_pct"),
+                        item.get("turnover_rate"),
+                        item.get("change_pct_5d"),
+                        item.get("change_pct_20d"),
+                        item.get("lead_stock"),
+                        item.get("main_net_inflow"),
+                        item.get("main_net_inflow_5d"),
+                        item.get("up_down_ratio"),
+                        item.get("rank"),
+                        item.get("zxj"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                payload = {
+                    "symbol": "sector",
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_sector_quotes(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return items
+            except Exception as e:
+                logger.warning("Provider {} 采集板块首页失败: {}", provider.name, e)
+                continue
+        return None
+
+    async def collect_sector_hot(self, limit: int = 10) -> list[dict] | None:
+        """采集热门板块并落库。"""
+        for provider in self._get_structured_providers():
+            if not isinstance(provider, WeStockProvider):
+                continue
+            try:
+                items = await provider.hot_sectors(limit=limit)
+                if not items:
+                    return None
+                collected_at = self._now_iso()
+                source = provider.name
+                rows: list[tuple] = []
+                for item in items:
+                    rows.append((
+                        item.get("name", ""),
+                        item.get("date", ""),
+                        item.get("sector_type", "industry"),
+                        item.get("symbol"),
+                        item.get("change_pct"),
+                        item.get("turnover_rate"),
+                        item.get("change_pct_5d"),
+                        item.get("change_pct_20d"),
+                        item.get("lead_stock"),
+                        item.get("main_net_inflow"),
+                        item.get("main_net_inflow_5d"),
+                        item.get("up_down_ratio"),
+                        item.get("rank"),
+                        item.get("zxj"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    ))
+                payload = {
+                    "symbol": "sector",
+                    "rows": rows,
+                    "raw_packets": [
+                        (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    ],
+                }
+                from backend.storage.database import get_connection_sync
+                with _WRITE_LOCK:
+                    conn = get_connection_sync()
+                    try:
+                        self._insert_sector_quotes(conn, payload)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return items
+            except Exception as e:
+                logger.warning("Provider {} 采集热门板块失败: {}", provider.name, e)
+                continue
+        return None
+
     async def collect_etf_financial(self, symbol: str) -> dict | None:
         """采集 ETF 资产配置并落库。"""
         for provider in self._get_structured_providers():
@@ -1782,6 +2000,54 @@ class CollectionService:
         with get_db() as conn:
             row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+
+    def get_sector_quotes(
+        self,
+        sector_type: str | None = None,
+        date: str | None = None,
+        limit: int = 50,
+        source: str | None = None,
+    ) -> list[dict]:
+        """查询板块行情。
+
+        Args:
+            sector_type: industry | concept | fund_flow，None 时返回所有类型
+            date: YYYY-MM-DD，None 时取最新一天
+            limit: 返回行数上限
+            source: 数据源过滤
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if sector_type is not None:
+            conditions.append("sector_type = ?")
+            params.append(sector_type)
+        if date is not None:
+            conditions.append("date = ?")
+            params.append(date)
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        # 取最新日期作为子查询锚点
+        if date is None:
+            sql = f"""
+                SELECT * FROM sector_daily_quote
+                WHERE date = (SELECT MAX(date) FROM sector_daily_quote)
+                  AND {where}
+                ORDER BY change_pct DESC
+                LIMIT ?
+            """
+        else:
+            sql = f"""
+                SELECT * FROM sector_daily_quote
+                WHERE {where}
+                ORDER BY change_pct DESC
+                LIMIT ?
+            """
+        params.append(limit)
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
     def get_etf_financial(
         self,

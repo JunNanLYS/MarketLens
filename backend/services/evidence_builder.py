@@ -75,6 +75,7 @@ class EvidenceBuilder:
             dividends = await EvidenceBuilder._build_dividends(conn, symbol)
             shareholders = await EvidenceBuilder._build_shareholders(conn, symbol)
             forecasts = await EvidenceBuilder._build_profit_forecasts(conn, symbol)
+            sector_ctx = await EvidenceBuilder._build_sector_context(conn, symbol)
 
             data_sources = []
             if quote:
@@ -95,6 +96,8 @@ class EvidenceBuilder:
                 data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
             if forecasts:
                 data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
+            if sector_ctx:
+                data_sources.append({"type": "sector_context", "source": sector_ctx.get("source", ""), "collected_at": sector_ctx.get("collected_at", "")})
 
             return {
                 "symbol": symbol,
@@ -107,6 +110,7 @@ class EvidenceBuilder:
                 "dividends": dividends,
                 "shareholders": shareholders,
                 "forecasts": forecasts,
+                "sector_context": sector_ctx,
                 "data_sources": data_sources,
             }
         finally:
@@ -548,6 +552,55 @@ class EvidenceBuilder:
             "history": [dict(r) for r in rows],
             "latest": dict(rows[0]) if rows else None,
             "source": rows[0]["source"] if rows else None,
+        }
+
+    @staticmethod
+    async def _build_sector_context(conn, symbol: str) -> dict | None:
+        """查询板块背景（行业/概念涨幅榜 Top 5 + 资金流入 Top 5）。
+
+        不依赖具体 symbol（板块是全市场级别），但保留 symbol 参数以保持
+        模板一致性。AI 报告引用大盘背景，让"今天哪些板块涨/跌"成为依据。
+        """
+        cursor = await conn.execute(
+            """SELECT * FROM sector_daily_quote
+               WHERE date = (SELECT MAX(date) FROM sector_daily_quote)
+               AND sector_type IN ('industry', 'concept', 'fund_flow')
+               ORDER BY change_pct DESC LIMIT 5"""
+        )
+        top_gainers = [dict(r) for r in await cursor.fetchall()]
+
+        cursor = await conn.execute(
+            """SELECT * FROM sector_daily_quote
+               WHERE date = (SELECT MAX(date) FROM sector_daily_quote)
+               AND sector_type IN ('industry', 'concept', 'fund_flow')
+               ORDER BY change_pct ASC LIMIT 5"""
+        )
+        top_losers = [dict(r) for r in await cursor.fetchall()]
+
+        cursor = await conn.execute(
+            """SELECT * FROM sector_daily_quote
+               WHERE date = (SELECT MAX(date) FROM sector_daily_quote)
+               AND sector_type = 'fund_flow'
+               ORDER BY main_net_inflow DESC NULLS LAST LIMIT 5"""
+        )
+        top_fund_inflow = [dict(r) for r in await cursor.fetchall()]
+
+        if not top_gainers and not top_losers and not top_fund_inflow:
+            return None
+
+        source = top_gainers[0].get("source") if top_gainers else (
+            top_losers[0].get("source") if top_losers else (
+                top_fund_inflow[0].get("source") if top_fund_inflow else None
+            )
+        )
+        collected_at = top_gainers[0].get("collected_at") if top_gainers else None
+
+        return {
+            "top_gainers": top_gainers,
+            "top_losers": top_losers,
+            "top_fund_inflow": top_fund_inflow,
+            "source": source,
+            "collected_at": collected_at,
         }
 
     @staticmethod

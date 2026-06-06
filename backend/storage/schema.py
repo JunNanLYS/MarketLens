@@ -361,6 +361,33 @@ TABLE_DDLS: list[str] = [
         UNIQUE(code, date, source)
     )
     """,
+    # ------------------------------------------------------------------
+    # 阶段 8 修正：板块首页数据（sector_daily_quote）
+    # westock CLI board / hot board 输出——行业/概念涨幅榜 + 行业资金流入
+    # UNIQUE 须含 sector_type，因同 name 跨 industry/concept/fund_flow 三类
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS sector_daily_quote (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        date TEXT NOT NULL,
+        sector_type TEXT NOT NULL,
+        symbol TEXT,
+        change_pct REAL,
+        turnover_rate REAL,
+        change_pct_5d REAL,
+        change_pct_20d REAL,
+        lead_stock TEXT,
+        main_net_inflow REAL,
+        main_net_inflow_5d REAL,
+        up_down_ratio REAL,
+        rank INTEGER,
+        zxj REAL,
+        source TEXT,
+        collected_at TIMESTAMP NOT NULL,
+        UNIQUE(name, date, sector_type, source)
+    )
+    """,
 ]
 
 INDEX_DDLS: list[str] = [
@@ -452,6 +479,10 @@ INDEX_DDLS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_etf_financial_code_date
     ON etf_financial(code, date DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_sector_daily_quote_date_type
+    ON sector_daily_quote(date DESC, sector_type)
     """,
 ]
 

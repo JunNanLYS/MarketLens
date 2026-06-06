@@ -356,3 +356,74 @@ async def refresh_etf(
             summary[k] = {"success": r is not None, "items": r}
     return {"symbol": symbol, "summary": summary, "start": start, "end": end}
 
+
+# ============================================================================
+# 阶段 8 修正：板块首页（2 GET 查询 + 1 POST refresh）
+# sector_daily_quote 表——行业/概念涨幅榜 + 资金流入 + 热门板块
+# ============================================================================
+
+
+@router.get("/sectors/board")
+def get_sector_board(
+    sector_type: str | None = Query(
+        None, description="industry | concept | fund_flow，None 时返回所有"
+    ),
+    date: str | None = Query(None, description="YYYY-MM-DD，None 时取最新"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """查询板块首页数据（行业/概念涨幅榜 + 行业资金流入 Top5）。"""
+    items = _service.get_sector_quotes(
+        sector_type=sector_type, date=date, limit=limit
+    )
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": "无板块首页数据"},
+        )
+    return {"items": items, "total": len(items), "sector_type": sector_type, "date": date}
+
+
+@router.get("/sectors/hot")
+def get_sector_hot(
+    limit: int = Query(10, ge=1, le=50),
+) -> dict:
+    """查询热门板块（落库后的最近榜单）。
+
+    注：本端点读取已落库数据；首次访问前需 POST /sectors/refresh 触发采集。
+    """
+    items = _service.get_sector_quotes(limit=limit)
+    # 简单过滤：取 rank 非空的行（即 hot 落库的）
+    hot_items = [it for it in items if it.get("rank") is not None]
+    if not hot_items:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NO_DATA", "detail": "无热门板块数据，请先调用 POST /sectors/refresh"},
+        )
+    return {"items": hot_items, "total": len(hot_items)}
+
+
+@router.post("/sectors/refresh")
+async def refresh_sectors(
+    hot_limit: int = Query(10, ge=1, le=50),
+) -> dict:
+    """手动触发板块首页 + 热门板块 采集并落库。
+
+    两个 collect 并发执行（asyncio.gather），任一失败不影响其它。
+    """
+    results = await asyncio.gather(
+        _service.collect_sector_board(),
+        _service.collect_sector_hot(limit=hot_limit),
+        return_exceptions=True,
+    )
+    summary: dict[str, dict] = {}
+    keys = ["board", "hot"]
+    for k, r in zip(keys, results, strict=True):
+        if isinstance(r, Exception):
+            summary[k] = {"success": False, "error": str(r)}
+        else:
+            if isinstance(r, list):
+                summary[k] = {"success": True, "items": len(r)}
+            else:
+                summary[k] = {"success": r is not None}
+    return {"summary": summary, "hot_limit": hot_limit}
+
