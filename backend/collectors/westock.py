@@ -89,6 +89,11 @@ def _try_number(val: str) -> str | int | float:
         return val
 
 
+# westock CLI 重试常量：SKILL_006 是冷启动失败，TimeoutExpired 同理
+_MAX_RETRIES: int = 2
+_RETRY_BACKOFF: float = 0.5
+
+
 class WeStockProvider(BaseProvider):
 
     def __init__(
@@ -108,41 +113,68 @@ class WeStockProvider(BaseProvider):
         if exe:
             cmd_parts[0] = exe
 
-        # 通过 subprocess.run（模块级引用，便于测试 mock）调用 CLI，
-        # 并用 asyncio.to_thread 避免阻塞事件循环
-        try:
-            proc = await asyncio.to_thread(
-                subprocess.run,
-                cmd_parts,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning("WeStock CLI 超时: cmd={}, timeout={}s", cmd_parts, self.timeout)
-            return [], f"CLI 超时 ({self.timeout}s)"
-        except Exception as e:
-            logger.error("WeStock CLI 异常: cmd={}, error={}", cmd_parts, e)
-            return [], str(e)
+        # SKILL_006 是 westock CLI 的冷启动失败——首次调用偶发返回，
+        # 重试 1-2 次即恢复。TimeoutExpired 同理（CLI 冷启动慢）。
+        # 其它错误（参数错 / 数据源无数据）立即返回，避免无谓重试。
+        last_err: str | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            # 通过 subprocess.run（模块级引用，便于测试 mock）调用 CLI，
+            # 并用 asyncio.to_thread 避免阻塞事件循环
+            try:
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd_parts,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                )
+            except subprocess.TimeoutExpired:
+                last_err = f"CLI 超时 ({self.timeout}s)"
+                logger.warning(
+                    "WeStock CLI 超时 [attempt {}/{}]: cmd={}",
+                    attempt + 1, _MAX_RETRIES + 1, cmd_parts,
+                )
+                if attempt < _MAX_RETRIES:
+                    await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+                    continue
+                return [], last_err
+            except Exception as e:
+                # 非超时/非 SKILL_006 错误，立即返回，不重试
+                logger.error("WeStock CLI 异常: cmd={}, error={}", cmd_parts, e)
+                return [], str(e)
 
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
 
-        error = _detect_error(stdout)
-        if error:
-            logger.warning("WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, error)
-            return [], error
+            error = _detect_error(stdout)
+            if error:
+                last_err = error
+                # 仅 SKILL_006 重试（冷启动缓解），其它业务错误立即返回
+                is_skill_006 = "SKILL_006" in error
+                if is_skill_006 and attempt < _MAX_RETRIES:
+                    logger.warning(
+                        "WeStock CLI 冷启动失败 [attempt {}/{}]: cmd={}, error={}",
+                        attempt + 1, _MAX_RETRIES + 1, cmd_parts, error,
+                    )
+                    await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+                    continue
+                logger.warning("WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, error)
+                return [], error
 
-        if proc.returncode != 0:
-            msg = stderr.strip() or stdout.strip()[:200] or f"exit code {proc.returncode}"
-            logger.warning("WeStock CLI 非零退出: cmd={}, rc={}, msg={}", cmd_parts, proc.returncode, msg)
-            return [], msg
+            if proc.returncode != 0:
+                # 非零退出码立即返回，不重试（重试也无法修复 CLI bug）
+                msg = stderr.strip() or stdout.strip()[:200] or f"exit code {proc.returncode}"
+                logger.warning("WeStock CLI 非零退出: rc={}, msg={}", proc.returncode, msg)
+                return [], msg
 
-        tables = _parse_markdown_tables(stdout)
-        if not tables:
-            logger.info("WeStock CLI 返回无表格数据: cmd={}", cmd_parts)
+            tables = _parse_markdown_tables(stdout)
+            if not tables:
+                logger.info("WeStock CLI 返回无表格数据: cmd={}", cmd_parts)
 
-        return tables, None
+            return tables, None
+
+        # 理论上不可达（循环内已 return），但保留防御
+        return [], last_err
 
     async def search(self, keyword: str) -> list[dict]:
         tables, err = await self._run_cli(f"search {keyword}")
