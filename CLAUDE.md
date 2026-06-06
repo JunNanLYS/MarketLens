@@ -255,6 +255,17 @@ Every APScheduler job MUST:
 | `git-commit` | Conventional commit messages with intelligent staging |
 | `verify` | Verify changes work by running the app |
 
+## Known issues
+
+See `CODE_REVIEW.md` for a comprehensive audit covering correctness, performance, and maintainability findings.
+
+下方 4 条 **截至 2026-06-06 已通过代码验证实际解决**，保留以追踪决策历史；新增问题请追加到本节末尾。
+
+- ✅ ~~`BaseProvider` defines 6 abstract methods but news/RSS providers only implement `search()` — the rest return empty stubs~~ → 拆分为 `StructuredProvider` + `NewsProvider` 两个 ABC（[base.py:22,71,102](backend/collectors/base.py)）；新闻类 Provider 改为继承 `NewsProvider` 并删去 6 个空 stub；MRO 兼容性由 [test_base_abcs.py](tests/collectors/test_base_abcs.py) 11 个单测守护。
+- ✅ ~~`ai_reports` table uses an index rather than a UNIQUE constraint on `(symbol, date(generated_at))`, risking duplicate reports~~ → 已升级为 `CREATE UNIQUE INDEX`（[schema.py:271-272](backend/storage/schema.py)）。
+- ✅ ~~`raw_data` table has no auto-cleanup and will grow unbounded~~ → `cleanup` 定时任务每天 03:30 删除 `>30 days` 记录（[jobs.py:195-213](backend/scheduler/jobs.py)）。
+- ✅ ~~Service instances are recreated per scheduler tick rather than cached~~ → `_collection_service` / `_news_service` 已为模块级懒加载单例（[jobs.py:145-158](backend/scheduler/jobs.py)），APScheduler 每次 tick 复用同一实例。
+
 ### External dependencies (fact, not bugs)
 
 - `NeoDataProvider` 的 token 由**外部 workbuddy 工具**写入 `~/.workbuddy/.neodata_token`，
@@ -278,88 +289,20 @@ uv run ruff check .
 ```
 If issues are found, fix them and re-run until clean.
 
-### 2. Test Execution — 三层策略
+### 2. Test Judgment & Execution
 
-测试执行按**改动范围**和**风险等级**分三层。日常以精准测试为主，阶段/提交前全测兜底，重大变更立即全测。
+Determine if the task falls into test-required categories:
+- New or modified business logic in `backend/`
+- New or modified API endpoints (routes, services)
+- Database schema or storage layer changes
 
-#### 2.1 任务内精准测试（默认行为）
-
-只跑**直接受影响**的测试，不追求零回归：
-
-| 改动范围 | 跑哪些测试 |
-|---|---|
-| `backend/services/<x>.py` | `tests/services/test_<x>.py` + 任何 import 它的 `tests/api/` 或 `tests/services/` |
-| `backend/api/<x>.py`（路由） | 对应 `tests/api/test_<x>.py` + 下游 service 的 `tests/services/` |
-| `backend/collectors/<x>.py`（Provider） | `tests/collectors/test_<x>.py` + `tests/collectors/test_base_abcs.py`（如果动到 base） |
-| `ui/<x>.py` | 该页面对应的 `tests/ui/`（如存在）+ 任何后端 API 联调测试 |
-| `docs/` 纯文档改动 | 不需要跑测试 |
-
-示例：改了 `backend/services/portfolio_service.py` → 跑 `tests/services/test_portfolio_service.py` + 任何 import 该模块的 API/服务测试。
-
-#### 2.2 阶段/提交前全测关卡
-
-**每个 commit 之前必须**全量跑一次，作为回归兜底：
-
-```bash
-uv run pytest tests/ -v
-```
-
-失败必须修复，不通过不提交。这一层是跨模块回归的最终防线。
-
-> **「阶段」粒度**：默认 commit 粒度（每次 commit 前全测）。一个 PRD 功能可能跨多个 commit，每次 commit 独立关卡。
-
-#### 2.3 重大变更：立即全测
-
-不等到 commit，改动命中以下**共享底座**时**立刻** `uv run pytest tests/ -v` 跑全量：
-
-- `backend/storage/schema.py`（DDL 影响所有表）
-- `backend/collectors/base.py`（Provider ABC，影响所有数据源）
-- `backend/main.py`（路由注册、中间件、异常处理）
-- `config.yaml` / `pyproject.toml`（依赖、配置）
-- `backend/scheduler/jobs.py`（APScheduler 注册、并发锁、懒加载单例）
-
-**动态判断补充**：通过 `git grep -l <module>` 统计引用次数，**被 ≥ 5 个模块 import** 的工具模块也视为底座。犹豫时倾向立即全测。
+If so, run relevant tests (`uv run pytest tests/` or specific test files). Ensure **all tests pass** before proceeding.
 
 ### 3. Documentation Sync
 
-#### 3.1 API 文档同步（必做）
-
-修改任何 API 后**必须**同步 `docs/api/`，缺一不可：
-
-| 改动文件 | 同步文档 |
-|---|---|
-| `backend/api/assets.py`（或新增 assets 端点） | `docs/api/assets.md` |
-| `backend/api/portfolio.py` | `docs/api/portfolio.md` |
-| `backend/api/data.py` | `docs/api/data.md` |
-| `backend/api/data_sources.py` | `docs/api/data-sources.md` |
-| `backend/api/neodata.py` | `docs/api/neodata.md` |
-| `backend/api/news_reports_tasks.py` | `docs/api/news-reports-tasks.md` |
-| 新增 `backend/api/<x>.py`（全新模块） | 新建 `docs/api/<x>.md` 并在上方表格登记 |
-| 跨多个模块的改动 | 同步更新所有涉及的 `docs/api/*.md` |
-
-每个 API 文档条目必须包含（与 `code/python` 保持一致）：
-
-- **端点路径 + HTTP 方法**（如 `GET /api/v1/portfolio/positions`）
-- **Query / Path / Body 参数**（含类型、必填、默认值）
-- **响应结构**（含字段名、类型、是否可空，参考 Pydantic model）
-- **错误码**（至少 400/404/500；新加的错误码必须列出）
-- **示例**（curl 命令 + 典型 JSON 响应，能跑通）
-
-**检查清单**（提交前自查）：
-- [ ] 字段名、类型与 `backend/api/*.py` 的 Pydantic model 完全一致
-- [ ] 新增/删除端点都已反映到对应文档
-- [ ] 状态码与 `backend/main.py` 的异常处理一致
-- [ ] curl 示例可实际跑通
-
-#### 3.2 架构/功能文档级联（按需）
-
-API 改动**可能**触发级联更新，按需检查：
-
-- `docs/prd.md` —— 新增/删除模块影响产品范围时
-- `docs/features.md` —— 端点能力变化影响功能描述时
-- `docs/architecture.md` —— 引入新数据源、新调度任务、新表时
-
-判断标准：**API 改动是否让读者对「产品能做什么 / 系统如何工作」的理解发生变化**？变了才改，没变跳过。
+When APIs are added, modified, or removed:
+- Update the corresponding docs in `docs/api/`
+- Check if `docs/prd.md`, `docs/features.md`, `docs/architecture.md` need cascading updates
 
 ### 4. Git Commit & Push
 
