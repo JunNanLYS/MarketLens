@@ -482,23 +482,28 @@ async def refresh_finance(
     """手动触发港美股财务采集（按 symbol 前缀自动选 us_finance / hk_finance）并落库。
 
     自动判断：symbol 以 us 开头 → 美股；以 hk 开头 → 港股。
+    路由表由 _FINANCE_DISPATCH 维护（避免散落硬编码）。
     """
-    if symbol.startswith("us"):
-        results_list = [await _service.collect_us_finance(symbol, num=num)]
-    elif symbol.startswith("hk"):
-        results_list = [await _service.collect_hk_finance(symbol, num=num)]
-    else:
+    collect_fn = _FINANCE_DISPATCH.get(symbol[:2])
+    if collect_fn is None:
         raise HTTPException(
             status_code=400,
             detail={"error": "INVALID_SYMBOL", "detail": f"symbol 必须以 us/hk 开头，实际 {symbol}"},
         )
+    result = await collect_fn(symbol, num=num)
     summary: dict[str, dict] = {}
-    for r in results_list:
-        if isinstance(r, Exception):
-            summary["finance"] = {"success": False, "error": str(r)}
-        else:
-            summary["finance"] = {"success": r is not None, "items": len(r) if isinstance(r, list) else 0}
+    if isinstance(result, Exception):
+        summary["finance"] = {"success": False, "error": str(result)}
+    else:
+        summary["finance"] = {"success": result is not None, "items": len(result) if isinstance(result, list) else 0}
     return {"symbol": symbol, "summary": summary, "num": num}
+
+
+# 财务采集路由表：symbol 前缀 → 采集方法。扩展新市场（如 jp/uk）时只需追加一行。
+_FINANCE_DISPATCH: dict[str, object] = {
+    "us": CollectionService.collect_us_finance,
+    "hk": CollectionService.collect_hk_finance,
+}
 
 
 # ============================================================================

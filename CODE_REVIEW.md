@@ -404,47 +404,6 @@
 
 ---
 
-### [MAJOR] `portfolio_service.py:387-408` — `update_transaction` rollback 后 commit-after-raise 极小概率重复 commit
-
-**问题**: `try/except` 块在 catch 中 `conn.rollback()` 然后 `raise`，但 Python 异常传播路径上 `finally: conn.close()` 触发 `__exit__` 又会调 commit（因为 `get_db` 是自动 commit 上下文）。`raise` 与 `__exit__` 的 commit 顺序在 CPython 3.13 + asyncio + sqlite3 组合下行为未严格定义，理论存在双重写入风险。
-
-**影响**: 极端 race 下 PATCH 可能部分字段旧值 / 部分字段新值混合写入，**审计可见但无应用层告警**。
-
-**修复**: `try` 块中显式 `commit()`；`except` 中 `rollback()` 后 `raise` 不让 context 再次 commit；或改用 `with conn: ...` 显式事务。
-
----
-
-### [MAJOR] `portfolio_service.py:478-480` — `get_positions` 不过滤软删除账户 → 幽灵持仓
-
-**问题**: 软删除（`deleted_at IS NOT NULL`）的账户仍出现在 `get_positions` 结果中，导致"已删除账户"显示持仓——但 `delete_account` 已设置 `deleted_at`，前端没有 toggle 过滤这些账户。用户在 P&L 汇总看到"已删账户 +N 万"困惑。
-
-**影响**: 已删账户的持仓仍计入总资产，且无法通过 UI 切换隐藏。
-
-**修复**:
-```sql
-JOIN accounts a ON a.id = t.account_id AND a.deleted_at IS NULL
-```
-+ API 层加 `?include_deleted=false` 默认参数。
-
----
-
-### [MAJOR] `portfolio_service.py:613-693` — `get_realized_pnl` 在 `symbol=""` 空串时 WHERE 当字面量匹配
-
-**问题**: 当 `symbol=""` 或 `symbol=None` 传入时，SQL 编译为 `WHERE symbol = ''`（空串字面量）而非 `IS NULL`。空串与 NULL 在 SQLite 中不等价，导致"symbol 为 NULL 的交易"被错误排除。
-
-**影响**: 数据库历史数据中可能存在 `symbol IS NULL` 的迁移期数据；P&L 报告少算这部分。
-
-**修复**:
-```python
-if symbol:
-    where_clauses.append("symbol = ?")
-    params.append(symbol)
-else:
-    where_clauses.append("symbol IS NOT NULL")
-```
-
----
-
 ### [MAJOR] `schema.py:271-535` + `docs/architecture.md:276-292` — 核心表清单未同步 11 张新表
 
 **问题**: 第 5 轮新增 11 张表（`etfs` / `etf_nav` / `etf_financials` / `etf_fund_holdings` / `sectors` / `sector_constituents` / `us_financials` / `hk_financials` / `us_hk_ipo_calendar` / `us_hk_exdiv_calendar` / `chip_distribution` / `margintrade` / `blocktrade` / `lhb`），`docs/architecture.md` "核心表清单" 段（13 张）**未追加**。新表存在 `docs/architecture.md` 无入口、新人 onboarding 看不到这些实体。
@@ -474,24 +433,6 @@ else:
 
 ---
 
-### [MAJOR] `collection_service.py:2392-2462` + `api/data.py:474-494` — us/hk finance 串行 3 type × 4 期 + 硬编码市场路由（合并 3 处同源）
-
-**问题**:
-1. `collect_us_finance` / `collect_hk_finance` 串行 3 type（资产负债表/利润表/现金流量）× 4 期（最新季 + 3 年报），单标的 12 次 westock npx 调用，100 标的 40-100 分钟（CLAUDE.md 已 benchmark 100 标的 < 2min，**单 finance 任务直接突破**）。
-2. `POST /finance-refresh/{symbol}` 内部 `if symbol.startswith("us") ... elif symbol.startswith("hk") ...` 硬编码市场判断（违反 CLAUDE.md "声明与实现分离"）。
-3. `collect_hk_finance` ftype 字段未保留，三大报表行混淆审计失效。
-4. `_fetch_hk_finance` 复用 `_us_finance_row_tuple` 默认 `"annual"` 误标港股（多份 agent 报告同根因合并）。
-
-**影响**: 性能 + 可维护性 + 审计粒度三重问题。
-
-**修复**:
-1. finance 采集改并发：`asyncio.gather` 跑 3 type，4 期合并为单次调用。
-2. 市场判断从 `symbol` 解析改为从 `assets.market` 字段读取。
-3. ftype 在 raw_packets + normalized 都保留。
-4. 港股默认 `"interim"` 而非 `"annual"`。
-
----
-
 ### [MAJOR] `backend/services/collection_service.py:1940-2613` — 18 个 `collect_*` 公开方法"持锁 + 摘要 + commit" boilerplate 重复 ~700 行
 
 **问题**: 18 个 `collect_*` 方法（含第 5 轮新增 14 个 + 旧 4 个）每个都重复：
@@ -508,47 +449,6 @@ async with _WRITE_LOCK:
 **影响**: 可维护性 + 已登记 MAJOR#11"4-way 重复 fetch/insert"的放大版（4 → 18）；新功能开发成本高。
 
 **修复**: 抽 `_run_collect_with_logging(task_name, symbols, collect_fn, **summary_keys)` wrapper；同时解决 CRITICAL "13 个 collect_* 不写 run_logs" 路径。
-
----
-
-### [MAJOR] `backend/services/collection_service.py:596, 1180, ...` 15 处 — `isinstance(provider, WeStockProvider)` 硬编码（与 CLAUDE.md Provider 模式冲突）
-
-**问题**: 15 处 `isinstance(provider, WeStockProvider)` 硬编码类型判断（用于"哪些方法 westock 支持"），违反 CLAUDE.md "Provider 模式声明与实现分离"。新增 Provider 必须修改这 15 处。
-
-**影响**: 加新数据源（如 eastmoney/Tushare）需在 15 处加 elif；可维护性急剧下降。
-
-**修复**: 用 `hasattr(provider, 'method_name')` 或注册 `provider.capabilities: set[str]`；config-driven dispatch。
-
----
-
-### [MAJOR] `backend/services/asset_service.py:297-304` — `get_asset_by_id` 的 `latest_report` 字段被截断（详情页 AI 报告 tab 几乎空白）
-
-**问题**: 详情页加载 `asset_detail.py` "AI 报告" tab 时，`latest_report.summary` 字段被 SQL 截断（推测 SELECT 列表中某 cast 限制或 LENGTH() 子句），导致用户看到空白或占位文案"暂无报告"。但 `ai_reports` 表实际有数据。
-
-**影响**: 用户体验 + 核心功能不可用。**Evidence-driven AI 项目的核心展示失败**。
-
-**修复**:
-1. 定位 `asset_service.py:297-304` 附近 SQL，移除 `substr()` / `CAST(... AS TEXT)` 截断。
-2. 加单测 `test_asset_service_latest_report_full_length` 守护。
-3. 同步检查 `evidence_builder.py` 是否也有类似截断。
-
----
-
-### [MAJOR] `evidence_builder.py:393-409` + `ai_analyzer.py:31, 94` — 5 个新证据维度无评分规则 + `data_sources` 漏报
-
-**问题**:
-1. `evidence_builder.build_multi` 输出 `data_sources` 字段时，**漏 `sector_context` / `us_finance` / `hk_finance` / `dividends` / `shareholders` / `forecasts` 6 个新维度的来源声明**。
-2. `ai_analyzer._insufficient_evidence` 触发条件只看 `quote + kline + fund_flow + technical + news` 5 个旧维度，**新维度即使有数据也被视为"无证据"**触发兜底报告。
-3. `ai_analyzer` 无新增维度的评分规则，`sector_context` / `us_finance` 等数据被 `analyze()` 默默丢弃，**AI 报告未引用这些字段**。
-4. `key_risks` 与 `bearish_reasons` 在 schema 中是两个字段但实际同源，误导下游消费者。
-
-**影响**: Evidence-driven AI 项目的核心价值——"用真实数据驱动分析"——**部分失效**；新增 5 类数据采集后并未真正进入 AI 推理。
-
-**修复**:
-1. `evidence_builder.build_multi` 补全 `data_sources` 列表（6 项）。
-2. `ai_analyzer._insufficient_evidence` 把 6 个新维度加入触发条件。
-3. `ai_analyzer` 评分规则加分项：`sector_context` 看行业相对强弱、`us_finance` 看 YoY 增长、`dividends` 看连续分红年数。
-4. `key_risks` 与 `bearish_reasons` 合并或 schema 注释明确"key_risks 是 bearish_reasons 的子集（外部宏观）"。
 
 ---
 

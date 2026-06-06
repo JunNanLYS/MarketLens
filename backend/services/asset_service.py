@@ -345,6 +345,15 @@ class AssetService:
             result["kline_summary"] = self._build_kline_summary(kline_rows)
             result["fund_flow_summary"] = build_fund_flow_summary(fund_rows)
 
+            # latest_report 字段截断 bug 修复：CTE 内只取 action/confidence/generated_at，
+            # 导致详情页 AI 报告 tab 的 risk_level/summary/bullish_reasons/bearish_reasons/key_risks/data_used 全为空。
+            # 改用 ReportService.get_latest_report(symbol) 作为单一数据源（含全字段）。
+            from backend.services.report_service import ReportService
+
+            symbol: str = result.get("symbol", "")
+            if symbol:
+                result["latest_report"] = ReportService.get_latest_report(symbol)
+
         return result
 
     @staticmethod

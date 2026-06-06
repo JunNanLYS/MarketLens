@@ -26,9 +26,24 @@ class AIAnalyzer:
         finance = evidence.get("finance")
         news = evidence.get("news")
         technical = evidence.get("technical")
+        dividends = evidence.get("dividends")
+        shareholders = evidence.get("shareholders")
+        forecasts = evidence.get("forecasts")
+        sector_ctx = evidence.get("sector_context")
+        us_finance = evidence.get("us_finance")
         data_sources = evidence.get("data_sources", [])
 
-        if quote is None and not kline:
+        # 放宽证据不足判定：允许 quote/kline 缺失但有其他证据维度时继续分析
+        has_any_evidence = bool(
+            quote is not None
+            or kline
+            or dividends
+            or shareholders
+            or forecasts
+            or sector_ctx
+            or us_finance
+        )
+        if not has_any_evidence:
             return AIAnalyzer._insufficient_evidence(symbol, data_sources)
 
         bullish_score = 0.0
@@ -66,6 +81,37 @@ class AIAnalyzer:
         bullish_reasons.extend(fin_bull_r)
         bearish_reasons.extend(fin_bear_r)
 
+        # 5 个新增证据维度评分（evidence-driven AI 约束：每条数据必须被使用）
+        div_bull, div_bear, div_bull_r, div_bear_r = AIAnalyzer._check_dividend(dividends)
+        bullish_score += div_bull
+        bearish_score += div_bear
+        bullish_reasons.extend(div_bull_r)
+        bearish_reasons.extend(div_bear_r)
+
+        shr_bull, shr_bear, shr_bull_r, shr_bear_r = AIAnalyzer._check_shareholder(shareholders)
+        bullish_score += shr_bull
+        bearish_score += shr_bear
+        bullish_reasons.extend(shr_bull_r)
+        bearish_reasons.extend(shr_bear_r)
+
+        fc_bull, fc_bear, fc_bull_r, fc_bear_r = AIAnalyzer._check_forecast(forecasts)
+        bullish_score += fc_bull
+        bearish_score += fc_bear
+        bullish_reasons.extend(fc_bull_r)
+        bearish_reasons.extend(fc_bear_r)
+
+        sec_bull, sec_bear, sec_bull_r, sec_bear_r = AIAnalyzer._check_sector_context(sector_ctx)
+        bullish_score += sec_bull
+        bearish_score += sec_bear
+        bullish_reasons.extend(sec_bull_r)
+        bearish_reasons.extend(sec_bear_r)
+
+        usfin_bull, usfin_bear, usfin_bull_r, usfin_bear_r = AIAnalyzer._check_us_finance(us_finance)
+        bullish_score += usfin_bull
+        bearish_score += usfin_bear
+        bullish_reasons.extend(usfin_bull_r)
+        bearish_reasons.extend(usfin_bear_r)
+
         score_diff = bullish_score - bearish_score
         total_score = bullish_score + bearish_score
         # 置信度：相对差异 * 绝对强度系数。
@@ -91,7 +137,14 @@ class AIAnalyzer:
         else:
             risk_level = "low"
 
-        key_risks = bearish_reasons.copy()
+        # key_risks 与 bearish_reasons 同源会导致 UI 显示两份相同列表
+        # 改为独立字段：基于 risk_level==high 时高危信号的精简子集
+        if risk_level == "high":
+            key_risks = [r for r in bearish_reasons if any(
+                kw in r for kw in ("风险", "亏损", "负增长", "减持", "看空", "下跌", "利空")
+            )][:5]
+        else:
+            key_risks = []
 
         summary = AIAnalyzer._generate_summary(
             action, score_diff, bullish_reasons, bearish_reasons, news, finance
@@ -271,6 +324,139 @@ class AIAnalyzer:
             if net_profit_yoy < -20:
                 bearish += 0.10
                 bear_reasons.append(f"净利润同比负增长 {net_profit_yoy:.1f}%")
+
+        return bullish, bearish, bull_reasons, bear_reasons
+
+    @staticmethod
+    def _check_dividend(dividends: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """分红信号：最近一期派息 + 连续性。"""
+        bullish = 0.0
+        bearish = 0.0
+        bull_reasons: list[str] = []
+        bear_reasons: list[str] = []
+        if dividends is None:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        latest_cash = dividends.get("latest_cash_dividend")
+        history = dividends.get("history", [])
+
+        if latest_cash is not None and latest_cash > 0:
+            bullish += 0.05
+            bull_reasons.append(f"最新一期派息 {latest_cash:.2f} 元/股")
+
+        # 连续性：最近 4 期中现金分红 > 0 的比例
+        if history and len(history) >= 4:
+            paying_count = sum(1 for h in history if (h.get("cash_dividend") or 0) > 0)
+            if paying_count == 0:
+                bearish += 0.05
+                bear_reasons.append("最近 4 期均无现金分红")
+            elif paying_count == 4:
+                bullish += 0.05
+                bull_reasons.append("最近 4 期连续现金分红")
+
+        return bullish, bearish, bull_reasons, bear_reasons
+
+    @staticmethod
+    def _check_shareholder(shareholders: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """股东结构信号：股东人数趋势（筹码集中/分散）。"""
+        bullish = 0.0
+        bearish = 0.0
+        bull_reasons: list[str] = []
+        bear_reasons: list[str] = []
+        if shareholders is None:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        trend = shareholders.get("holder_count_trend", [])
+        if len(trend) >= 2:
+            # 较早期 vs 最新：人数下降 = 筹码集中
+            recent = trend[-1].get("holder_count", 0)
+            earlier = trend[0].get("holder_count", 0)
+            if recent and earlier and recent < earlier:
+                bullish += 0.05
+                bull_reasons.append(f"股东人数从 {earlier} 降至 {recent}，筹码集中")
+            elif recent and earlier and recent > earlier:
+                bearish += 0.05
+                bear_reasons.append(f"股东人数从 {earlier} 升至 {recent}，筹码分散")
+
+        return bullish, bearish, bull_reasons, bear_reasons
+
+    @staticmethod
+    def _check_forecast(forecasts: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """业绩预告信号：最新一期的 forecast_type。"""
+        bullish = 0.0
+        bearish = 0.0
+        bull_reasons: list[str] = []
+        bear_reasons: list[str] = []
+        if forecasts is None:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        history = forecasts.get("history", [])
+        if not history:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        latest_type = history[0].get("forecast_type", "")
+        # 业绩预告类型关键词匹配（业务语言："预增"/"扭亏"为看多；"预减"/"首亏"为看空）
+        if any(kw in latest_type for kw in ("预增", "扭亏", "续盈", "略增")):
+            bullish += 0.10
+            bull_reasons.append(f"业绩预告：{latest_type}")
+        elif any(kw in latest_type for kw in ("预减", "首亏", "续亏", "略减", "预亏")):
+            bearish += 0.10
+            bear_reasons.append(f"业绩预告：{latest_type}")
+
+        return bullish, bearish, bull_reasons, bear_reasons
+
+    @staticmethod
+    def _check_sector_context(sector_ctx: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """板块背景：所处行业 / 概念在 Top 涨幅榜为加分，Top 跌幅榜为减分。"""
+        bullish = 0.0
+        bearish = 0.0
+        bull_reasons: list[str] = []
+        bear_reasons: list[str] = []
+        if sector_ctx is None:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        top_gainers = sector_ctx.get("top_gainers", [])
+        top_losers = sector_ctx.get("top_losers", [])
+
+        if top_gainers:
+            top_sector = top_gainers[0].get("sector_name", "")
+            if top_sector:
+                bullish += 0.05
+                bull_reasons.append(f"行业板块 {top_sector} 领涨大盘")
+
+        if top_losers:
+            bottom_sector = top_losers[0].get("sector_name", "")
+            if bottom_sector:
+                bearish += 0.05
+                bear_reasons.append(f"行业板块 {bottom_sector} 领跌大盘")
+
+        return bullish, bearish, bull_reasons, bear_reasons
+
+    @staticmethod
+    def _check_us_finance(us_finance: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """美股财务信号：年化营收同比。"""
+        bullish = 0.0
+        bearish = 0.0
+        bull_reasons: list[str] = []
+        bear_reasons: list[str] = []
+        if us_finance is None:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        annual = us_finance.get("annual", [])
+        if not annual or len(annual) < 2:
+            return bullish, bearish, bull_reasons, bear_reasons
+
+        # 简化：取最近两期 revenue 计算 yoy
+        latest = annual[0].get("revenue")
+        prev = annual[1].get("revenue")
+        if latest is not None and prev is not None and prev > 0:
+            yoy = (latest - prev) / prev * 100
+            if yoy > 20:
+                bullish += 0.05
+                bull_reasons.append(f"年化营收同比 +{yoy:.1f}%")
+            elif yoy < -20:
+                bearish += 0.05
+                bear_reasons.append(f"年化营收同比 {yoy:.1f}%")
 
         return bullish, bearish, bull_reasons, bear_reasons
 

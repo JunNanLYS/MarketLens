@@ -193,7 +193,14 @@ GET /api/v1/assets/1 HTTP/1.1
     "net_flow_5d": 520000000, "trend": "连续 3 日净流入"
   },
   "latest_report": {
+    "symbol": "sh600519", "name": "贵州茅台",
     "action": "watch", "confidence": 0.52,
+    "risk_level": "low",
+    "summary": "...",
+    "bullish_reasons": ["ROE=20.5% 且营收正增长"],
+    "bearish_reasons": [],
+    "key_risks": [],
+    "data_used": [{"type": "quote", "source": "sina", "collected_at": "..."}],
     "generated_at": "2026-05-31T20:00:00+08:00"
   }
 }

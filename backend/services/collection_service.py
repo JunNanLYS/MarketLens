@@ -36,6 +36,15 @@ class CollectionService:
         return self._providers.get("structured", [])
 
     @staticmethod
+    def _is_westock_only(provider) -> bool:
+        """判断 provider 是否为 WeStockProvider（用于按数据域白名单 westock 唯一来源）。
+
+        集中判断，避免在 ~34 个 _fetch_* / collect_* 方法中散落 isinstance 硬编码。
+        扩展新浪 / Tencent 实现同类数据时改此处即可。
+        """
+        return isinstance(provider, WeStockProvider)
+
+    @staticmethod
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
@@ -640,7 +649,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.etf_info(symbol)
@@ -695,7 +704,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.etf_holdings(symbol)
@@ -731,7 +740,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.etf_nav(symbol, start, end)
@@ -768,7 +777,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.etf_holders(symbol)
@@ -807,7 +816,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.chip_distribution(symbol)
@@ -844,7 +853,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.margintrade(symbol)
@@ -886,7 +895,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.blocktrade(symbol, date)
@@ -925,7 +934,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.lhb(symbol, date)
@@ -964,7 +973,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.ipo_calendar(market)
@@ -992,7 +1001,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.exdiv_calendar(symbol)
@@ -1044,7 +1053,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.us_finance(symbol, ftype=ftype, num=num)
@@ -1072,7 +1081,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.hk_finance(symbol, ftype=ftype, num=num)
@@ -1133,7 +1142,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.board_sectors()
@@ -1178,7 +1187,7 @@ class CollectionService:
         rows: list[tuple] = []
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.hot_sectors(limit=limit)
@@ -1223,7 +1232,7 @@ class CollectionService:
         row: tuple | None = None
         raw_packets: list[tuple[str, str, str]] = []
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.etf_financial(symbol)
@@ -1672,7 +1681,7 @@ class CollectionService:
         注：分时数据按需触发（API 主动调用），不在 daily_close 编排中拉取。
         """
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.minute(symbol, days=days)
@@ -1717,7 +1726,7 @@ class CollectionService:
     async def collect_shareholder(self, symbol: str) -> dict | None:
         """实时采集股东结构数据并落库（双表单事务）。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 result = await provider.shareholder(symbol)
@@ -1790,7 +1799,7 @@ class CollectionService:
     async def collect_reserve(self, symbol: str) -> dict | None:
         """实时采集业绩预告并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 result = await provider.reserve(symbol)
@@ -1839,7 +1848,7 @@ class CollectionService:
     async def collect_dividend(self, symbol: str) -> list[dict] | None:
         """实时采集分红记录并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.dividend(symbol)
@@ -1990,7 +1999,7 @@ class CollectionService:
     async def collect_etf_info(self, symbol: str) -> dict | None:
         """采集 ETF 基本信息并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.etf_info(symbol)
@@ -2052,7 +2061,7 @@ class CollectionService:
     async def collect_etf_holdings(self, symbol: str) -> list[dict] | None:
         """采集 ETF 成分股并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.etf_holdings(symbol)
@@ -2098,7 +2107,7 @@ class CollectionService:
     ) -> list[dict] | None:
         """采集 ETF 历史净值并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.etf_nav(symbol, start, end)
@@ -2143,7 +2152,7 @@ class CollectionService:
     async def collect_etf_holders(self, symbol: str) -> dict | None:
         """采集 ETF 持有人结构并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.etf_holders(symbol)
@@ -2189,7 +2198,7 @@ class CollectionService:
     async def collect_chip_distribution(self, symbol: str) -> dict | None:
         """采集筹码成本并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.chip_distribution(symbol)
@@ -2233,7 +2242,7 @@ class CollectionService:
     async def collect_margintrade(self, symbol: str) -> dict | None:
         """采集融资融券并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.margintrade(symbol)
@@ -2282,7 +2291,7 @@ class CollectionService:
     async def collect_blocktrade(self, symbol: str, date: str) -> dict | None:
         """采集大宗交易并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.blocktrade(symbol, date)
@@ -2328,7 +2337,7 @@ class CollectionService:
     async def collect_lhb(self, symbol: str, date: str) -> dict | None:
         """采集龙虎榜并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.lhb(symbol, date)
@@ -2374,7 +2383,7 @@ class CollectionService:
     async def collect_ipo_calendar(self, market: str) -> list[dict] | None:
         """采集新股日历（hk/us）并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.ipo_calendar(market)
@@ -2410,7 +2419,7 @@ class CollectionService:
     async def collect_exdiv_calendar(self, symbol: str) -> list[dict] | None:
         """采集除权日历（港美）并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.exdiv_calendar(symbol)
@@ -2446,14 +2455,25 @@ class CollectionService:
     async def collect_us_finance(
         self, symbol: str, num: int = 4
     ) -> list[dict] | None:
-        """采集美股财务（3 个 type × num 期 = 12 行）并落库。"""
+        """采集美股财务（3 个 type × num 期 = 12 行）并落库。
+
+        3 个报表类型（income / balance / cashflow）改为 asyncio.gather 并发采集，
+        避免 npx 冷启动串行阻塞（单标的 3 × 2-5s = 6-15s → max(单次) ≈ 5s）。
+        """
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
+                # 3 type 并发采集，return_exceptions=True 防止单 type 失败影响整体
+                results = await asyncio.gather(
+                    *(provider.us_finance(symbol, ftype=ftype, num=num) for ftype in ("income", "balance", "cashflow")),
+                    return_exceptions=True,
+                )
                 all_items: list[dict] = []
-                for ftype in ("income", "balance", "cashflow"):
-                    items = await provider.us_finance(symbol, ftype=ftype, num=num)
+                for items in results:
+                    if isinstance(items, Exception):
+                        logger.warning("us_finance 子任务失败: {}", items)
+                        continue
                     if items:
                         all_items.extend(items)
                 if not all_items:
@@ -2488,14 +2508,23 @@ class CollectionService:
     async def collect_hk_finance(
         self, symbol: str, num: int = 4
     ) -> list[dict] | None:
-        """采集港股财务（3 个 type × num 期 = 12 行）并落库。"""
+        """采集港股财务（3 个 type × num 期 = 12 行）并落库。
+
+        3 个报表类型（zhsy 利润表 / zcfz 资产负债表 / xjll 现金流量表）改为 asyncio.gather 并发采集。
+        """
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
+                results = await asyncio.gather(
+                    *(provider.hk_finance(symbol, ftype=ftype, num=num) for ftype in ("zhsy", "zcfz", "xjll")),
+                    return_exceptions=True,
+                )
                 all_items: list[dict] = []
-                for ftype in ("zhsy", "zcfz", "xjll"):
-                    items = await provider.hk_finance(symbol, ftype=ftype, num=num)
+                for items in results:
+                    if isinstance(items, Exception):
+                        logger.warning("hk_finance 子任务失败: {}", items)
+                        continue
                     if items:
                         all_items.extend(items)
                 if not all_items:
@@ -2530,7 +2559,7 @@ class CollectionService:
     async def collect_sector_board(self) -> dict | None:
         """采集板块首页（3 张表）并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.board_sectors()
@@ -2583,7 +2612,7 @@ class CollectionService:
     async def collect_sector_hot(self, limit: int = 10) -> list[dict] | None:
         """采集热门板块并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 items = await provider.hot_sectors(limit=limit)
@@ -2636,7 +2665,7 @@ class CollectionService:
     async def collect_etf_financial(self, symbol: str) -> dict | None:
         """采集 ETF 资产配置并落库。"""
         for provider in self._get_structured_providers():
-            if not isinstance(provider, WeStockProvider):
+            if not self._is_westock_only(provider):
                 continue
             try:
                 data = await provider.etf_financial(symbol)

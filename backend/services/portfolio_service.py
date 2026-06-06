@@ -398,11 +398,16 @@ class PortfolioService:
                         f"更新后持仓为负数 ({current_holding})，不允许此操作"
                     )
 
+                # 先 dict 化返回值，再 commit；避免 commit 后抛错导致"已提交但调用方看到失败"的双写风险
+                result: dict = dict(updated)
                 conn.commit()
                 logger.info("更新交易: id={}", transaction_id)
-                return dict(updated)
+                return result
             except Exception:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except Exception as rollback_err:
+                    logger.error("更新交易 rollback 失败: id={} err={}", transaction_id, rollback_err)
                 logger.exception("更新交易失败，已回滚: id={}", transaction_id)
                 raise
             finally:
@@ -478,6 +483,12 @@ class PortfolioService:
             按账户+标的聚合的持仓列表，关联最新行情与名称。
         """
         with get_db() as conn:
+            # 预取所有未软删除的账户 ID（防御幽灵持仓：被软删除账户的 transactions 不应出现在持仓视图）
+            active_account_rows = conn.execute(
+                "SELECT id FROM accounts WHERE deleted_at IS NULL"
+            ).fetchall()
+            active_account_ids: set[int] = {r["id"] for r in active_account_rows}
+
             conditions: list[str] = ["deleted_at IS NULL"]
             params: list = []
             if account_id is not None:
@@ -492,6 +503,9 @@ class PortfolioService:
 
             grouped: dict[tuple[int, str], list[dict]] = {}
             for row in rows:
+                if row["account_id"] not in active_account_ids:
+                    # 防御：账户已被软删除的交易不入持仓聚合
+                    continue
                 key: tuple[int, str] = (row["account_id"], row["symbol"])
                 grouped.setdefault(key, []).append(dict(row))
 
@@ -629,6 +643,16 @@ class PortfolioService:
         Returns:
             按账户+标的聚合的已实现盈亏列表。
         """
+        # 防御性 guard：API 层 Pydantic min_length=1 已防空串，但 service 被其他模块直接调用时仍可能传空串
+        if symbol is not None and not symbol:
+            raise ValueError("symbol 不能为空字符串")
+        if account_id is not None and account_id <= 0:
+            raise ValueError("account_id 必须为正整数")
+        if page < 1:
+            raise ValueError("page 必须 >= 1")
+        if page_size < 1 or page_size > 200:
+            raise ValueError("page_size 必须在 1..200 之间")
+
         conditions: list[str] = ["t.deleted_at IS NULL"]
         params: list = []
 
