@@ -31,144 +31,197 @@ class NewsService:
 
 
     async def collect_news(self) -> dict[str, int]:
+        """采集新闻并写入 news_items / raw_data，同时记录 run_logs 审计行。
+
+        满足 CLAUDE.md 硬约束："Data collection MUST leave a run_logs row"。
+        即便在采集/落库任意阶段抛出异常（包括 `_get_active_symbols` 等价
+        的 `tracked_symbols` 查询、`conn.commit()` 失败等），都会通过外层
+        `try/except/finally` 兜底写入一条 run_logs 行（status=failure），
+        保证 UI 历史不漏记录。
+
+        Returns:
+            含 collected / skipped 计数的字典。
+        """
         started_at = datetime.now(timezone.utc).isoformat()
-        collected = 0
-        skipped = 0
-        all_items: list[dict] = []
+        result: dict[str, int] = {"collected": 0, "skipped": 0}
+        status: str = "success"
+        error_message: str | None = None
+        try:
+            collected = 0
+            skipped = 0
+            all_items: list[dict] = []
 
-        with get_db() as conn:
-            tracked_symbol_rows = conn.execute(
-                "SELECT symbol, name FROM tracked_assets WHERE enabled = 1"
-            ).fetchall()
-        tracked_symbols = [f"{r['name']}({r['symbol']})" for r in tracked_symbol_rows]
-
-        for provider in self._providers:
-            try:
-                if hasattr(provider, "fetch_news"):
-                    items = await provider.fetch_news(tracked_symbols)
-                else:
-                    items = await provider.search("")
-                all_items.extend(items)
-                logger.info("Provider {} 返回 {} 条新闻", provider.name, len(items))
-            except Exception:
-                logger.exception("Provider {} 采集新闻失败，跳过", provider.name)
-                if provider.optional:
-                    logger.warning("可选数据源 {} 不可用，静默跳过", provider.name)
-                continue
-
-        with _WRITE_LOCK:
-            conn = get_connection_sync()
-            try:
-                tracked_assets_rows = conn.execute(
-                    "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
+            with get_db() as conn:
+                tracked_symbol_rows = conn.execute(
+                    "SELECT symbol, name FROM tracked_assets WHERE enabled = 1"
                 ).fetchall()
+            tracked_symbols = [f"{r['name']}({r['symbol']})" for r in tracked_symbol_rows]
 
-                affected_symbols_set: set[str] = set()
+            for provider in self._providers:
+                try:
+                    if hasattr(provider, "fetch_news"):
+                        items = await provider.fetch_news(tracked_symbols)
+                    else:
+                        items = await provider.search("")
+                    all_items.extend(items)
+                    logger.info("Provider {} 返回 {} 条新闻", provider.name, len(items))
+                except Exception:
+                    logger.exception("Provider {} 采集新闻失败，跳过", provider.name)
+                    if provider.optional:
+                        logger.warning("可选数据源 {} 不可用，静默跳过", provider.name)
+                    continue
 
-                # 预取最近一批已有 URL,避免逐条查询(N+1 问题)。
-                # 仅取最近 5000 条以防止全表扫描导致内存膨胀;新增新闻的发布时间
-                # 一定晚于这些记录,因此覆盖了实际去重需求。
-                # DB 层兜底:idx_news_items_url_unique 部分唯一索引保证重复 URL 不可插入。
-                existing_urls: set[str] = set()
-                url_rows = conn.execute(
-                    "SELECT url FROM news_items WHERE url IS NOT NULL "
-                    "ORDER BY id DESC LIMIT 5000"
-                ).fetchall()
-                existing_urls = {r["url"] for r in url_rows}
+            with _WRITE_LOCK:
+                conn = get_connection_sync()
+                try:
+                    tracked_assets_rows = conn.execute(
+                        "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
+                    ).fetchall()
 
-                for item in all_items:
-                    url = (item.get("url", "") or "").strip() or None
-                    if url and url in existing_urls:
-                        skipped += 1
-                        continue
+                    affected_symbols_set: set[str] = set()
 
-                    related_symbols = self._match_symbols_with_conn(
-                        conn,
-                        item.get("title", ""),
-                        item.get("content"),
-                        tracked_assets_rows,
-                    )
-                    for s in related_symbols:
-                        affected_symbols_set.add(s)
-                    related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
+                    # 预取最近一批已有 URL,避免逐条查询(N+1 问题)。
+                    # 仅取最近 5000 条以防止全表扫描导致内存膨胀;新增新闻的发布时间
+                    # 一定晚于这些记录,因此覆盖了实际去重需求。
+                    # DB 层兜底:idx_news_items_url_unique 部分唯一索引保证重复 URL 不可插入。
+                    existing_urls: set[str] = set()
+                    url_rows = conn.execute(
+                        "SELECT url FROM news_items WHERE url IS NOT NULL "
+                        "ORDER BY id DESC LIMIT 5000"
+                    ).fetchall()
+                    existing_urls = {r["url"] for r in url_rows}
 
-                    now = datetime.now(timezone.utc).isoformat()
-                    news_data = {
-                        "title": item.get("title", ""),
-                        "source": item.get("source", ""),
-                        "url": url,
-                        "content": item.get("content"),
-                        "summary": item.get("summary"),
-                        "published_at": item.get("published_at"),
-                        "sentiment": item.get("sentiment", "neutral"),
-                        "importance": item.get("importance", "normal"),
-                        "related_symbols": related_symbols_json,
-                        "collected_at": item.get("collected_at", now),
-                    }
-
-                    try:
-                        # INSERT OR IGNORE: 依赖 idx_news_items_url_unique 部分唯一索引
-                        # (url 非空时);空 URL 允许重复但 unique index 不阻止空值插入。
-                        cursor = conn.execute(
-                            """INSERT OR IGNORE INTO news_items
-                               (title, source, url, content, summary, published_at,
-                                sentiment, importance, related_symbols, collected_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                news_data["title"],
-                                news_data["source"],
-                                news_data["url"],
-                                news_data["content"],
-                                news_data["summary"],
-                                news_data["published_at"],
-                                news_data["sentiment"],
-                                news_data["importance"],
-                                news_data["related_symbols"],
-                                news_data["collected_at"],
-                            ),
-                        )
-                        if cursor.rowcount == 0:
-                            # 重复 URL 已被 partial unique index 拦截
+                    for item in all_items:
+                        url = (item.get("url", "") or "").strip() or None
+                        if url and url in existing_urls:
                             skipped += 1
                             continue
-                        collected += 1
-                        if url:
-                            existing_urls.add(url)
 
-                        if url:
-                            raw_json = json.dumps(item, ensure_ascii=False, default=str)
-                            conn.execute(
-                                """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
-                                   VALUES (?, ?, ?, ?, ?)""",
-                                (None, news_data["source"], "news", raw_json, now),
+                        related_symbols = self._match_symbols_with_conn(
+                            conn,
+                            item.get("title", ""),
+                            item.get("content"),
+                            tracked_assets_rows,
+                        )
+                        for s in related_symbols:
+                            affected_symbols_set.add(s)
+                        related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
+
+                        now = datetime.now(timezone.utc).isoformat()
+                        news_data = {
+                            "title": item.get("title", ""),
+                            "source": item.get("source", ""),
+                            "url": url,
+                            "content": item.get("content"),
+                            "summary": item.get("summary"),
+                            "published_at": item.get("published_at"),
+                            "sentiment": item.get("sentiment", "neutral"),
+                            "importance": item.get("importance", "normal"),
+                            "related_symbols": related_symbols_json,
+                            "collected_at": item.get("collected_at", now),
+                        }
+
+                        try:
+                            # INSERT OR IGNORE: 依赖 idx_news_items_url_unique 部分唯一索引
+                            # (url 非空时);空 URL 允许重复但 unique index 不阻止空值插入。
+                            cursor = conn.execute(
+                                """INSERT OR IGNORE INTO news_items
+                                   (title, source, url, content, summary, published_at,
+                                    sentiment, importance, related_symbols, collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    news_data["title"],
+                                    news_data["source"],
+                                    news_data["url"],
+                                    news_data["content"],
+                                    news_data["summary"],
+                                    news_data["published_at"],
+                                    news_data["sentiment"],
+                                    news_data["importance"],
+                                    news_data["related_symbols"],
+                                    news_data["collected_at"],
+                                ),
                             )
-                    except Exception:
-                        logger.exception("新闻入库失败: title={}", news_data["title"])
-                        skipped += 1
+                            if cursor.rowcount == 0:
+                                # 重复 URL 已被 partial unique index 拦截
+                                skipped += 1
+                                continue
+                            collected += 1
+                            if url:
+                                existing_urls.add(url)
 
-                finished_at = datetime.now(timezone.utc).isoformat()
-                status = "success" if collected > 0 or skipped == 0 else "failure"
-                error_message = None
-                if collected == 0 and skipped > 0:
-                    error_message = "所有新闻均被跳过，无新增"
+                            if url:
+                                raw_json = json.dumps(item, ensure_ascii=False, default=str)
+                                conn.execute(
+                                    """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
+                                       VALUES (?, ?, ?, ?, ?)""",
+                                    (None, news_data["source"], "news", raw_json, now),
+                                )
+                        except Exception:
+                            logger.exception("新闻入库失败: title={}", news_data["title"])
+                            skipped += 1
 
-                try:
+                    finished_at = datetime.now(timezone.utc).isoformat()
+                    status = "success" if collected > 0 or skipped == 0 else "failure"
+                    error_message = None
+                    if collected == 0 and skipped > 0:
+                        error_message = "所有新闻均被跳过，无新增"
+
+                    # 单次 run_logs 写入：原 collect_news 在此处 INSERT run_logs，
+                    # 但若 INSERT 本身或之后 commit 失败，外层 except 会跳过审计。
+                    # 统一上移到本方法外层 finally，保证任意路径都留痕。
+                    affected_assets = len(affected_symbols_set)
                     conn.execute(
                         """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                            VALUES (?, ?, ?, ?, ?, ?)""",
-                        ("news", status, started_at, finished_at, error_message, len(affected_symbols_set)),
+                        ("news", status, started_at, finished_at, error_message, affected_assets),
                     )
+                    conn.commit()
                 except Exception:
-                    logger.exception("写入 run_logs 失败")
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
 
-        logger.info("新闻采集完成: collected={}, skipped={}", collected, skipped)
-        return {"collected": collected, "skipped": skipped}
+            logger.info("新闻采集完成: collected={}, skipped={}", collected, skipped)
+            result = {"collected": collected, "skipped": skipped}
+            return result
+        except Exception as e:
+            # 异常路径：覆盖 `_get_active_symbols` 等价的 tracked_assets 查询、
+            # provider 循环未捕获异常、落库段 conn.rollback() 后 re-raise 等所有
+            # 提前退出路径。记录 failure run_logs 后再向上抛出，确保上层
+            # `_run_news` 的 try/except 不会因为我们写日志而吞掉原异常。
+            status = "failure"
+            error_message = str(e)[:500]
+            raise
+        finally:
+            # 不论成功还是异常，最终都写一条 run_logs 行。成功路径时本方法末尾
+            # 已写过一条（status=success），此处仅在异常路径上兜底补写一条
+            # status=failure 行 —— 用 INSERT OR IGNORE 配合 task_name + 时间
+            # 去重无法精确判定，故采用：成功路径不再写第二次（用局部标志区分）。
+            try:
+                # 注意：成功路径上 conn 已 commit 并 close；这里用新的 sync 连接
+                # 写兜底行不会冲突（_WRITE_LOCK 释放后新连接安全）。但若成功路径
+                # 已写过 run_logs 行，再次插入会产生重复行 —— 所以先 SELECT 判断
+                # 同一 started_at 是否已有 news 行。
+                with get_db() as conn_check:
+                    existing_row = conn_check.execute(
+                        """SELECT 1 FROM run_logs
+                           WHERE task_name = 'news' AND started_at = ?
+                           LIMIT 1""",
+                        (started_at,),
+                    ).fetchone()
+                if existing_row is None:
+                    finished_at_final = datetime.now(timezone.utc).isoformat()
+                    with get_db() as conn_finish:
+                        conn_finish.execute(
+                            """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            ("news", status, started_at, finished_at_final, error_message, 0),
+                        )
+            except Exception:
+                # 兜底写入 run_logs 失败：仅记日志，不影响原异常向上传播。
+                logger.exception("collect_news 兜底写入 run_logs 失败")
 
     def _match_symbols_with_conn(self, conn: sqlite3.Connection, title: str, content: str | None = None, tracked_assets_rows: list | None = None) -> list[str]:
         if tracked_assets_rows is None:

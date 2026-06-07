@@ -7,6 +7,7 @@ from loguru import logger
 
 from backend.config import get_config
 from backend.services.ai_analyzer import AIAnalyzer
+from backend.services.collection_service import _WRITE_LOCK
 from backend.services.evidence_builder import EvidenceBuilder
 from backend.storage.database import get_db, aget_connection
 
@@ -39,39 +40,45 @@ class ReportService:
         skipped = 0
         errors: list[str] = []
 
-        # 复用单次 aiosqlite 连接 + PRAGMA，避免每标的重建。
-        conn = await aget_connection()
-        try:
-            for symbol in symbols:
-                try:
-                    if not force and await ReportService._has_today_report(conn, symbol):
-                        skipped += 1
-                        continue
-                    evidence = await EvidenceBuilder.build(symbol, conn=conn)
-                    # AIAnalyzer.analyze 是纯 CPU 工作（规则评分 + 字符串拼接），
-                    # 在 async 路径中直接调用会阻塞事件循环。用 to_thread 卸载到线程池。
-                    result = await asyncio.to_thread(AIAnalyzer.analyze, evidence)
-                    await ReportService._save_report(conn, symbol, result, force)
-                    generated += 1
-                except Exception as e:
-                    logger.exception("生成报告失败: {}", symbol)
-                    errors.append(f"{symbol}: {e}")
-            await conn.commit()
-        finally:
-            await conn.close()
+        # 持有 _WRITE_LOCK 串行化整个报告生成流程：
+        # ai_reports 走 aiosqlite 写、run_logs 走 sync get_db 写，两条路径
+        # 都属于 CLAUDE.md 硬约束的"writes MUST hold _WRITE_LOCK"。
+        # threading.Lock 跨 event loop 安全（scheduler 每次 asyncio.run 新循环）。
+        # EvidenceBuilder.build 全程只读，包裹在锁内不阻塞其他读。
+        with _WRITE_LOCK:
+            # 复用单次 aiosqlite 连接 + PRAGMA，避免每标的重建。
+            conn = await aget_connection()
+            try:
+                for symbol in symbols:
+                    try:
+                        if not force and await ReportService._has_today_report(conn, symbol):
+                            skipped += 1
+                            continue
+                        evidence = await EvidenceBuilder.build(symbol, conn=conn)
+                        # AIAnalyzer.analyze 是纯 CPU 工作（规则评分 + 字符串拼接），
+                        # 在 async 路径中直接调用会阻塞事件循环。用 to_thread 卸载到线程池。
+                        result = await asyncio.to_thread(AIAnalyzer.analyze, evidence)
+                        await ReportService._save_report(conn, symbol, result, force)
+                        generated += 1
+                    except Exception as e:
+                        logger.exception("生成报告失败: {}", symbol)
+                        errors.append(f"{symbol}: {e}")
+                await conn.commit()
+            finally:
+                await conn.close()
 
-        finished_at = datetime.now(timezone.utc).isoformat()
-        status = "success" if not errors else "failure"
-        error_message = "; ".join(errors) if errors else None
-        try:
-            with get_db() as conn_sync:
-                conn_sync.execute(
-                    """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    ("ai_report", status, started_at, finished_at, error_message, generated + skipped),
-                )
-        except Exception:
-            logger.exception("写入 ai_report run_logs 失败")
+            finished_at = datetime.now(timezone.utc).isoformat()
+            status = "success" if not errors else "failure"
+            error_message = "; ".join(errors) if errors else None
+            try:
+                with get_db() as conn_sync:
+                    conn_sync.execute(
+                        """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        ("ai_report", status, started_at, finished_at, error_message, generated + skipped),
+                    )
+            except Exception:
+                logger.exception("写入 ai_report run_logs 失败")
 
         return {"generated": generated, "skipped": skipped}
 

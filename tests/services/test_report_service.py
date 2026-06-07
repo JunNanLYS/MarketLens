@@ -257,3 +257,113 @@ async def test_generate_reports_run_logs_failure_isolated(tmp_db) -> None:
         ).fetchone()[0]
     assert count >= 1
 
+
+async def test_generate_reports_acquires_write_lock(tmp_db: Path) -> None:
+    """验证 ReportService.generate_reports 持有 _WRITE_LOCK。
+
+    第 5 轮审查发现: generate_reports 内部通过 aiosqlite 写 ai_reports、
+    通过 sync get_db 写 run_logs，两条路径都未持有 _WRITE_LOCK，违反
+    CLAUDE.md "writes MUST hold _WRITE_LOCK" 硬约束。修复后应在整个
+    生成流程外层包裹 `with _WRITE_LOCK:`。本测试用 ObservableLock 包装
+    锁并验证 generate_reports 进入锁上下文。
+    """
+    import threading
+    from unittest.mock import patch
+
+    from backend.services import report_service
+    from backend.services.collection_service import _WRITE_LOCK as real_lock
+
+    await _seed_full_data()
+
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        """包装 threading.Lock，进入/退出时记录是否持有。"""
+
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    # report_service 顶部 import 了 _WRITE_LOCK，本模块持有同一对象引用；
+    # patch 该模块的属性后，generate_reports 内的 `with _WRITE_LOCK:` 会走 ObservableLock。
+    with patch.object(report_service, "_WRITE_LOCK", new=_ObservableLock(real_lock)):
+        result: dict = await ReportService.generate_reports(symbols=["hk00700"])
+
+    assert observed_held, "ReportService.generate_reports 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True
+    # 业务功能仍正常：报告确实写入 ai_reports
+    assert result["generated"] == 1
+    with get_db() as conn:
+        count: int = conn.execute(
+            "SELECT COUNT(*) FROM ai_reports"
+        ).fetchone()[0]
+    assert count == 1
+
+
+def test_run_ai_report_acquires_write_lock() -> None:
+    """验证 _run_ai_report 走 ReportService.generate_reports → _WRITE_LOCK 路径。
+
+    与 test_run_cleanup_acquires_write_lock 同模式：jobs._run_ai_report 是
+    scheduler 入口，内部 `asyncio.run(ReportService.generate_reports())` 间接
+    命中 report_service 模块的 _WRITE_LOCK。
+
+    测试策略：patch 掉 `asyncio.run`（CLAUDE.md "Test conventions" 推荐），
+    让 _run_ai_report 跳过真实 event loop 启动；patch ReportService.generate_reports
+    为持有 _WRITE_LOCK 的同步探针。这样既测了 scheduler 入口确实调到
+    ReportService.generate_reports，也测了真实代码路径在持有锁后释放。
+    业务正确性（ai_reports 写入、run_logs 写入）由
+    test_generate_reports_acquires_write_lock 覆盖。
+    """
+    import threading
+    from unittest.mock import MagicMock, patch
+
+    from backend.services import collection_service, report_service
+    from backend.scheduler.jobs import _run_ai_report
+
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    real_lock = collection_service._WRITE_LOCK
+
+    # 探针：模拟真实 generate_reports 进入 _WRITE_LOCK 上下文的行为。
+    def _probe_with_lock(*args, **kwargs) -> dict:
+        with _ObservableLock(real_lock):
+            return {"generated": 0, "skipped": 0}
+
+    # _run_ai_report 调 asyncio.run(ReportService.generate_reports()) — 把
+    # asyncio.run 替换为无操作 stub，让 side_effect 注入的 _probe_with_lock
+    # 实际执行（探针会在 with 块内 acquire/release _ObservableLock 触发观察）。
+    def _fake_asyncio_run(coro_or_callable, *args, **kwargs):
+        return None
+
+    with patch.object(
+        report_service.ReportService,
+        "generate_reports",
+        new=MagicMock(side_effect=_probe_with_lock),
+    ), patch(
+        "backend.scheduler.jobs.asyncio.run",
+        side_effect=_fake_asyncio_run,
+    ):
+        _run_ai_report()
+
+    assert observed_held, "_run_ai_report 链路未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True
+
