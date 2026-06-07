@@ -81,13 +81,17 @@ class NewsService:
                     affected_symbols_set: set[str] = set()
 
                     # 预取最近一批已有 URL,避免逐条查询(N+1 问题)。
-                    # 仅取最近 5000 条以防止全表扫描导致内存膨胀;新增新闻的发布时间
-                    # 一定晚于这些记录,因此覆盖了实际去重需求。
-                    # DB 层兜底:idx_news_items_url_unique 部分唯一索引保证重复 URL 不可插入。
+                    # Python 端 set 仅作预过滤优化,真正的幂等安全网是
+                    # `INSERT OR IGNORE` + idx_news_items_url_unique partial unique index
+                    # —— 即便某条 URL 落在 LIMIT 窗口之外,DB 层仍会拦截并通过
+                    # `cursor.rowcount == 0` 计入 skipped,不会产生重复行。
+                    # LIMIT 选 20000 兼顾历史 buffer(覆盖 ≥ 20 天日均 ≤ 1000 条的
+                    # 近期新闻)与单次查询内存(~200KB),即便 provider 大批重发
+                    # 旧文章也可在预过滤阶段命中,降低 _match_symbols 调用次数。
                     existing_urls: set[str] = set()
                     url_rows = conn.execute(
                         "SELECT url FROM news_items WHERE url IS NOT NULL "
-                        "ORDER BY id DESC LIMIT 5000"
+                        "ORDER BY id DESC LIMIT 20000"
                     ).fetchall()
                     existing_urls = {r["url"] for r in url_rows}
 

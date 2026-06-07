@@ -703,7 +703,10 @@ class PortfolioService:
             ).fetchall()
             if not group_rows:
                 return []
-            pair_ph = ", ".join(["(?, ?)"] * len(group_rows))
+            # 构造 VALUES 子句：SQLite 3.8.3+ 支持 `(account_id, symbol) IN (VALUES (?,?), (?,?), ...)`，
+            # planner 能识别为 row-value 列表并利用 (account_id, symbol) 索引；旧 `IN ((?, ?), (?, ?))`
+            # 会被当作表达式列表，planner 退化为全表扫。
+            values_ph: str = ", ".join(["(?, ?)"] * len(group_rows))
             pair_params: list = []
             for r in group_rows:
                 pair_params.extend([r["account_id"], r["symbol"]])
@@ -711,7 +714,7 @@ class PortfolioService:
                 f"""SELECT t.account_id, t.symbol, t.type, t.quantity, t.price, t.fee
                     FROM transactions t
                     WHERE {where_clause}
-                      AND (t.account_id, t.symbol) IN ({pair_ph})
+                      AND (t.account_id, t.symbol) IN (VALUES {values_ph})
                     ORDER BY t.account_id, t.symbol, t.trade_date, t.created_at""",
                 params + pair_params,
             ).fetchall()
