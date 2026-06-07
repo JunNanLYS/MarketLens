@@ -907,3 +907,39 @@ uv run pytest tests/services/test_collection_service.py::test_collect_quotes_con
 ```
 
 测试使用 `pytest-asyncio` 的 `asyncio_mode = "auto"`，所有 `async def test_*` 自动被识别为协程。
+
+---
+
+## 17. 修复历史
+
+> 本节按"轮次"归档项目自 2026-06-05 起的 9 轮代码审查 + 修复演进，每轮仅给 1-2 段总结 + 修复文件数 + 测试数。具体 issue 追踪见 `CODE_REVIEW.md`（issue tracker 性质）；本节为 release notes 性质——只回答"修了什么、影响范围多大"。
+
+### 第 4 轮（2026-06-05）— 48 条审查问题首次入库
+
+4-Agent 并行深度复审整库（Correctness / 数据完整性+采集可靠性 / 性能+可维护性 / UI+可访问性+集成边界），合并去重后保留 **48 条**高置信度问题（7 CRITICAL / 12 MAJOR / 19 MINOR / 10 NIT）。核心发现：资金主线（`portfolio_service`）5 个 P0 阻断性 bug（update_tx/delete_tx 缺写锁、split 数量校验缺失、WAC 幻股首笔为 sell、get_positions 长连接、买入 fee 忽略均价）+ 2 个数据完整性写锁缺失（news_service / `_run_cleanup`）。本次只完成问题登记与严重度排序，**未修代码**。
+
+### 第 5 轮（2026-06-06）— 25 条新发现 + 第 5 轮 P0 全部修复
+
+4-Agent 并行新发现 25 条候选（4 CRITICAL / 11 MAJOR / 7 MINOR / 3 NIT），覆盖 4 张新表（chip / margintrade / blocktrade / lhb）+ 7 个新端点 + 19 个新 westock 方法的鉴权/写日志/日期校验盲点。同日完成第 5 轮 P0 全部修复（`create_transaction` 加写锁、14 个查询端点 ISO 校验、7 个新 POST 端点加 `verify_api_key`、13 个 `collect_*` 写 `run_logs`、evidence_builder 5 个新维度评分），全部 457 测试通过。`docs/api/` 同步新增 5 个端点文档（chip / margintrade / blocktrade / lhb / calendar）。
+
+### 第 6 轮（2026-06-07）— 5-Agent 补登 1 CRITICAL + 3 条 NIT 修复
+
+5-Agent 精细化补登：Agent α 修 `split` 记录 avg_cost 按比例下调、Agent β 补 `news_service` 13 个 `collect_news_*` 写 `run_logs`、Agent γ 改 UI cache 改用 `st.session_state` 避免全局清、Agent δ 修 AI reasons 互斥、Agent ε 审计 `_run_ai_report` 写锁（补登 1 个 CRITICAL：`report_service.generate_reports` 缺 `_WRITE_LOCK`）。修复文件 4 个 + 测试 457 通过。
+
+### 第 7-8 轮（2026-06-07）— 8 个资金/写锁 CRITICAL 全部修复
+
+**第 7 轮**：5-Agent 并行清理 MINOR/NIT 5 条（news + portfolio + asset 域）；`tencent_news` disable + westock env 最小化（5 个测试夹具不再网络命中）；`_HttpClientMixin` 抽出 5 个 Provider 重复 13 行代码；`settings` 直读 config 改端点；docs/api 字段名 + `task_status` `running` 过滤修复。
+
+**第 8 轮**（里程碑）：Sub Agent 1 逐条 Read `portfolio_service.py` / `news_service.py` / `scheduler/jobs.py` / `report_service.py` 实际代码，逐条复验第 4 轮 7 CRITICAL + 第 6 轮补登 1 CRITICAL = **8 / 8 全部已修**（5 资金主线 + 2 写锁（news + cleanup） + 1 写锁（report_service 漏审））。`CODE_REVIEW.md` 增"第 8 轮复验记录"章节作为决策追踪历史，汇总表保留 7/12/19/10/48 数字作为"登记总数"快照不变更。修复文件 0 个（仅文档归档）；测试 457 通过。
+
+### 第 9 轮（2026-06-07）— 文档/UI 全面校准 + realized-pnl 同构化
+
+5-Agent 并行：Agent 1 归档第 8 轮复验（仅 `CODE_REVIEW.md` 文档 42+ 行新增/55 行删除）；Agent 2 修 `realized-pnl` page wrapper（`get_realized_pnl` 返回类型 `list[dict]` → `dict` 含 `items/total/page/page_size`，与 `/transactions` 同构，4 文件改动 +62 行）；Agent 3 校准 `docs/api/` 7 个文档（接口数 41 → 74，30+ 处状态码/鉴权标错修正，`/config` 章节补齐）；Agent 5 给 `ui/api_client.py` 补 30 个 client 方法（353 → 713 行，72 端点全覆盖）。修复文件 12 个 + 测试 457 通过。
+
+### 累计成果
+
+- **测试基线**：0 → 457 passed（9 轮无回归）
+- **代码库**：`backend/` 16 个 service / 10 个 collector / 7 个 router；`ui/` 12 个页面；`tests/` 镜像 `backend/` 目录结构
+- **数据库**：29 张表 + 多张 CTE 视图，WAL + FK + UNIQUE 索引完整
+- **API**：74 个端点，全部 `/api/v1/` 前缀，写端点全部 `verify_api_key` 鉴权
+- **已知遗留**：见 `CLAUDE.md` "Known issues" + `CODE_REVIEW.md` "审查结论"。当前**无 P0 资金/写锁类阻断性 bug**。

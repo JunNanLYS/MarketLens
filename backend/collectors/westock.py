@@ -61,21 +61,46 @@ def _is_separator(line: str) -> bool:
     return bool(re.match(r"^\|[\s\-:|]+\|$", line))
 
 
-def _detect_error(text: str) -> str | None:
+# 错误码常量：固定枚举值，便于日志聚合和 UI 告警分类；
+# 触发短语作 context 追加，不作为 error_message 主内容。
+WESTOCK_EMPTY_OUTPUT: str = "WESTOCK_EMPTY_OUTPUT"
+WESTOCK_NO_DATA: str = "WESTOCK_NO_DATA"
+WESTOCK_QUERY_FAILED: str = "WESTOCK_QUERY_FAILED"
+WESTOCK_EXEC_FAILED: str = "WESTOCK_EXEC_FAILED"
+WESTOCK_CHANNEL_UNSUPPORTED: str = "WESTOCK_CHANNEL_UNSUPPORTED"
+WESTOCK_UNKNOWN_SUBCMD: str = "WESTOCK_UNKNOWN_SUBCMD"
+
+# (正则, 错误码) 元组列表。**顺序就是匹配优先级**——更具体/更长的模式
+# 必须排在更宽泛/更短的前面,避免被截胡。
+# 优先级考量:执行失败 [XXX] 包含具体错误码 (如 SKILL_006),最具体 → 最先;
+# 查询 XXX 失败 是宽泛业务错误,放后面;数据为空 是最模糊的兜底,放最后。
+WESTOCK_ERROR_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"执行失败\s*[\[【](\w*\d*)[\]】]\s*[:：]?\s*"), WESTOCK_EXEC_FAILED),
+    (re.compile(r"查询\S+?失败\s*[:：]\s*"), WESTOCK_QUERY_FAILED),
+    (
+        re.compile(r"命令\s*[\"「'](.+?)[\"」']\s*在当前渠道不可用"),
+        WESTOCK_CHANNEL_UNSUPPORTED,
+    ),
+    (re.compile(r"未知子命令\s*[\"「'](.+?)[\"」']"), WESTOCK_UNKNOWN_SUBCMD),
+    (re.compile(r"数据为空"), WESTOCK_NO_DATA),
+]
+
+
+def _detect_error(text: str) -> tuple[str, str] | None:
+    """从 westock CLI 输出提取错误。
+
+    Returns:
+        (error_code, context) 或 None（无错误）。
+        error_code 是固定错误码常量；context 是触发短语（带原文中
+        的实际信息，如 SKILL_006 编号、具体命令名等），便于调试。
+    """
     if not text.strip():
-        return "CLI 返回空输出"
-    patterns: list[tuple[str, str]] = [
-        (r"数据为空", "未找到匹配数据"),
-        (r"命令\s+\"[^\"]+\"\s+在当前渠道不可用", "该命令在当前渠道不可用"),
-        (r"执行失败\s*\[(\w*\d*)\]\s*[:：]\s*", ""),
-        # 非贪婪匹配：避免 \S* 贪婪吞掉后续行内容
-        # 触发短语示例：查询行情失败: / 查询分红失败: / 查询 XXX 失败: ...
-        (r"查询\S+?失败\s*[:：]\s*", ""),
-    ]
-    for pat, _tmpl in patterns:
-        m = re.search(pat, text)
+        return (WESTOCK_EMPTY_OUTPUT, "CLI 返回空输出")
+    for pattern, code in WESTOCK_ERROR_PATTERNS:
+        m = pattern.search(text)
         if m:
-            return m.group(0).strip()
+            context = m.group(0).strip()
+            return (code, context)
     return None
 
 
@@ -173,18 +198,21 @@ class WeStockProvider(BaseProvider):
 
             error = _detect_error(stdout)
             if error:
-                last_err = error
+                code, context = error
+                # 组合成单一错误字符串：error_code（固定枚举）+ context（触发短语）
+                # 保留 SKILL_006 等关键文本供下游"in"检查。
+                last_err = f"{code}: {context}" if context else code
                 # 仅 SKILL_006 重试（冷启动缓解），其它业务错误立即返回
-                is_skill_006 = "SKILL_006" in error
+                is_skill_006 = "SKILL_006" in context
                 if is_skill_006 and attempt < _MAX_RETRIES:
                     logger.warning(
                         "WeStock CLI 冷启动失败 [attempt {}/{}]: cmd={}, error={}",
-                        attempt + 1, _MAX_RETRIES + 1, cmd_parts, error,
+                        attempt + 1, _MAX_RETRIES + 1, cmd_parts, last_err,
                     )
                     await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
                     continue
-                logger.warning("WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, error)
-                return [], error
+                logger.warning("WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, last_err)
+                return [], last_err
 
             if proc.returncode != 0:
                 # 非零退出码立即返回，不重试（重试也无法修复 CLI bug）

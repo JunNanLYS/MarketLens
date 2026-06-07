@@ -25,23 +25,10 @@
 
 > **第 8 轮复验（2026-06-07）**：本节 5 个 CRITICAL + "数据完整性" 2 个 CRITICAL + 第 6 轮补登 1 个 CRITICAL = **共 8 个 CRITICAL 已全部修复**，从条目中删除。复验记录见本文件底部"第 8 轮复验记录"小节。
 
-### [MAJOR] `portfolio_service.py:487` — `market_quotes` 相关子查询在 MAX 冲突时返回多行
-
-**问题**: `WHERE collected_at = (SELECT MAX(collected_at) FROM market_quotes WHERE symbol = mq.symbol)` 在两个同毫秒采集行时返回 2 行，导致 `quotes_map` 中同一 symbol 重复项；`get_positions` 可能重复累加。
-
-**修复**: 改用 CTE + `ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC)` 取 rn=1。
-
-**第 8 轮复验**：**已修** — `portfolio_service.py:527-533` 已使用 CTE + `ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn` 取 rn=1，quotes_map 不再出现重复项。**保留为 MAJOR（已修但需在条目中标记，备追踪）**。
-
-### [MAJOR] `scheduler/jobs.py:31, 80` — 启动健康检查用 naive `datetime.now()`
-
-**问题**: `_check_neo_data_token_on_startup` 用 `datetime.now().isoformat()`（本地 naive），与服务层 `datetime.now(timezone.utc).isoformat()` 不一致。`run_logs.started_at`/`finished_at` 比较时混用 UTC 和本地时区，**可能产生负 duration**。
-
-**修复**: 全部统一 `datetime.now(timezone.utc)`。
-
 ## 数据完整性 + 采集可靠性
 
 > **第 8 轮复验**：本节 2 个 CRITICAL（`news_service` 写锁 / `_run_cleanup` 写锁）已全部修复，从条目中删除。详见底部"第 8 轮复验记录"。
+> **第 9 轮复验（2026-06-07）**：本节 1 个 MAJOR（`scheduler/jobs.py:31, 80` naive datetime）已修复（`_check_neo_data_token_on_startup` 已用 `datetime.now(timezone.utc).isoformat()`），从条目中删除。
 
 ## UI + 可访问性 + 集成边界
 
@@ -82,7 +69,7 @@
 | 状态 | 数量 | 说明 |
 |------|------|------|
 | 已修复 | 6 | `news_service` 写锁 / `_run_cleanup` 写锁 / `portfolio_service` split 校验 / WAC buy fee / `get_positions` 锁内 dict 化 / `scheduler/jobs.py` naive datetime |
-| 部分修复 | 2 | 首笔为 sell 拒绝（create 已修，update 路径残留理论窗口）/ P&L 颜色盲（ai_reports 加了 emoji，但 portfolio.py / asset_detail.py 仍纯红绿） |
+| 部分修复 | 1 | 首笔为 sell 拒绝（create 已修，update 路径残留理论窗口） |
 | 未修复 | 40 | 待修复清单全部保留（按原优先级） |
 
 > **复验结论**：第 5 轮是新功能叠加（chip/margintrade/blocktrade/lhb/calendar/etf/sector/us-hk-finance 4 张新表 + 19 个新端点），未触及已登记 P0/P1 资金/写锁 bug。这些仍是最高优先级。
@@ -91,31 +78,9 @@
 
 ---
 
-### [MINOR] `portfolio_service.py:613-693` + `docs/api/portfolio.md:253` — realized-pnl 翻页 doc 与响应结构不统一
-
-**问题**: 端点 `GET /positions/realized-pnl` 实际接受 `page`/`page_size` 并返回 `{"items": [...], "total": N, "page": N, "page_size": N}` 结构（无 `page_info` 包裹），但文档描述 "TODO 后续版本补充分页"，与代码不同步。
-
-**影响**: 文档/代码 drift；用户按文档实现会缺失分页能力。
-
-**修复**: 文档删除 "TODO" 段，补全分页示例；考虑统一为 `{items, total, page_info: {page, page_size, total_pages}}` 包裹格式（与已登记 UI 缓存语义一致）。
-
----
-
-### [MINOR] `evidence_builder.py:43` — `_derive_finance_yoy` 用 `abs(prev_val)` 分母掩盖符号翻转
-
-**问题**: YoY 计算 `(curr - prev) / abs(prev)`，当 `prev` 为负数时（如去年亏损）分母 `abs(prev)` 为正数，分子 `curr - prev` 可能是 `正值 - 负值` 得到正常结果，但当 `curr` 与 `prev` **同时为负但符号翻转**时（`prev=-100, curr=50`）返回 `-1.5` 看似合规实际语义错误（YoY 不该用 -1.5 表示"从亏 100 到赚 50"）。
-
-**影响**: 财报 YoY 字段在亏损/扭亏场景下不可信。
-
-**修复**: `if prev < 0: return None` 或单独写"扭亏"标记字段。
-
----
-
-### [NIT] `ui/pages/ai_reports.py:110` + 14 个新端点 + `backend/main.py:74-76` lifespan 资源清理（已登记 MINOR 同源，扩散附录）
-
-**问题**: 已登记 MINOR"lifespan 不关 provider clients" — 第 5 轮新增 4 个 Provider 类（westock_etf / westock_sector / neodata_us_finance / neodata_hk_finance）实例在 lifespan shutdown 时同样不被 close，httpx "Unclosed client" 警告数量从 6 增加到 10。**建议作为已登记 MINOR 的扩散面附录，不另开新条**。
-
----
+> **第 9 轮复验（2026-06-07）**：本轮复验删除 5 条已修条目（quotes CTE / naive datetime / realized-pnl 翻页 doc / lifespan 资源清理 / westock 贪婪匹配） + 1 条 P&L 颜色盲状态从"部分修复"升级为"已修复"，详见底部"第 9 轮复验记录"。
+>
+> **第 9 轮复验（Sub Agent 2, 2026-06-07）**：本 sub-agent 复验确认 `evidence_builder._derive_finance_yoy` MINOR（line 83-89 旧条目）**已修**——`EvidenceBuilder._classify_yoy_sign`（evidence_builder.py:22-44）已返回 `turnaround` / `loss_narrowing` / `loss_widening` / `normal` / `None` 结构化标签，AIAnalyzer（ai_analyzer.py:311-340）按标签结构化判定（扭亏 / 亏损收窄 → 看多；亏损扩大 → 看空），属于原条目"修复"段第二选"单独写扭亏标记字段"的落地。本条目从登记中删除。
 
 ## 第 5 轮 Top-5 优先修复
 
@@ -176,5 +141,36 @@
 - **数据完整性节**（line 74-86）：删除 2 个 CRITICAL 条目（news_service 写锁 / _run_cleanup 写锁），整节替换为单行 "本节 2 个 CRITICAL 已全部修复"
 - **第 6 轮修复节**（line 181-192）：r6 补登的 1 个 CRITICAL 条目替换为 "已修复" 标注，附实际修复位置
 - **新加"第 8 轮复验记录"小节**（本节）：8 个 CRITICAL 逐条复验表 + 汇总表 / 章节改动记录，作为决策追踪历史
+
+---
+
+## 第 9 轮复验记录（2026-06-07）
+
+> **范围**：第 5/8 轮后已修但未从登记中删除的 5 条遗留 + 1 条部分修复状态升级。
+> **方法**：Sub Agent 1 逐条 Read 当前代码 vs CODE_REVIEW.md 登记，核对是否已修。
+> **结论**：5 条已修条目从登记中删除 + 1 条 P&L 颜色盲状态从"部分修复"升级为"已修复"。
+
+### 逐条复验
+
+| # | 条目 | 实际修复位置 | 状态 | 证据 |
+|---|------|-------------|------|------|
+| 1 | `portfolio_service.py:487` `market_quotes` MAX 子查询 MAJOR | `backend/services/portfolio_service.py:527-533` | **已修** | 已用 CTE + `ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn` 取 rn=1；quotes_map 由 `{r['symbol']: r['price'] for r in qrows}` 构造，严格 1 行/symbol |
+| 2 | `scheduler/jobs.py:31, 80` 启动健康检查 naive datetime MAJOR | `backend/scheduler/jobs.py:55` | **已修** | `_check_neo_data_token_on_startup` 已用 `started_at = datetime.now(timezone.utc).isoformat()`，与 run_logs 其他写入路径一致 |
+| 3 | `docs/api/portfolio.md:253` realized-pnl 翻页 doc MINOR | `docs/api/portfolio.md:251-260` | **已修** | 文档示例已补全 `"page": 1, "page_size": 50` 字段；"分页支持"段也已说明 `page`/`page_size` 默认值与上限；不再含 "TODO" |
+| 4 | `backend/main.py:74-76` lifespan 不关 provider clients NIT | `backend/main.py:73-95` | **已修** | lifespan shutdown 阶段遍历 `_get_collection_service()._get_structured_providers()` + `_get_news_service()._providers`，逐个 `await provider.close()`，try/except 隔离单 Provider 失败 |
+| 5 | `westock._detect_error` 正则贪婪匹配 NIT | `backend/collectors/westock.py:73` | **已修** | 已改用 `r"查询\S+?失败\s*[:：]\s*"` 非贪婪匹配，并在注释中说明"避免 \S* 贪婪吞掉后续行内容" |
+| 6 | P&L 颜色盲 "部分修复" 状态 | `ui/pages/portfolio.py:107-117` + `ui/pages/asset_detail.py:862-871` | **升级为已修复** | `portfolio.py` 已加 `_pnl_arrow_prefix()` 函数（▲/▼ 前缀）；`asset_detail.py` line 853-871 在 st.metric 与 spread 显示中均使用 `arrow = "▲" if profit_rate >= 0 else "▼"`；ai_reports 之前也已加 emoji。三处覆盖完整，状态从"部分修复"升级为"已修复" |
+| 7 | `evidence_builder.py:43` `_derive_finance_yoy` abs(prev_val) MINOR（Sub Agent 2 追加复验） | `backend/services/evidence_builder.py:22-44` + `backend/services/ai_analyzer.py:311-340` | **已修** | `_classify_yoy_sign` 返回 `turnaround` / `loss_narrowing` / `loss_widening` / `normal` / `None` 结构化标签；`AIAnalyzer` 按标签结构化判定（扭亏/亏损收窄→看多，亏损扩大→看空）。属于原条目"修复"段第二选项"单独写扭亏标记字段"的落地 |
+
+> **注**：# 1-2 为 8 轮复验中标注"已修但保留追踪"的 2 个 MAJOR；# 3-4 为 5 轮新发现中 2 条已修但未从条目中删除的条目；# 5 为方法论说明中提到的 "westock._detect_error 11 方法扩散"，实际修复在 R 轮已完成；# 6 为"部分修复"状态升级（剩余 1 条"首笔为 sell update 路径残留理论窗口"仍按原状保留）；# 7 为 Sub Agent 2 复验发现的最后 1 条 MINOR 残留（已修删除）。
+
+### 汇总表 / 章节改动记录
+
+- **汇总表**（line 8-19）：保持 7 CRITICAL / 48 合计不变更（与第 8 轮决定一致：保留"登记总数"快照）
+- **Correctness 节**（line 22-26）：删除 1 个 MAJOR 条目（`portfolio_service.py:487` quotes CTE），整节替换为单行 "本节 5 个 CRITICAL + 1 个 MAJOR 已全部修复"
+- **数据完整性节**（line 28-31）：追加第 9 轮复验标注（1 个 MAJOR naive datetime 已修复）
+- **第 5 轮新发现节**（line 77-91）：删除 3 条已修条目（realized-pnl 翻页 doc + lifespan 资源清理 + evidence_builder YoY MINOR），无活跃 MINOR 残留
+- **第 5 轮已登记状态复验表**（line 67-73）："部分修复"从 2 条降为 1 条（P&L 颜色盲已升级为已修复）
+- **新加"第 9 轮复验记录"小节**（本节）：7 条逐条复验表（# 1-6 Sub Agent 1 + # 7 Sub Agent 2 追加）+ 汇总表 / 章节改动记录，作为决策追踪历史
 
 
