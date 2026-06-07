@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import re
 import sys
@@ -125,7 +125,7 @@ class TencentNewsProvider(NewsProvider):
                     published_at = str(ts)
             out.append({
                 "title": title,
-                "source": item.get("source") or item.get("media_name") or "\u817e\u8baf\u65b0\u95fb",
+                "source": item.get("source") or item.get("media_name") or "腾讯新闻",
                 "url": item.get("url") or item.get("link") or "",
                 "content": item.get("content") or item.get("summary") or "",
                 "summary": item.get("summary") or item.get("abstract") or "",
@@ -143,21 +143,21 @@ class TencentNewsProvider(NewsProvider):
             if s.startswith("|") and len(s.split("|")) >= 3:
                 title = s.split("|")[1].strip()
                 if title and not re.match(r"^[\s\-:|]+$", title):
-                    out.append({"title": title, "source": "\u817e\u8baf\u65b0\u95fb", "url": "", "content": "", "summary": "", "published_at": None, "sentiment": "neutral", "importance": "normal", "collected_at": self._now()})
+                    out.append({"title": title, "source": "腾讯新闻", "url": "", "content": "", "summary": "", "published_at": None, "sentiment": "neutral", "importance": "normal", "collected_at": self._now()})
         return out
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         apikey = (self.params or {}).get("apikey", "")
-        # \u4f18\u5148\u901a\u8fc7\u73af\u5883\u53d8\u91cf TENCENT_NEWS_APIKEY \u4f20\u9012 apikey\uff0c\u907f\u514d\u5728\u547d\u4ee4\u884c\u53c2\u6570\u4e2d\u660e\u6587\u6cc4\u9732\u3002
-        # \u5b89\u5168\u8003\u91cf\uff1a\u4e0d\u63d0\u4f9b --caller fallback\uff08\u65e7\u7248 CLI \u4e0d\u652f\u6301 env \u65f6\u5e94\u5347\u7ea7 CLI \u800c\u975e\u964d\u7ea7\u5b89\u5168\uff09\uff1a
-        # Linux/macOS \u7684 /proc/<pid>/cmdline \u8fdb\u7a0b\u5217\u8868\u5bf9\u540c\u7528\u6237\u8fdb\u7a0b\u53ef\u89c1\uff0c
-        # \u547d\u4ee4\u884c\u53c2\u6570\u4f1a\u6cc4\u9732 API Key\u3002\u4ec5\u4f9d\u8d56\u73af\u5883\u53d8\u91cf\u900f\u4f20\u3002
+        # 优先通过环境变量 TENCENT_NEWS_APIKEY 传递 apikey，避免在命令行参数中明文泄露。
+        # 安全考量：不提供 --caller fallback（旧版 CLI 不支持 env 时应升级 CLI 而非降级安全）：
+        # Linux/macOS 的 /proc/<pid>/cmdline 进程列表对同用户进程可见，
+        # 命令行参数会泄露 API Key。仅依赖环境变量透传。
         run_env: dict[str, str] | None = None
         if apikey:
             run_env = os.environ.copy()
             run_env["TENCENT_NEWS_APIKEY"] = apikey
         cmds: list[list[str]] = [["hot", "--limit", str(self._max_items)]]
-        cmds.append(["search", "\u8d22\u7ecf", "--limit", str(self._max_items)])
+        cmds.append(["search", "财经", "--limit", str(self._max_items)])
         for cmd in cmds:
             out, err = await self._run(cmd, env=run_env)
             if not err and out:

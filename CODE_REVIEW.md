@@ -87,73 +87,6 @@
 
 ## UI + 可访问性 + 集成边界
 
-### [MAJOR] `docs/api/neodata.md:24-37` vs `backend/api/neodata.py:71-76` — `/token-status` 字段名错
-
-**问题**: 文档写 `has_token` / `expires_at`；代码返回 `is_valid`，**无 expires_at**。用户按文档实现客户端会 KeyError。
-
-**修复**: 文档改为 `{"is_valid": true, "source": "cache"}`。
-
-### [MAJOR] `docs/api/assets.md:207` vs `backend/api/assets.py:20-24` — PATCH `/assets` 字段名错
-
-**问题**: 文档说 `name` 可更新；`AssetUpdateRequest` 只接受 `enabled/tags/notes`。用户按文档改名得到 422 或静默丢失。
-
-**修复**: 文档删除 `name` 字段或 model 加 `name`。
-
-### [MAJOR] `ui/pages/task_status.py:64` — `running` 过滤永远不匹配
-
-**问题**: Selectbox 提供 `["全部", "success", "failed", "running"]`，但 `run_logs.status` 实际只写 `success` / `failure`。选 `running` 得到空列表。
-
-**修复**: 移除 `running` 选项；或在任务开始时持久化 `running` 状态、结束 update。
-
-### [MINOR] `ui/pages/settings.py:8-25` — `ui/` 直接读 `config.yaml` 违反层边界
-
-**问题**: 用 `open(Path(__file__).parents[2] / "config.yaml")` 解析 YAML。代码自承认"临时直读，后续应新增 GET 端点"。CLAUDE.md 明确禁止 ui 直读 config。
-
-**修复**: 新增 `GET /api/v1/config/data-sources`，UI 改调 API。
-
-### [MINOR] `ui/pages/portfolio.py`, `tracked_assets.py`, `asset_detail.py`, `task_status.py`, `ai_reports.py` — P&L 颜色盲不可达
-
-**问题**: 多处用 `:green[...]` / `:red[...]` 单色信号盈亏，~8% 男性色盲无法区分。AI 报告的 action 4 状态（buy/sell/watch/avoid）也只用颜色。
-
-**修复**: 加 `▲` / `▼` 文本前缀或 icon，color 作为辅助信号。
-
-### [MINOR] `ui/app.py:32` — 侧栏 radio `label_visibility="collapsed"` 隐藏标签
-
-**问题**: 屏幕阅读器失去 "导航" 标签，无法识别是主导航控件。
-
-**修复**: 改 `label_visibility="visible"` 或加 `aria-label`。
-
-## 待修复清单（按优先级）
-
-### 🔴 CRITICAL（7 项）
-1. **持仓并发安全** — `_WRITE_LOCK` 序列化 portfolio `update_transaction` / `delete_transaction`
-2. **新闻写锁** — `news_service.collect_news` 加 `_WRITE_LOCK`
-3. **清理写锁** — `_run_cleanup` 加 `_WRITE_LOCK`
-4. **split 类型写时校验** — service 层强制 `quantity > 0` 且为 ratio
-5. **WAC 幻股** — 拒绝首笔为 sell 的持仓计算
-6. **WAC 忽略买入手续费** — `total_cost += price*quantity + fee`
-7. **`get_positions` 长连接 + post-commit 陈旧** — 所有 dict 化放入 `with` 块内
-
-### 🟡 MAJOR（12 项）
-8. **MAX 冲突子查询改 ROW_NUMBER** — `get_positions` quotes_map
-9. **股票详情页 CTE 笛卡尔积** — `get_asset_by_id` 拆两个查询
-10. **portfolio Streamlit 缓存** — `get_positions` / `get_realized_pnl` 加 `@st.cache_data(ttl=15)`
-11. **4-way 重复 fetch/insert** — `collection_service` 抽 dispatch dict
-12. **market prefix 硬编码** — 移入 config
-13. **news INSERT OR IGNORE** — DB 层兜底去重
-14. **5000 行 URL 预取窗口** — 依赖 UNIQUE INDEX
-15. **report_service 失败时 run_logs 不写** — 外层 try/finally
-16. **westock 错误信息不可读** — 用错误码
-17. **jobs.py naive datetime** — 改 UTC
-18. **`/token-status` 文档错** — `is_valid` 不是 `has_token`
-19. **`PATCH /assets` 文档错** — 文档删 `name` 字段
-20. **`running` 过滤** — 移除选项或持久化
-
-### 🟢 MINOR / NIT
-- 详见各维度清单
-
----
-
 ## 审查结论
 
 **总体判断**: 项目架构清晰、SQL 注入防护到位、并发原语选型正确（threading.Lock for cross-loop）、懒加载实现完整。主要风险集中在**资金计算的精度和并发安全**——`portfolio_service` 的 `_WRITE_LOCK` 缺失和 split/手续费/幻股几个算法问题在单用户本地工具场景下**直接砸到用户的 P&L**。
@@ -215,22 +148,6 @@
 **影响**: 财报 YoY 字段在亏损/扭亏场景下不可信。
 
 **修复**: `if prev < 0: return None` 或单独写"扭亏"标记字段。
-
----
-
-### [NIT] `scheduler/jobs.py:198-209` — `_run_cleanup` 函数体内 import 风格
-
-**问题**: 与 `NIT#7 "tencent_news.py 中文用 \u 转义"` 同模式——`from backend.storage.database import init_db_sync` 等写在函数体内而非模块顶部。可读性 + 启动期 import 顺序依赖。
-
-**修复**: 提到模块顶部。
-
----
-
-### [NIT] `westock.py:1011` — `_normalize_exdiv_row` market 推断启发式
-
-**问题**: 通过 `symbol` 长度（5 = HK、6 = CN、字母 = US）推断市场，违反 CLAUDE.md "market 字段在 assets 表中"。未来加新市场需改启发式。
-
-**修复**: 改为读 `assets.market` 表 join。
 
 ---
 
