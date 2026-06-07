@@ -1,5 +1,6 @@
 ﻿import asyncio
 import json
+import os
 import re
 import shlex
 import shutil
@@ -108,13 +109,31 @@ class WeStockProvider(BaseProvider):
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.command: str = self.params.get("command", "npx -y westock-data-clawhub@1.0.4")
+        # 在初始化时解析 npx 绝对路径并构建最小化 env，避免：
+        # 1) PATH 中存在多个 npx 时版本漂移
+        # 2) 父进程 env 泄漏给子进程（不必要的环境变量可见性）
+        # 保留 PATH（子进程需要 PATH 定位 node 等二进制）+ HOME（部分 CLI 读 HOME 定位配置）
+        # 其他 env var 显式列入白名单后才透传
+        cmd_parts = shlex.split(self.command)
+        npx_exe = shutil.which(cmd_parts[0])
+        if npx_exe:
+            self._npx_path: str = npx_exe
+            npx_dir = os.path.dirname(npx_exe)
+        else:
+            # shutil.which 失败时回落 command 原值（兜底，避免 __init__ 崩溃）
+            self._npx_path = cmd_parts[0]
+            npx_dir = ""
+        self._subprocess_env: dict[str, str] = {
+            "PATH": npx_dir,
+            "HOME": os.environ.get("HOME", ""),
+        }
 
     async def _run_cli(self, args: str) -> tuple[list[list[dict[str, str]]], str | None]:
         # 使用 shlex 解析 self.command，正确处理带引号/空格的复杂命令
-        cmd_parts = shlex.split(self.command) + args.split()
-        exe = shutil.which(cmd_parts[0])
-        if exe:
-            cmd_parts[0] = exe
+        # cmd_parts[0] 用 __init__ 时已解析的绝对路径替代，避免运行时 PATH 变化导致版本漂移
+        cmd_parts = shlex.split(self.command)
+        cmd_parts[0] = self._npx_path
+        cmd_parts = cmd_parts + args.split()
 
         # SKILL_006 是 westock CLI 的冷启动失败——首次调用偶发返回，
         # 重试 1-2 次即恢复。TimeoutExpired 同理（CLI 冷启动慢）。
@@ -122,7 +141,9 @@ class WeStockProvider(BaseProvider):
         last_err: str | None = None
         for attempt in range(_MAX_RETRIES + 1):
             # 通过 subprocess.run（模块级引用，便于测试 mock）调用 CLI，
-            # 并用 asyncio.to_thread 避免阻塞事件循环
+            # 并用 asyncio.to_thread 避免阻塞事件循环。
+            # env= 显式传入最小化环境变量（__init__ 时构建的 _subprocess_env），
+            # 避免父进程 env 泄漏到子进程。
             try:
                 proc = await asyncio.to_thread(
                     subprocess.run,
@@ -130,6 +151,7 @@ class WeStockProvider(BaseProvider):
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
+                    env=self._subprocess_env,
                 )
             except subprocess.TimeoutExpired:
                 last_err = f"CLI 超时 ({self.timeout}s)"

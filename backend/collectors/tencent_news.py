@@ -38,6 +38,8 @@ class TencentNewsProvider(NewsProvider):
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self._cli_path: str | None = None
         self._cli_disabled: bool = False
+        # 连续超时计数器：累计达到阈值后触发 disable，避免每次采集周期重复超时重试
+        self._consecutive_timeouts: int = 0
         self._max_items: int = int(params.get("max_items", 50)) if params else 50
 
 
@@ -82,9 +84,19 @@ class TencentNewsProvider(NewsProvider):
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
+                # 累计连续超时：达到阈值后 disable provider，避免每周期重复超时
+                self._consecutive_timeouts += 1
+                if self._consecutive_timeouts >= 3 and not self._cli_disabled:
+                    self._cli_disabled = True
+                    logger.warning(
+                        "TencentNews CLI 连续超时 {} 次，自动 disable provider",
+                        self._consecutive_timeouts,
+                    )
                 return None, "Timeout"
         except Exception as e:
             return None, str(e)
+        # 执行成功：重置连续超时计数
+        self._consecutive_timeouts = 0
         if proc.returncode != 0:
             stderr = stderr_bytes.decode(errors="replace") if stderr_bytes else ""
             stdout = stdout_bytes.decode(errors="replace") if stdout_bytes else ""
