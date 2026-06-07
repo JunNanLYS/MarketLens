@@ -65,15 +65,17 @@ def _render_report_card(report: dict[str, Any], index: int) -> None:
                     for reason in bullish:
                         st.markdown(f"- {reason}")
             with col2:
-                if bearish:
+                # 关键风险与看空理由互斥：risk_level==high 时 key_risks 已是
+                # bearish_reasons 的独立高危子集（见 ai_analyzer.py:140-147），
+                # 同时显示会出现两份相似列表的视觉冗余。
+                if key_risks:
+                    st.markdown("**⚠️ 关键风险**")
+                    for risk in key_risks:
+                        st.markdown(f"- {risk}")
+                elif bearish:
                     st.markdown("**🔴 看空理由**")
                     for reason in bearish:
                         st.markdown(f"- {reason}")
-
-            if key_risks:
-                st.markdown("**⚠️ 关键风险**")
-                for risk in key_risks:
-                    st.markdown(f"- {risk}")
 
             if data_used:
                 st.markdown("**📎 数据溯源**")

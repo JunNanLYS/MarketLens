@@ -1,3 +1,5 @@
+import time
+from collections.abc import Callable
 from typing import Any
 
 import streamlit as st
@@ -25,24 +27,73 @@ TRANSACTION_TYPE_LABELS: dict[str, str] = {
 CURRENCY_OPTIONS: list[str] = ["CNY", "HKD", "USD"]
 
 
-@st.cache_data(ttl=15)
-def _fetch_accounts() -> list[dict[str, Any]]:
-    """缓存账户列表。
+# ---------------------------------------------------------------------------
+# 第 5 轮改造（review-r5）：session_state 字典版 cache + 细粒度失效
+# ---------------------------------------------------------------------------
+# 旧实现用 `@st.cache_data` + `st.cache_data.clear()` 全局清，副作用是编辑
+# 单笔交易后清空详情页/新闻/板块 等所有页面的 cache → 冷启动 ~50-200ms。
+# 改造为页面级 session_state 字典：每个写操作只清本页面相关 prefix。
+# 跨页面隔离：portfolio 写操作不再影响 asset_detail / news_list 缓存。
+# ---------------------------------------------------------------------------
 
-    portfolio 页面 6 处需要 get_accounts()，每次都重拉会阻塞 Streamlit。
-    跨用户/跨 session 复用（@st.cache_data 是模块级缓存）。
+_CACHE_KEY: str = "_portfolio_cache"
+
+
+def _init_cache() -> None:
+    """初始化页面级 session_state cache 字典。
+
+    模块作用域调用，rerun 期间幂等。
     """
+    if _CACHE_KEY not in st.session_state:
+        st.session_state[_CACHE_KEY] = {}
+
+
+def _cached_get(key: str, ttl: int, fn: Callable[[], Any]) -> Any:
+    """按 key 读取/写入 cache；TTL 到期或缺失时调用 fn() 重建。
+
+    session_state 字典版 cache：单用户本地工具，key 数量有限（5-10 个账户）
+    无需 LRU 淘汰；TTL 自然过期。
+    """
+    cache: dict[str, dict[str, Any]] = st.session_state[_CACHE_KEY]
+    now: float = time.time()
+    entry: dict[str, Any] | None = cache.get(key)
+    if entry is not None and now - entry["ts"] < ttl:
+        return entry["value"]
+    value: Any = fn()
+    cache[key] = {"ts": now, "value": value}
+    return value
+
+
+def _invalidate_cache(prefix: str) -> None:
+    """按前缀清空 cache；空字符串 = 清空本页面全部 cache。
+
+    细粒度失效：写交易/账户只清本页面相关 key，不影响其他页面。
+    """
+    if prefix == "":
+        st.session_state[_CACHE_KEY] = {}
+    else:
+        cache: dict[str, dict[str, Any]] = st.session_state[_CACHE_KEY]
+        st.session_state[_CACHE_KEY] = {
+            k: v for k, v in cache.items() if not k.startswith(prefix)
+        }
+
+
+_init_cache()
+
+
+def _fetch_accounts_raw() -> list[dict[str, Any]]:
+    """拉取账户列表（无缓存纯函数，供 _cached_get 包装）。"""
     return get_accounts()
 
 
-# 决策记录（CODE_REVIEW.md MINOR 项）：
-# 写操作后使用 `st.cache_data.clear()` 清空所有模块级缓存（包括其他标的详情页 / 新闻等）。
-# 评估结论：单用户本地工具，标的总数 5–10 个，clear() 后重拉 ~50–200ms，可接受。
-# 业界方案对比：
-#   1) Streamlit 不支持 single-key clear，需引入 `st.session_state` 字典或外部 cache（如 `cachetools`）；
-#   2) 改造为 namespace 化 cache 收益小、改造成本高、并发场景下反而引入更多状态管理负担。
-# 保留全局 clear()，未来若标的数 > 100 或出现可见的冷启动延迟，再重构为细粒度缓存。
-# 影响范围：本文件 6 处（line 220/238/306/363/381/422） + asset_detail.py:204 刷新按钮。
+def _fetch_accounts() -> list[dict[str, Any]]:
+    """缓存账户列表（TTL 15s，session_state 字典版）。
+
+    portfolio 页面 3 处需要 get_accounts()（positions / transactions / accounts tab），
+    每次都重拉会阻塞 Streamlit。session_state 字典版支持细粒度失效：
+    写操作后调用 _invalidate_cache("accounts") 只清本页面，不影响其他页面。
+    """
+    return _cached_get("accounts", 15, _fetch_accounts_raw)
 
 
 def _format_pnl(value: float | None) -> str:
@@ -245,7 +296,9 @@ def _render_transactions_tab() -> None:
                                 if "error" in result_upd_tx or "id" not in result_upd_tx:
                                     st.error(result_upd_tx.get("detail", "更新失败"))
                                     return
-                                st.cache_data.clear()
+                                # 细粒度失效：编辑单笔交易只清本页面 accounts cache，
+                                # 不影响详情页 / 新闻 / 板块等其他页面的 cache。
+                                _invalidate_cache("accounts")
                                 st.session_state.pop(f"edit_tx_{tx_key}", None)
                                 st.success("已更新")
                                 st.rerun()
@@ -263,7 +316,8 @@ def _render_transactions_tab() -> None:
                             if "error" in result_del_tx or "id" not in result_del_tx:
                                 st.error(result_del_tx.get("detail", "删除失败"))
                                 return
-                            st.cache_data.clear()
+                            # 细粒度失效：删除单笔交易只清本页面 accounts cache。
+                            _invalidate_cache("accounts")
                             st.session_state.pop(f"confirm_del_tx_{tx_key}", None)
                             st.success("已删除")
                             st.rerun()
@@ -331,7 +385,8 @@ def _render_transactions_tab() -> None:
                 if "error" in result_tx or "id" not in result_tx:
                     st.error(result_tx.get("detail", "交易录入失败"))
                     return
-                st.cache_data.clear()
+                # 细粒度失效：录入交易只清本页面 accounts cache。
+                _invalidate_cache("accounts")
                 st.success("交易录入成功")
                 st.rerun()
 
@@ -388,7 +443,8 @@ def _render_accounts_tab() -> None:
                                     if "error" in result_upd_acc or "id" not in result_upd_acc:
                                         st.error(result_upd_acc.get("detail", "更新失败"))
                                         return
-                                    st.cache_data.clear()
+                                    # 细粒度失效：编辑账户只清本页面 accounts cache。
+                                    _invalidate_cache("accounts")
                                     st.session_state.pop(f"edit_acc_{acc_id}", None)
                                     st.success("已更新")
                                     st.rerun()
@@ -406,7 +462,8 @@ def _render_accounts_tab() -> None:
                             if "error" in result_del_acc or "id" not in result_del_acc:
                                 st.error(result_del_acc.get("detail", "删除失败"))
                                 return
-                            st.cache_data.clear()
+                            # 细粒度失效：删除账户只清本页面 accounts cache。
+                            _invalidate_cache("accounts")
                             st.session_state.pop(f"confirm_del_acc_{acc_id}", None)
                             st.success("已删除")
                             st.rerun()
@@ -447,7 +504,8 @@ def _render_accounts_tab() -> None:
                 if "error" in result_acc or "id" not in result_acc:
                     st.error(result_acc.get("detail", "账户创建失败"))
                     return
-                st.cache_data.clear()
+                # 细粒度失效：创建账户只清本页面 accounts cache。
+                _invalidate_cache("accounts")
                 st.success(f"账户「{acc_name.strip()}」创建成功")
                 st.rerun()
 

@@ -71,24 +71,6 @@
 
 **修复**: 全部统一 `datetime.now(timezone.utc)`。
 
-### [MINOR] `portfolio_service.py:585-586` — split 分支未调整 `avg_cost`
-
-**问题**: 拆股只乘 `total_qty`，`avg_cost` 保持不变（拆股后每股成本应按比例下降，否则 implied P&L 虚高）。典型场景：100 @ 380 → 拆 2:1 后持仓 200 @ 380（应为 200 @ 190）。
-
-**修复**: 拆股时同步 `avg_cost = avg_cost / split_ratio`。
-
-### [MINOR] `api/portfolio.py:201-203` — `date_from`/`date_to` 未校验 ISO 格式
-
-**问题**: 端点接收 `str | None` 的 date filter，原样拼入 SQL（参数化所以无注入），但格式错误时 SQL 比较按字符串字典序工作（恰好 YYYY-MM-DD 排序正确），坏数据静默通过。
-
-**修复**: 用 `datetime.date` 类型 + Pydantic 解析，或在 service 入口调用现有 `_validate_trade_date` helper。
-
-### [NIT] `portfolio_service.py:677-686` — `_compute_avg_cost` 死代码
-
-**问题**: 方法定义但未调用，与 `_compute_position_detail` 重复。可删除。
-
----
-
 ## 数据完整性 + 采集可靠性
 
 ### [CRITICAL] `news_service.py:57-151` — 新闻采集写端点绕过 `_WRITE_LOCK`
@@ -114,44 +96,6 @@
 **问题**: 5000 行 LIMIT 假定"最新 5000 行覆盖所有近期 URL"。老文章被重新发布、URL 出现在第 5001+ 行时，dedup 漏检。`run_logs` 出现"0 new"假阳性。
 
 **修复**: 同上，靠 `INSERT OR IGNORE` 兜底；或扩大 LIMIT 并分页。
-
-### [MAJOR] `report_service.py:66-71` — `_get_active_symbols` 抛错时 `run_logs` 不写
-
-**问题**: 若 `_get_active_symbols()` 抛异常，外层 `try/except` 在写 run_logs 之前就返回，导致任务失败无审计记录。
-
-**修复**: 把 `run_logs` 写入移到 `_get_active_symbols` 之前/外层；用 `try/finally` 保证 run_logs 一定写。
-
-### [MAJOR] `collectors/westock.py:62-75` — `_detect_error` 错误信息不可读
-
-**问题**: 正则匹配触发短语后 `return m.group(0).strip()`，**只回显触发短语**（如"查询行情失败"），无实际原因。`run_logs.error_message` 全是"查询行情失败 : "，调试时无信息。
-
-**修复**: 用固定错误码常量（如 `WESTOCK_QUERY_FAILED`）作为返回值，匹配文本作 context 追加；不要整段当 error_message。
-
-### [MINOR] `collectors/westock.py:104-126` — `subprocess.run` 不传 `env=`
-
-**问题**: 默认继承父进程完整 env。若用户有不同 `npx` 在 PATH 上，版本可能漂移。
-
-**修复**: 在 provider init 用 `shutil.which` 解析绝对路径，启动时传 `env={"PATH": parent_dir}` 最小化 env。
-
-### [MINOR] `collectors/tencent_news.py:78-87` — 连续超时未 disable provider
-
-**问题**: 现有 `_cli_disabled` 只在 CLI 缺失时触发；连续 3 次 TimeoutError 仍每次重试。
-
-**修复**: 加 `_consecutive_timeouts` 计数器，N=3 后 disable。
-
-### [MINOR] `services/news_service.py:132` — `raw_data.symbol = "news"` 占位符
-
-**问题**: 全局新闻存 `symbol="news"`，污染 `idx_raw_data_symbol_type` 索引，审计时过滤易混。
-
-**修复**: `symbol` 改为可空 NULL，单标的相关新闻存真实 symbol，全局新闻 symbol 留 NULL。
-
-### [NIT] `services/portfolio_service.py:643-654` — `IN (?, ?), (?, ?)` 元组 IN 不走索引
-
-**问题**: SQLite 不会把 tuple-in-list 解包为 row-value expression，planner 退化为全表扫。
-
-**修复**: 改用 `WHERE (account_id, symbol) IN (VALUES (?,?), (?,?), ...)` 或 `WHERE account_id IN (...) AND symbol IN (...)` 加客户端交叉验证。
-
----
 
 ## 性能 + 可维护性
 
@@ -276,32 +220,6 @@
 **问题**: 屏幕阅读器失去 "导航" 标签，无法识别是主导航控件。
 
 **修复**: 改 `label_visibility="visible"` 或加 `aria-label`。
-
-### [MINOR] `ui/pages/portfolio.py:220, 238, 306, 363, 422` — `st.cache_data.clear()` 全局清
-
-**问题**: 每次单笔交易编辑后 `st.cache_data.clear()` 清空所有模块级缓存，包括详情页行情/新闻，造成 cold-cache 重新加载。
-
-**修复**: 用 keyed invalidation 或 namespace 化 `@st.cache_data`。
-
-## 项目亮点
-
-- **SQL 注入防护** 🟢 — 100% 参数化查询
-- **时区处理** 🟢 — 全局 `datetime.now(timezone.utc)`（除 jobs.py:31, 80 待修）
-- **Provider 隔离** 🟢 — 单源异常不影响其他标的
-- **API 规范** 🟢 — 统一 `/api/v1/` 前缀 + 标准错误格式
-- **日志统一** 🟢 — 全项目 `loguru`，无 `logging`/`print` 混用
-- **架构分层** 🟢 — UI → API → Service → Collector/Storage，层级清晰
-- **调度幂等** 🟢 — APScheduler 统一入口，配置驱动
-- **写端点鉴权** 🟢 — 全部 POST 端点受 `verify_api_key` 保护
-- **写锁序列化** 🟢 — 模块级 `_WRITE_LOCK`（待 portfolio/news_service 接入）
-- **测试 Mock 规范** 🟢 — 全部统一为 `provider._client = MagicMock(); .method = AsyncMock()`
-- **HTTP 客户端懒加载** 🟢 — `httpx.AsyncClient` 全部在 `_get_client` 中创建
-- **API 分页** 🟢 — 所有 list 接口均有 `page`/`page_size` 参数（`ge=1, le=100`）
-- **Provider 优先链** 🟢 — config-driven，动态加载
-- **测试覆盖广度** 🟢 — 335 个测试
-- **Async 一致性** 🟢 — 全部 `_run_*` wrapper 正确处理 sync/async 边界
-
----
 
 ## 待修复清单（按优先级）
 
@@ -440,3 +358,17 @@
   - **同函数不同面**（2 处保留）：18 个 `collect_*` boilerplate 性能面 vs run_logs 缺失面
 - 与已登记 48 条比对：0 条重复（新增表/端点/Provider 都是第 5 轮新引入的）
 - 跨轮一致性：所有 CRITICAL 都涉及资金/数据正确性 + 违反 CLAUDE.md 硬约束
+
+## 第 6 轮修复（2026-06-07）
+
+> 5-Agent 并行（α split / β news run_logs / γ UI cache session_state / δ UI AI reasons 重复 / ε _run_ai_report 写锁审计）
+> 1 CRITICAL 补登 + 3 条已删（split avg_cost / report_service _get_active_symbols / cache 全局清）
+
+### [CRITICAL] `report_service.py:48-81` — `generate_reports` 写 ai_reports 缺 `_WRITE_LOCK`（**第 5 轮审查漏审**）
+
+**问题**: `ReportService.generate_reports` 内部通过 aiosqlite 写 `ai_reports` + 通过 sync `get_db()` 写 `run_logs`，两条写路径均未持有 `_WRITE_LOCK`，违反 CLAUDE.md 硬约束。
+
+**影响**: scheduler 60min `ai_report` 触发时，与其他写路径重叠可触发 `OperationalError: database is locked`，AI 报告可能丢失；手动 POST `/api/v1/reports/run` 同样风险。
+
+**修复**: `report_service.py:48-81` 整段包 `with _WRITE_LOCK:`；与 `collect_quotes` 风格一致（service 层加锁，scheduler 不加）。2 个新测试（service 层 + scheduler 入口）。
+

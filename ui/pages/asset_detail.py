@@ -1,3 +1,5 @@
+import time
+from collections.abc import Callable
 from typing import Any
 
 import streamlit as st
@@ -34,6 +36,197 @@ ACTION_LABELS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 第 5 轮改造（review-r5）：session_state 字典版 cache + 细粒度失效
+# ---------------------------------------------------------------------------
+# 旧实现用 `@st.cache_data` 装饰 + `st.cache_data.clear()` 全局清，副作用是
+# 详情页刷新按钮会清空所有页面（portfolio / news / settings）的 cache。
+# 改造为页面级 session_state 字典：刷新按钮只清本页面 14 个 key。
+# 跨页面隔离：详情页刷新不再影响其他页面缓存。
+# ---------------------------------------------------------------------------
+
+_CACHE_KEY: str = "_asset_detail_cache"
+
+
+def _init_cache() -> None:
+    """初始化页面级 session_state cache 字典。模块作用域，rerun 幂等。"""
+    if _CACHE_KEY not in st.session_state:
+        st.session_state[_CACHE_KEY] = {}
+
+
+def _cached_get(key: str, ttl: int, fn: Callable[[], Any]) -> Any:
+    """按 key 读取/写入 cache；TTL 到期或缺失时调用 fn() 重建。"""
+    cache: dict[str, dict[str, Any]] = st.session_state[_CACHE_KEY]
+    now: float = time.time()
+    entry: dict[str, Any] | None = cache.get(key)
+    if entry is not None and now - entry["ts"] < ttl:
+        return entry["value"]
+    value: Any = fn()
+    cache[key] = {"ts": now, "value": value}
+    return value
+
+
+def _invalidate_cache(prefix: str) -> None:
+    """按前缀清空 cache；空字符串 = 清空本页面全部 cache。"""
+    if prefix == "":
+        st.session_state[_CACHE_KEY] = {}
+    else:
+        cache: dict[str, dict[str, Any]] = st.session_state[_CACHE_KEY]
+        st.session_state[_CACHE_KEY] = {
+            k: v for k, v in cache.items() if not k.startswith(prefix)
+        }
+
+
+_init_cache()
+
+
+def _get_assets_cached_raw() -> list[dict[str, Any]]:
+    """获取追踪标的列表（无缓存纯函数）。"""
+    assets_result: dict[str, Any] = get_assets(page_size=100)
+    return assets_result.get("items", [])
+
+
+def _get_assets_cached() -> list[dict[str, Any]]:
+    """获取追踪标的列表（session_state 字典版，TTL 30s）。
+
+    标的列表变更频次低（用户手动添加/删除/启用），30s TTL 够用。
+    """
+    return _cached_get("assets", 30, _get_assets_cached_raw)
+
+
+def _get_detail_cached_raw(_aid: int) -> dict[str, Any]:
+    """获取标的详情（6 表 JOIN 结果，无缓存纯函数）。"""
+    return get_asset(_aid)
+
+
+def _get_detail_cached(_aid: int) -> dict[str, Any]:
+    """获取标的详情（session_state 字典版，TTL 30s）。
+
+    详情查询 ~50-200ms，缓存避免每次切 tab 都重拉。
+    """
+    return _cached_get(f"detail:{_aid}", 30, lambda: _get_detail_cached_raw(_aid))
+
+
+def _fetch_intraday_raw(_sym: str) -> dict[str, Any]:
+    """获取分时走势数据（无缓存纯函数）。"""
+    return get_intraday(_sym)
+
+
+def _fetch_intraday(_sym: str) -> dict[str, Any]:
+    """获取分时走势数据（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"intraday:{_sym}", 300, lambda: _fetch_intraday_raw(_sym))
+
+
+def _fetch_shareholder_raw(_sym: str) -> dict[str, Any]:
+    """获取股东结构数据（无缓存纯函数）。"""
+    return get_shareholder(_sym)
+
+
+def _fetch_shareholder(_sym: str) -> dict[str, Any]:
+    """获取股东结构数据（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"shareholder:{_sym}", 300, lambda: _fetch_shareholder_raw(_sym))
+
+
+def _fetch_reserve_raw(_sym: str) -> dict[str, Any]:
+    """获取业绩预告数据（无缓存纯函数）。"""
+    return get_reserve(_sym)
+
+
+def _fetch_reserve(_sym: str) -> dict[str, Any]:
+    """获取业绩预告数据（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"reserve:{_sym}", 300, lambda: _fetch_reserve_raw(_sym))
+
+
+def _fetch_dividend_raw(_sym: str) -> dict[str, Any]:
+    """获取分红记录数据（无缓存纯函数）。"""
+    return get_dividend(_sym)
+
+
+def _fetch_dividend(_sym: str) -> dict[str, Any]:
+    """获取分红记录数据（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"dividend:{_sym}", 300, lambda: _fetch_dividend_raw(_sym))
+
+
+def _fetch_etf_info_raw(_sym: str) -> dict[str, Any]:
+    """获取 ETF 基本信息（无缓存纯函数）。"""
+    return get_etf_info(_sym)
+
+
+def _fetch_etf_info(_sym: str) -> dict[str, Any]:
+    """获取 ETF 基本信息（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"etf_info:{_sym}", 300, lambda: _fetch_etf_info_raw(_sym))
+
+
+def _fetch_etf_holdings_raw(_sym: str) -> dict[str, Any]:
+    """获取 ETF 成分股（无缓存纯函数）。"""
+    return get_etf_holdings(_sym, limit=50)
+
+
+def _fetch_etf_holdings(_sym: str) -> dict[str, Any]:
+    """获取 ETF 成分股（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"etf_holdings:{_sym}", 300, lambda: _fetch_etf_holdings_raw(_sym))
+
+
+def _fetch_etf_nav_raw(_sym: str) -> dict[str, Any]:
+    """获取 ETF 历史净值（无缓存纯函数）。"""
+    return get_etf_nav(_sym, limit=60)
+
+
+def _fetch_etf_nav(_sym: str) -> dict[str, Any]:
+    """获取 ETF 历史净值（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"etf_nav:{_sym}", 300, lambda: _fetch_etf_nav_raw(_sym))
+
+
+def _fetch_sectors_board_raw() -> dict[str, Any]:
+    """获取板块首页（无缓存纯函数）。"""
+    return get_sectors_board(limit=50)
+
+
+def _fetch_sectors_board() -> dict[str, Any]:
+    """获取板块首页（session_state 字典版，TTL 5min）。"""
+    return _cached_get("sectors_board", 300, _fetch_sectors_board_raw)
+
+
+def _fetch_sectors_hot_raw() -> dict[str, Any]:
+    """获取热门板块（无缓存纯函数）。"""
+    return get_sectors_hot(limit=10)
+
+
+def _fetch_sectors_hot() -> dict[str, Any]:
+    """获取热门板块（session_state 字典版，TTL 5min）。"""
+    return _cached_get("sectors_hot", 300, _fetch_sectors_hot_raw)
+
+
+def _fetch_ipo_calendar_raw(_market: str) -> dict[str, Any]:
+    """获取 IPO 日历（无缓存纯函数）。"""
+    return get_ipo_calendar(market=_market, limit=50)
+
+
+def _fetch_ipo_calendar(_market: str) -> dict[str, Any]:
+    """获取 IPO 日历（session_state 字典版，TTL 10min）。"""
+    return _cached_get(f"ipo_calendar:{_market}", 600, lambda: _fetch_ipo_calendar_raw(_market))
+
+
+def _fetch_exdiv_calendar_raw(_sym: str) -> dict[str, Any]:
+    """获取除权日历（无缓存纯函数）。"""
+    return get_exdiv_calendar(_sym)
+
+
+def _fetch_exdiv_calendar(_sym: str) -> dict[str, Any]:
+    """获取除权日历（session_state 字典版，TTL 10min）。"""
+    return _cached_get(f"exdiv_calendar:{_sym}", 600, lambda: _fetch_exdiv_calendar_raw(_sym))
+
+
+def _fetch_chip_raw(_sym: str) -> dict[str, Any]:
+    """获取筹码分布（无缓存纯函数）。"""
+    return get_chip(_sym, limit=20)
+
+
+def _fetch_chip(_sym: str) -> dict[str, Any]:
+    """获取筹码分布（session_state 字典版，TTL 5min）。"""
+    return _cached_get(f"chip:{_sym}", 300, lambda: _fetch_chip_raw(_sym))
+
+
 def _format_number(value: float | None, suffix: str = "") -> str:
     if value is None:
         return "-"
@@ -42,98 +235,6 @@ def _format_number(value: float | None, suffix: str = "") -> str:
     if abs(value) >= 1e4:
         return f"{value / 1e4:.2f}万{suffix}"
     return f"{value:.2f}{suffix}"
-
-
-@st.cache_data(ttl=30)
-def _get_assets_cached() -> list[dict[str, Any]]:
-    """获取追踪标的列表（缓存 30s）。
-
-    必须在模块作用域：嵌套 def 会随每次 rerun 创建新函数对象，
-    导致 st.cache_data 用函数身份做 key 时无法命中/无法 clear。
-    """
-    assets_result: dict[str, Any] = get_assets(page_size=100)
-    return assets_result.get("items", [])
-
-
-@st.cache_data(ttl=30)
-def _get_detail_cached(_aid: int) -> dict[str, Any]:
-    """获取标的详情（6 表 JOIN 结果，缓存 30s）。
-
-    详情查询 ~50-200ms，缓存避免每次切 tab 都重拉。
-    """
-    return get_asset(_aid)
-
-
-@st.cache_data(ttl=300)
-def _fetch_intraday(_sym: str) -> dict[str, Any]:
-    """获取分时走势数据（缓存 5min）。"""
-    return get_intraday(_sym)
-
-
-@st.cache_data(ttl=300)
-def _fetch_shareholder(_sym: str) -> dict[str, Any]:
-    """获取股东结构数据（缓存 5min）。"""
-    return get_shareholder(_sym)
-
-
-@st.cache_data(ttl=300)
-def _fetch_reserve(_sym: str) -> dict[str, Any]:
-    """获取业绩预告数据（缓存 5min）。"""
-    return get_reserve(_sym)
-
-
-@st.cache_data(ttl=300)
-def _fetch_dividend(_sym: str) -> dict[str, Any]:
-    """获取分红记录数据（缓存 5min）。"""
-    return get_dividend(_sym)
-
-
-@st.cache_data(ttl=300)
-def _fetch_etf_info(_sym: str) -> dict[str, Any]:
-    """获取 ETF 基本信息（缓存 5min）。"""
-    return get_etf_info(_sym)
-
-
-@st.cache_data(ttl=300)
-def _fetch_etf_holdings(_sym: str) -> dict[str, Any]:
-    """获取 ETF 成分股（缓存 5min）。"""
-    return get_etf_holdings(_sym, limit=50)
-
-
-@st.cache_data(ttl=300)
-def _fetch_etf_nav(_sym: str) -> dict[str, Any]:
-    """获取 ETF 历史净值（缓存 5min）。"""
-    return get_etf_nav(_sym, limit=60)
-
-
-@st.cache_data(ttl=300)
-def _fetch_sectors_board() -> dict[str, Any]:
-    """获取板块首页（缓存 5min）。"""
-    return get_sectors_board(limit=50)
-
-
-@st.cache_data(ttl=300)
-def _fetch_sectors_hot() -> dict[str, Any]:
-    """获取热门板块（缓存 5min）。"""
-    return get_sectors_hot(limit=10)
-
-
-@st.cache_data(ttl=600)
-def _fetch_ipo_calendar(_market: str) -> dict[str, Any]:
-    """获取 IPO 日历（缓存 10min）。"""
-    return get_ipo_calendar(market=_market, limit=50)
-
-
-@st.cache_data(ttl=600)
-def _fetch_exdiv_calendar(_sym: str) -> dict[str, Any]:
-    """获取除权日历（缓存 10min）。"""
-    return get_exdiv_calendar(_sym)
-
-
-@st.cache_data(ttl=300)
-def _fetch_chip(_sym: str) -> dict[str, Any]:
-    """获取筹码分布（缓存 5min）。"""
-    return get_chip(_sym, limit=20)
 
 
 def _render_quote_section(quote: dict[str, Any]) -> None:
@@ -235,20 +336,22 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
 
     bullish: list[str] = latest_report.get("bullish_reasons", [])
     bearish: list[str] = latest_report.get("bearish_reasons", [])
+    key_risks: list[str] = latest_report.get("key_risks", [])
     if bullish:
         st.markdown("**看多理由:**")
         for reason in bullish:
             st.markdown(f"- :green[▲ {reason}]")
-    if bearish:
-        st.markdown("**看空理由:**")
-        for reason in bearish:
-            st.markdown(f"- :red[▼ {reason}]")
-
-    key_risks: list[str] = latest_report.get("key_risks", [])
+    # 关键风险与看空理由互斥：risk_level==high 时 key_risks 已是
+    # bearish_reasons 的独立高危子集（见 ai_analyzer.py:140-147），
+    # 同时显示会出现两份相似列表的视觉冗余。
     if key_risks:
         st.markdown("**关键风险:**")
         for risk in key_risks:
             st.markdown(f"- ⚠️ {risk}")
+    elif bearish:
+        st.markdown("**看空理由:**")
+        for reason in bearish:
+            st.markdown(f"- :red[▼ {reason}]")
 
     data_used: list[dict[str, Any]] = latest_report.get("data_used", [])
     if data_used:
@@ -260,11 +363,13 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
 def render() -> None:
     st.header("标的详情")
 
-    # 刷新数据按钮 — 清除本页所有 st.cache_data，强制重新拉取 API
+    # 刷新数据按钮 — 清除本页所有 session_state cache，强制重新拉取 API。
+    # 第 5 轮改造：空字符串 prefix 清空本页面 14 个 cache key，
+    # 不再清空其他页面的 cache（之前 st.cache_data.clear() 是全局清）。
     _hdr_col, _btn_col = st.columns([6, 1])
     with _btn_col:
-        if st.button("刷新数据", use_container_width=True, help="清除缓存并重新拉取所有数据"):
-            st.cache_data.clear()
+        if st.button("刷新数据", use_container_width=True, help="清除本页缓存并重新拉取所有数据"):
+            _invalidate_cache("")
             st.rerun()
 
     asset_items: list[dict[str, Any]] = _get_assets_cached()
@@ -298,7 +403,7 @@ def render() -> None:
     )
 
     # 详情查询（含 K线/财务/资金流向等 6 表 JOIN）单次 ~50-200ms，
-    # 用 @st.cache_data(ttl=30) 复用结果，避免每次切 tab 都重拉。
+    # 用 session_state 字典版 cache（TTL 30s）复用结果，避免每次切 tab 都重拉。
     detail: dict[str, Any] = _get_detail_cached(asset_id)
 
     # 动态构建 tab 列表：ETF tab 仅当 asset_type == "etf" 时显示，
