@@ -651,7 +651,7 @@ class PortfolioService:
         symbol: str | None = None,
         page: int = 1,
         page_size: int = 50,
-    ) -> list[dict]:
+    ) -> dict:
         """查询已实现盈亏（强制分页，避免全表扫）。
 
         Args:
@@ -661,7 +661,12 @@ class PortfolioService:
             page_size: 分页大小，默认 50，上限 200。
 
         Returns:
-            按账户+标的聚合的已实现盈亏列表。
+            包含 items 与分页信息的字典：
+
+            - items: 当前页内按 (account_id, symbol) 聚合的已实现盈亏列表
+            - total: 过滤条件下所有 (account_id, symbol) 组合的总数（DB 层 COUNT）
+            - page: 当前页码
+            - page_size: 当前页大小
         """
         # 防御性 guard：API 层 Pydantic min_length=1 已防空串，但 service 被其他模块直接调用时仍可能传空串
         if symbol is not None and not symbol:
@@ -684,12 +689,31 @@ class PortfolioService:
             params.append(symbol)
 
         where_clause: str = " AND ".join(conditions)
+        # DB 层封顶，避免 service 被直接调用时 page_size 失控
+        cap: int = max(1, min(page_size, 200))
+        offset: int = (max(1, page) - 1) * cap
 
         with get_db() as conn:
+            # 先 COUNT 全部 (account_id, symbol) 组合，供 API 层 page_info 使用
+            total: int = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM (
+                    SELECT 1
+                    FROM transactions t
+                    WHERE {where_clause}
+                    GROUP BY t.account_id, t.symbol
+                )
+                """,
+                params,
+            ).fetchone()[0]
+            if total == 0:
+                return {
+                    "items": [],
+                    "total": 0,
+                    "page": page,
+                    "page_size": cap,
+                }
             # 强制分页：按 (account_id, symbol) 聚合在 DB 层完成，避免 Python 端遍历全表。
-            cap = max(1, min(page_size, 200))
-            offset = (max(1, page) - 1) * cap
-            # 先取一页内涉及的所有 (account_id, symbol) 组合
             group_rows = conn.execute(
                 f"""
                 SELECT t.account_id, t.symbol
@@ -702,7 +726,12 @@ class PortfolioService:
                 params + [cap, offset],
             ).fetchall()
             if not group_rows:
-                return []
+                return {
+                    "items": [],
+                    "total": total,
+                    "page": page,
+                    "page_size": cap,
+                }
             # 构造 VALUES 子句：SQLite 3.8.3+ 支持 `(account_id, symbol) IN (VALUES (?,?), (?,?), ...)`，
             # planner 能识别为 row-value 列表并利用 (account_id, symbol) 索引；旧 `IN ((?, ?), (?, ?))`
             # 会被当作表达式列表，planner 退化为全表扫。
@@ -724,11 +753,11 @@ class PortfolioService:
                 key: tuple[int, str] = (row["account_id"], row["symbol"])
                 grouped.setdefault(key, []).append(dict(row))
 
-            results: list[dict] = []
+            items: list[dict] = []
             for (aid, sym), txs in grouped.items():
                 pnl = self._calc_realized_pnl(txs)
                 if pnl["total_sell_qty"] > 1e-9:
-                    results.append(
+                    items.append(
                         {
                             "account_id": aid,
                             "symbol": sym,
@@ -738,4 +767,9 @@ class PortfolioService:
                         }
                     )
 
-        return results
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": cap,
+        }

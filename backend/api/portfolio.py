@@ -285,7 +285,8 @@ def get_realized_pnl(
     symbol: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-) -> list[dict]:
+) -> dict:
+    """按 (account_id, symbol) 聚合返回已实现盈亏，强制分页。"""
     return _service.get_realized_pnl(
         account_id=account_id, symbol=symbol, page=page, page_size=page_size
     )

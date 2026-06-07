@@ -189,7 +189,8 @@ def _render_positions_tab() -> None:
 
     st.divider()
     st.subheader("已实现盈亏")
-    realized: list[dict[str, Any]] = get_realized_pnl()
+    realized_resp: dict[str, Any] = get_realized_pnl()
+    realized: list[dict[str, Any]] = realized_resp.get("items", [])
     if not realized:
         st.info("暂无已实现盈亏记录")
     else:

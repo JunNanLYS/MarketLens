@@ -463,9 +463,12 @@ async def test_realized_pnl(
             "trade_date": "2026-05-10",
         }
     )
-    results: list[dict] = svc.get_realized_pnl()
-    assert len(results) == 1
-    r: dict = results[0]
+    results: dict = svc.get_realized_pnl()
+    assert len(results["items"]) == 1
+    assert results["total"] == 1
+    assert results["page"] == 1
+    assert results["page_size"] == 50
+    r: dict = results["items"][0]
     assert r["total_sell_qty"] == 100
     assert r["avg_cost"] == 300.0
     assert r["realized_pnl"] == pytest.approx(9985.0)
@@ -496,8 +499,11 @@ async def test_realized_pnl_with_filter(
             "trade_date": "2026-05-10",
         }
     )
-    results: list[dict] = svc.get_realized_pnl(account_id=acct2["id"])
-    assert len(results) == 0
+    results: dict = svc.get_realized_pnl(account_id=acct2["id"])
+    assert results["items"] == []
+    assert results["total"] == 0
+    assert results["page"] == 1
+    assert results["page_size"] == 50
 
 
 async def test_get_transactions_pagination(
@@ -887,10 +893,11 @@ async def test_realized_pnl_includes_buy_fee(
             "trade_date": "2026-06-01",
         }
     )
-    results: list[dict] = svc.get_realized_pnl()
-    assert len(results) == 1
+    results: dict = svc.get_realized_pnl()
+    assert len(results["items"]) == 1
+    assert results["total"] == 1
     # avg_cost=381, realized = (400-381)*100 - 15 = 1885
-    assert results[0]["realized_pnl"] == pytest.approx(1885.0)
+    assert results["items"][0]["realized_pnl"] == pytest.approx(1885.0)
 
 
 async def test_sample_asset_inserts_tracked_asset(
