@@ -35,11 +35,35 @@ def _fetch_accounts() -> list[dict[str, Any]]:
     return get_accounts()
 
 
+# 决策记录（CODE_REVIEW.md MINOR 项）：
+# 写操作后使用 `st.cache_data.clear()` 清空所有模块级缓存（包括其他标的详情页 / 新闻等）。
+# 评估结论：单用户本地工具，标的总数 5–10 个，clear() 后重拉 ~50–200ms，可接受。
+# 业界方案对比：
+#   1) Streamlit 不支持 single-key clear，需引入 `st.session_state` 字典或外部 cache（如 `cachetools`）；
+#   2) 改造为 namespace 化 cache 收益小、改造成本高、并发场景下反而引入更多状态管理负担。
+# 保留全局 clear()，未来若标的数 > 100 或出现可见的冷启动延迟，再重构为细粒度缓存。
+# 影响范围：本文件 6 处（line 220/238/306/363/381/422） + asset_detail.py:204 刷新按钮。
+
+
 def _format_pnl(value: float | None) -> str:
     if value is None:
         return "-"
     sign: str = "+" if value > 0 else ""
     return f"{sign}{value:,.2f}"
+
+
+def _pnl_arrow(value: float) -> str:
+    """根据盈亏正负返回 ▲/▼ 文本前缀，供颜色盲用户识别涨跌方向。
+
+    0 不加前缀（不涨不跌无方向信号）；正负值分别用 ▲ / ▼ 配合后续的
+    :green[...] / :red[...] 颜色，文本符号作为主信号、颜色作为辅助信号，
+    满足 ~8% 男性红绿色盲可达性要求（CLAUDE.md / CODE_REVIEW.md）。
+    """
+    if value > 0:
+        return "▲"
+    if value < 0:
+        return "▼"
+    return ""
 
 
 def _render_positions_tab() -> None:
@@ -96,17 +120,19 @@ def _render_positions_tab() -> None:
             st.text(f"{mv_val:,.2f}" if mv_val is not None else "-")
         with cols[5]:
             upnl_val: float | None = pos.get("unrealized_pnl")
-            pnl_str: str = _format_pnl(upnl_val)
             if upnl_val is not None:
                 pnl_color: str = "green" if upnl_val > 0 else "red" if upnl_val < 0 else "inherit"
-                st.markdown(f":{pnl_color}[{pnl_str}]")
+                arrow: str = _pnl_arrow(upnl_val)
+                pnl_str: str = _format_pnl(upnl_val)
+                st.markdown(f":{pnl_color}[{arrow} {pnl_str}]".strip())
             else:
                 st.text("-")
         with cols[6]:
             upnl_pct: float | None = pos.get("unrealized_pnl_pct")
             if upnl_pct is not None:
                 pct_color: str = "green" if upnl_pct > 0 else "red" if upnl_pct < 0 else "inherit"
-                st.markdown(f":{pct_color}[{upnl_pct:+.2f}%]")
+                pct_arrow: str = _pnl_arrow(upnl_pct)
+                st.markdown(f":{pct_color}[{pct_arrow} {upnl_pct:+.2f}%]".strip())
             else:
                 st.text("-")
 
@@ -129,10 +155,12 @@ def _render_positions_tab() -> None:
                 st.text(f"卖出数量: {rp.get('total_sell_qty', 0):.0f}")
             with rc4:
                 rp_color: str = "green" if pnl > 0 else "red" if pnl < 0 else "inherit"
-                st.markdown(f":{rp_color}[{_format_pnl(pnl)}]")
+                rp_arrow: str = _pnl_arrow(pnl)
+                st.markdown(f":{rp_color}[{rp_arrow} {_format_pnl(pnl)}]".strip())
         st.divider()
         tr_color: str = "green" if total_realized > 0 else "red" if total_realized < 0 else "inherit"
-        st.markdown(f"**总已实现盈亏:** :{tr_color}[{_format_pnl(total_realized)}]")
+        tr_arrow: str = _pnl_arrow(total_realized)
+        st.markdown(f"**总已实现盈亏:** :{tr_color}[{tr_arrow} {_format_pnl(total_realized)}]".strip())
 
 
 def _render_transactions_tab() -> None:

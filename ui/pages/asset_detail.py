@@ -238,11 +238,11 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
     if bullish:
         st.markdown("**看多理由:**")
         for reason in bullish:
-            st.markdown(f"- :green[{reason}]")
+            st.markdown(f"- :green[▲ {reason}]")
     if bearish:
         st.markdown("**看空理由:**")
         for reason in bearish:
-            st.markdown(f"- :red[{reason}]")
+            st.markdown(f"- :red[▼ {reason}]")
 
     key_risks: list[str] = latest_report.get("key_risks", [])
     if key_risks:

@@ -72,7 +72,8 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                 formatted: str = _format_change_pct(change_pct)
                 if change_pct is not None:
                     color: str = "green" if change_pct > 0 else "red" if change_pct < 0 else "inherit"
-                    st.markdown(f":{color}[{formatted}]")
+                    arrow: str = "▲" if change_pct > 0 else "▼" if change_pct < 0 else ""
+                    st.markdown(f":{color}[{arrow} {formatted}]".strip())
                 else:
                     st.text("-")
             with cols[6]:
