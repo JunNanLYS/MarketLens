@@ -5,7 +5,7 @@
 >
 > **威胁模型**：MarketLens 是单用户本地工具（详见 `CLAUDE.md` "Project context"）。Security 维度的通用清单（CORS/CSRF/时序攻击/外部 feed 注入）已被 `CLAUDE.md` 明确**不视为安全问题**。
 
-## 汇总统计
+## 汇总统计（第 4-7 轮累计）
 
 | 维度 | CRITICAL | MAJOR | MINOR | NIT | 合计 |
 |------|----------|-------|-------|-----|------|
@@ -13,57 +13,25 @@
 | 数据完整性 + 采集可靠性 | 2 | 4 | 3 | 3 | 12 |
 | 性能 + 可维护性 | 0 | 4 | 7 | 4 | 15 |
 | UI + 可访问性 + 集成边界 | 0 | 3 | 7 | 2 | 12 |
-| **合计** | **7** | **12** | **19** | **10** | **48** |
+| **合计（已登记 P0/P1 资金/写锁 CRITICAL 全部已修 — 见下方"第 8 轮复验"）** | **7** | **12** | **19** | **10** | **48** |
 
-> 4-Agent 并行审查共发现约 60 条候选问题，已去重并按 CLAUDE.md 优先级排序。**本表只保留经多 Agent 交叉验证的高置信度问题**。NIT/MINOR 仅列出有明确修复价值的；纯风格偏好不计入。
+> 第 4 轮 4-Agent 并行审查共发现约 60 条候选问题，已去重并按 CLAUDE.md 优先级排序。**本表只保留经多 Agent 交叉验证的高置信度问题**。NIT/MINOR 仅列出有明确修复价值的；纯风格偏好不计入。
+> 第 5 轮新发现 25 条 + 第 6 轮补登 1 条 = 26 条附加项，详见下方"第 5/6 轮"小节。
+> **第 8 轮（2026-06-07）复验**：第 4 轮全部 7 个 CRITICAL（5 个 portfolio 资金主线 + 2 个写锁）+ 第 6 轮补登 1 个 CRITICAL（report_service 写锁）= 共 **8 个 CRITICAL 已全部修复**，已从下方条目中删除（条目段已清空，仅保留复验记录作为决策追踪）。
 
 ---
 
 ## Correctness（最高优先级 — 资金/时区/边界/并发）
 
-### [CRITICAL] `portfolio_service.py:347-399, 432-446` — `update_transaction` / `delete_transaction` race condition（写锁绕过）
-
-**问题**:
-- `update_transaction` 用 `get_connection_sync()` 直接拿连接，**不持有 `_WRITE_LOCK`**
-- `delete_transaction` 同样的裸连接模式 + soft-delete 后回查 + UPDATE 恢复，两个 UPDATE 都在 auto-commit 路径
-- Streamlit rerun 期间用户快速编辑同一标的的 sell 交易，可同时通过 post-check
-
-**影响**: 同一 `(account_id, symbol)` 的并发 PATCH 可绕过 WAC 校验产生负持仓。**这是项目最严重的资金正确性 bug**。
-
-**修复**:
-1. 加 `_WRITE_LOCK` 包裹整段 read-update-recheck-commit
-2. 或用单条 CTE-原子 SQL：`UPDATE ... WHERE (SELECT ...) >= 0`
-3. 与 `create_transaction` 保持一致的 `with get_db() as conn` 风格
-
-### [CRITICAL] `portfolio_service.py:228-233` — `split` 类型 quantity 写时无校验
-
-**问题**: `total_qty *= row["quantity"]` 处理 split 时，`quantity=0` → 持仓变 0；`quantity<0`（反向拆股符号错）→ 持仓变负。**API 层 Pydantic 接受 `quantity > 0` 但不区分 split vs buy 的语义**。
-
-**修复**: 写时校验 `split` 类型 `quantity > 0` 且为合理 ratio（建议 `le=1000`）；在 service 层强制，不依赖 API 层。
-
-### [CRITICAL] `portfolio_service.py:235-251` — WAC 误算：首笔为 sell 时产生"幻股"
-
-**问题**: 当第一笔交易是 sell（无前置 buy 记录）时，WAC 累加器将 `quantity` 减为负值，且 `avg_cost` 计算公式 `total_cost / total_qty` 在 total_qty 为负时得到**负 avg_cost**，污染后续所有 P&L 计算。
-
-**修复**: 首笔为 sell 时直接拒绝（"在 sell 之前必须先 buy"）；或在累加器中用绝对值分离 buy/sell。
-
-### [CRITICAL] `portfolio_service.py:470-495` — `get_positions` 长持有连接 + post-commit 迭代看到陈旧数据
-
-**问题**: `get_db()` 上下文管理器退出 commit 后，代码继续在 Python 端迭代 `quote_rows`，此时别的写入可能已改变行情。P&L 显示的是过期价格 + 当前 cost basis。
-
-**修复**: 在 `with get_db() as conn` 块内完成所有 row 拼接；将 dict 化放在锁内；context 退出后只读取内存中的不可变数据。
-
-### [CRITICAL] `portfolio_service.py:575-583` — WAC 计算忽略买入手续费
-
-**问题**: 买入时 `total_cost += price * quantity`，**手续费被忽略**。手续费从 `fee` 列读取后仅在已实现 P&L 卖出时扣减；买入时未摊入成本基础 → **买入手续费"消失"**，长期持有多笔买入时 `avg_cost` 偏低、P&L 虚高。
-
-**修复**: 买入累计 `total_cost += (price * quantity + fee)`，并在卖出时按比例摊回。
+> **第 8 轮复验（2026-06-07）**：本节 5 个 CRITICAL + "数据完整性" 2 个 CRITICAL + 第 6 轮补登 1 个 CRITICAL = **共 8 个 CRITICAL 已全部修复**，从条目中删除。复验记录见本文件底部"第 8 轮复验记录"小节。
 
 ### [MAJOR] `portfolio_service.py:487` — `market_quotes` 相关子查询在 MAX 冲突时返回多行
 
 **问题**: `WHERE collected_at = (SELECT MAX(collected_at) FROM market_quotes WHERE symbol = mq.symbol)` 在两个同毫秒采集行时返回 2 行，导致 `quotes_map` 中同一 symbol 重复项；`get_positions` 可能重复累加。
 
 **修复**: 改用 CTE + `ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC)` 取 rn=1。
+
+**第 8 轮复验**：**已修** — `portfolio_service.py:527-533` 已使用 CTE + `ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn` 取 rn=1，quotes_map 不再出现重复项。**保留为 MAJOR（已修但需在条目中标记，备追踪）**。
 
 ### [MAJOR] `scheduler/jobs.py:31, 80` — 启动健康检查用 naive `datetime.now()`
 
@@ -73,23 +41,15 @@
 
 ## 数据完整性 + 采集可靠性
 
-### [CRITICAL] `news_service.py:57-151` — 新闻采集写端点绕过 `_WRITE_LOCK`
-
-**问题**: 整个 INSERT 块（news_items + raw_data + run_logs）`with get_db() as conn` 没有 `_WRITE_LOCK`。CLAUDE.md 硬约束 "writes MUST hold `_WRITE_LOCK`"。60min 调度周期内，scheduler tick 与 API 写请求重叠时可触发 `OperationalError: database is locked`。
-
-**修复**: 在第二个 `with get_db() as conn` 块外层加 `with _WRITE_LOCK:`。
-
-### [CRITICAL] `scheduler/jobs.py:171-182` — `_run_cleanup` DELETE 同样绕过 `_WRITE_LOCK`
-
-**问题**: 03:30 定时清理 `raw_data` 时，若与 `quote`/`daily_close` scheduler tick 重叠，5s busy_timeout 后可能 OperationalError。
-
-**修复**: 同样加 `_WRITE_LOCK` 包裹。
+> **第 8 轮复验**：本节 2 个 CRITICAL（`news_service` 写锁 / `_run_cleanup` 写锁）已全部修复，从条目中删除。详见底部"第 8 轮复验记录"。
 
 ## UI + 可访问性 + 集成边界
 
 ## 审查结论
 
 **总体判断**: 项目架构清晰、SQL 注入防护到位、并发原语选型正确（threading.Lock for cross-loop）、懒加载实现完整。主要风险集中在**资金计算的精度和并发安全**——`portfolio_service` 的 `_WRITE_LOCK` 缺失和 split/手续费/幻股几个算法问题在单用户本地工具场景下**直接砸到用户的 P&L**。
+
+**第 8 轮复验结论（2026-06-07）**：上述 5 个 portfolio CRITICAL + news_service 写锁 + `_run_cleanup` 写锁 + r6 补登 report_service 写锁 = **共 8 个 CRITICAL 已全部修复**。项目当前已无资金/写锁类 P0 阻断性 bug。
 
 **不会影响的维度（已通过威胁模型过滤）**:
 - 通用 Security 清单（CORS/CSRF/feed 注入/时序攻击/默认 key）
@@ -183,11 +143,38 @@
 > 5-Agent 并行（α split / β news run_logs / γ UI cache session_state / δ UI AI reasons 重复 / ε _run_ai_report 写锁审计）
 > 1 CRITICAL 补登 + 3 条已删（split avg_cost / report_service _get_active_symbols / cache 全局清）
 
-### [CRITICAL] `report_service.py:48-81` — `generate_reports` 写 ai_reports 缺 `_WRITE_LOCK`（**第 5 轮审查漏审**）
+> **第 8 轮复验**：本轮补登的 1 个 CRITICAL（`report_service.generate_reports` 缺 `_WRITE_LOCK`）**已修复** —— `report_service.py:48` 整段已包 `with _WRITE_LOCK:`，与 `collect_quotes` 风格一致。条目已删除，详见底部"第 8 轮复验记录"。
 
-**问题**: `ReportService.generate_reports` 内部通过 aiosqlite 写 `ai_reports` + 通过 sync `get_db()` 写 `run_logs`，两条写路径均未持有 `_WRITE_LOCK`，违反 CLAUDE.md 硬约束。
+---
 
-**影响**: scheduler 60min `ai_report` 触发时，与其他写路径重叠可触发 `OperationalError: database is locked`，AI 报告可能丢失；手动 POST `/api/v1/reports/run` 同样风险。
+## 第 8 轮复验记录（2026-06-07）
 
-**修复**: `report_service.py:48-81` 整段包 `with _WRITE_LOCK:`；与 `collect_quotes` 风格一致（service 层加锁，scheduler 不加）。2 个新测试（service 层 + scheduler 入口）。
+> **范围**：第 4 轮 7 个 CRITICAL（5 资金主线 + 2 写锁）+ 第 6 轮补登 1 个 CRITICAL = **共 8 个 CRITICAL 复验**。
+> **方法**：Sub Agent 1 逐条 Read 当前代码（`portfolio_service.py` / `news_service.py` / `scheduler/jobs.py` / `report_service.py`），核对是否已持有 `_WRITE_LOCK` / 已加写时校验 / 已修算法。
+> **结论**：**8 / 8 全部已修**，已从主体条目中删除。汇总表保持 7 CRITICAL / 48 合计数字作为历史快照（删除后会变为 0 CRITICAL，但本表是"登记总数 vs 已修"的快照，不应清零——见汇总表脚注）。
+
+### 8 个 CRITICAL 逐条复验
+
+| # | 条目 | 实际修复位置 | 状态 | 证据 |
+|---|------|-------------|------|------|
+| 1 | `portfolio_service.py:347-399` `update_transaction` 写锁 | line 361 `with _WRITE_LOCK:` | **已修** | 整段 read-update-recheck-commit 包裹在 `_WRITE_LOCK` 内；用 `get_connection_sync()` 拿连接 + try/except/finally 显式 commit/rollback/close，错误路径不漏锁 |
+| 2 | `portfolio_service.py:432-446` `delete_transaction` 写锁 | line 433 `with _WRITE_LOCK:` | **已修** | 同上风格；软删 + 回查 + UPDATE 恢复都在锁内 |
+| 3 | `portfolio_service.py:228-233` `split` 数量校验 | line 190-196 | **已修** | `create_transaction` 校验 `quantity > 0`（line 190）+ `tx_type == "split"` 时 `quantity > 1000` 上限（line 195）；`_get_current_holding_from_conn` 内 split 也有 `if row["quantity"] <= 0: continue` 防御性 guard（line 238-239）|
+| 4 | `portfolio_service.py:235-251` WAC 幻股（首笔为 sell） | line 198-205（create）+ line 401-404（update） | **已修** | create 路径：`sell` 前强制 `_get_current_holding_from_conn` 校验 `quantity > current_holding`；update 路径：更新后 `current_holding < 0` 抛 ValueError。**首笔为 sell 在 create 入口即被拒绝** |
+| 5 | `portfolio_service.py:470-495` `get_positions` 长连接 | line 490-541 | **已修** | 整个 `grouped` 聚合 + `quotes_map` CTE 查询 + `names_map` 查询全部在 `with get_db() as conn` 块内完成；块外 line 543 起只读不可变 `dict` |
+| 6 | `portfolio_service.py:575-583` WAC fee 忽略 | line 252（`_compute_position_detail`）| **已修** | `avg_cost = (avg_cost * total_qty + tx["price"] * tx["quantity"] + fee) / new_qty` —— fee 已摊入买入成本基础；同步 `_calc_realized_pnl` line 617-628 卖出时也按 WAC 计算 realized |
+| 7 | `news_service.py:57-151` 新闻写锁 | line 74 `with _WRITE_LOCK:` | **已修** | 整个 INSERT 块（news_items + raw_data + run_logs）包在 `_WRITE_LOCK` 内；line 211-225 兜底 finally 也用新 sync 连接，安全 |
+| 8 | `scheduler/jobs.py:171-182` `_run_cleanup` 写锁 | line 235 `with _WRITE_LOCK:` | **已修** | 13 张表 + raw_data 的 DELETE 循环包在 `_WRITE_LOCK` 内；单表失败 try/except 隔离不影响其他表 |
+| 9 | **r6 补登** `report_service.py:48-81` `generate_reports` 写锁 | line 48 `with _WRITE_LOCK:` | **已修** | 整个 aiosqlite 写 ai_reports + sync get_db 写 run_logs 都包在 `_WRITE_LOCK` 内；threading.Lock 跨 event loop 安全（scheduler 每次 asyncio.run 新循环）|
+
+> **注**：上表 # 1-7 为第 4 轮 7 个 CRITICAL；# 8 为 scheduler/jobs.py 的 _run_cleanup（与 news_service 同属"数据完整性"维度）；# 9 为 r6 Agent ε 补登的 report_service 写锁——共 **8 个 CRITICAL 全部已修**（与任务描述"7 资金主线 + 1 _run_cleanup = 7"略有出入；实际是 5 资金 + 2 写锁（news + cleanup） + 1 写锁（report_service 漏审）= **8 个**）。
+
+### 汇总表 / 章节改动记录
+
+- **汇总表**（line 8-19）：标题加 "（第 4-7 轮累计）"；末尾加脚注说明第 8 轮复验结论（7 CRITICAL 全部已修，但保留 7 作为"登记总数"快照不变更数字）
+- **Correctness 节**（line 22-65）：删除 5 个 CRITICAL 条目（update_tx 写锁 / delete_tx 写锁 / split 校验 / WAC 幻股 / get_positions 长连接 / WAC fee = 5 资金主线 + delete_tx 写锁重复 = 实际 5 条独立 CRITICAL），保留 1 个 MAJOR（quotes CTE），并在 MAJOR 末尾加 "第 8 轮复验：已修" 标注
+- **数据完整性节**（line 74-86）：删除 2 个 CRITICAL 条目（news_service 写锁 / _run_cleanup 写锁），整节替换为单行 "本节 2 个 CRITICAL 已全部修复"
+- **第 6 轮修复节**（line 181-192）：r6 补登的 1 个 CRITICAL 条目替换为 "已修复" 标注，附实际修复位置
+- **新加"第 8 轮复验记录"小节**（本节）：8 个 CRITICAL 逐条复验表 + 汇总表 / 章节改动记录，作为决策追踪历史
+
 
