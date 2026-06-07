@@ -18,7 +18,7 @@
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
-| `GET` | `/news` | 新闻列表 | 200 |
+| `GET` | `/news` | 新闻列表 | 200, 422 |
 | `GET` | `/news/{id}` | 新闻详情 | 200, 404 |
 
 ### `GET /news` — 新闻列表
@@ -74,9 +74,9 @@ GET /api/v1/news/1 HTTP/1.1
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
-| `GET` | `/reports` | 报告列表 | 200 |
+| `GET` | `/reports` | 报告列表 | 200, 422 |
 | `GET` | `/reports/{symbol}` | 指定标的最新报告 | 200, 404 |
-| `GET` | `/reports/{symbol}/history` | 指定标的历史报告 | 200, 404 |
+| `GET` | `/reports/{symbol}/history` | 指定标的历史报告 | 200, 422 |
 | `POST` | `/reports/generate` | 手动生成报告 | 200, 400, 401 |
 
 ### `GET /reports` — 报告列表
@@ -85,7 +85,7 @@ GET /api/v1/news/1 HTTP/1.1
 |---|---|---|---|
 | `action` | string | — | `buy` / `sell` / `watch` / `avoid` |
 | `risk_level` | string | — | `low` / `medium` / `high` |
-| `date` | date | 今天 | 日期筛选，ISO 8601 日期或日期时间字符串（如 `2026-05-31`） |
+| `date` | date | — | 日期筛选（ISO 8601 `YYYY-MM-DD`），匹配 `date(generated_at)`；非法格式返回 422 |
 | `page` / `page_size` | int | 1 / 20 | 分页 |
 
 ```http
@@ -127,7 +127,7 @@ GET /api/v1/reports/hk00700 HTTP/1.1
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `limit` | integer | 30 | 最大 90 |
-| `from` / `to` | date | — | 日期范围，ISO 8601 日期或日期时间字符串（如 `2026-05-31` 或 `2026-05-31T00:00:00+08:00`） |
+| `from` / `to` | date | — | 日期范围，ISO 8601 `YYYY-MM-DD`；非法格式返回 422 |
 
 ### `POST /reports/generate` — 手动生成
 
@@ -156,7 +156,7 @@ Content-Type: application/json
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
 | `GET` | `/tasks/status` | 任务运行状态 | 200, 503 |
-| `POST` | `/tasks/trigger/{name}` | 手动触发 | 202, 400, 401, 404, 500 |
+| `POST` | `/tasks/trigger/{name}` | 手动触发 | 202, 401, 404, 500, 503 |
 | `GET` | `/tasks/logs` | 运行日志 | 200 |
 
 ### `GET /tasks/status`
@@ -194,7 +194,7 @@ GET /api/v1/tasks/status HTTP/1.1
 
 ### `POST /tasks/trigger/{name}` — 手动触发
 
-`name` 可选：`quote` / `daily_close` / `news` / `ai_report`
+`name` 可选：`quote` / `daily_close` / `news` / `ai_report` / `cleanup`
 
 ```http
 POST /api/v1/tasks/trigger/quote HTTP/1.1
@@ -207,12 +207,12 @@ POST /api/v1/tasks/trigger/quote HTTP/1.1
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `task_name` | string | — | 筛选任务 |
-| `status` | string | — | `success`：成功完成；`failure`：异常终止 |
-| `days` | integer | 7 | 最近 N 天 |
-| `page` / `page_size` | int | 1 / 20 | 分页 |
+| `status` | string | — | `success` / `failed` / `running`（与 `run_logs.status` 字段对齐） |
+| `page` | int | 1 | 页码（≥ 1） |
+| `page_size` | int | 20 | 每页条数（1-100） |
 
 ```http
-GET /api/v1/tasks/logs?task_name=quote&status=success&days=7 HTTP/1.1
+GET /api/v1/tasks/logs?task_name=quote&status=success HTTP/1.1
 ```
 
-> 注：`run_logs.status` 字段当前仅持久化 `success` / `failure` 两种终态（写入端在 `collection_service.py:132/172`、`news_service.py:133`、`report_service.py:54`）。UI 的「running」选项在当前数据库 schema 下不会命中任何记录。
+> 注：`run_logs.status` 字段当前 schema 允许 `success` / `failed` / `running` 三种值（见 `docs/api.md` 枚举值表），但写入端在 `collection_service.py` / `news_service.py` / `report_service.py` 中只持久化 `success` / `failed` 终态；UI 的「running」选项在当前实现下不会命中任何记录（与 `docs/api.md` 中 `status` 枚举保持一致）。

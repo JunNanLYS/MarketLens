@@ -22,15 +22,15 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 | `POST` | `/accounts` | 创建账户 | 201, 400, 401, 409 |
 | `GET` | `/accounts` | 账户列表 | 200 |
 | `GET` | `/accounts/{account_id}` | 账户详情 | 200, 404 |
-| `PATCH` | `/accounts/{account_id}` | 更新账户 | 200, 401, 404, 409 |
+| `PATCH` | `/accounts/{account_id}` | 更新账户 | 200, 400, 401, 404, 409 |
 | `DELETE` | `/accounts/{account_id}` | 删除账户（软删除） | 204, 401, 404 |
 | `POST` | `/transactions` | 录入交易 | 201, 400, 401, 404 |
-| `GET` | `/transactions` | 交易历史（分页/筛选） | 200 |
+| `GET` | `/transactions` | 交易历史（分页/筛选） | 200, 422 |
 | `GET` | `/transactions/{transaction_id}` | 交易详情 | 200, 404 |
-| `PATCH` | `/transactions/{transaction_id}` | 更新交易 | 200, 400, 401, 404 |
+| `PATCH` | `/transactions/{transaction_id}` | 更新交易 | 200, 400, 401, 404, 422 |
 | `DELETE` | `/transactions/{transaction_id}` | 删除交易（软删除） | 204, 400, 401, 404 |
 | `GET` | `/positions` | 持仓总览 | 200 |
-| `GET` | `/positions/realized-pnl` | 已实现盈亏汇总 | 200 |
+| `GET` | `/positions/realized-pnl` | 已实现盈亏汇总 | 200, 422 |
 
 ---
 
@@ -173,7 +173,7 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 
 ### `PATCH /transactions/{transaction_id}` — 更新交易
 
-可更新字段：`account_id`、`symbol`、`type`、`quantity`（> 0）、`price`（> 0）、`fee`、`currency`、`trade_date`、`notes`。
+可更新字段：`quantity`（> 0）、`price`（> 0）、`fee`、`currency`、`trade_date`、`notes`（不可改 `account_id` / `symbol` / `type`，以保证 WAC 计算语义稳定）。
 
 更新后验证持仓不为负。
 
@@ -238,18 +238,23 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 | `page_size` | int | 50 | 每页条数（1–200，DB 层强制 cap） |
 
 ```json
-[
-  {
-    "account_id": 1,
-    "symbol": "hk00700",
-    "total_sell_qty": 100,
-    "avg_cost": 300.0,
-    "realized_pnl": 9985.0
-  }
-]
+{
+  "items": [
+    {
+      "account_id": 1,
+      "symbol": "hk00700",
+      "total_sell_qty": 100,
+      "avg_cost": 300.0,
+      "realized_pnl": 9985.0
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
 ```
 
 **计算规则：**
 - 已实现盈亏 = 卖出金额(数量×价格) - 卖出数量 × 均价 - 手续费
 
-> **分页支持：** 端点已接受 `page` / `page_size`（默认 50，上限 200），由 `PortfolioService.get_realized_pnl()` 在 DB 层按 `(account_id, symbol)` 强制聚合分页后返回，避免 Python 端遍历全表。当前响应仍为扁平数组（单页内 `(account_id, symbol)` 聚合结果），未包装为 `items` + `page_info` 结构——若需总条数或跨页遍历，请改用 `account_id` / `symbol` 过滤缩小范围后多次请求。
+**分页支持：** 端点已接受 `page` / `page_size`（默认 50，上限 200），由 `PortfolioService.get_realized_pnl()` 在 DB 层按 `(account_id, symbol)` 强制聚合分页后返回，并同时返回 `total`（满足过滤条件的所有 `(account_id, symbol)` 组合总数）以便前端计算总页数。

@@ -67,4 +67,7 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 
 **错误响应** (422):
 
-当 `token` 为空字符串时返回 Pydantic 校验错误。
+`token` 字段 Pydantic 校验失败时会返回 422,触发场景:
+- 字段为空字符串(`min_length=1`)
+- 字段长度超过 8192(`max_length=8192`)
+- 字段含控制字符(`\x00-\x08\x0b\x0c\x0e-\x1f\x7f`)

@@ -21,10 +21,10 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 |---|---|---|---|
 | `GET` | `/data/quotes/{symbol}` | 最新行情 | 200, 404 |
 | `POST` | `/data/quotes/{symbol}/refresh` | 手动刷新行情 | 200, 401, 502 |
-| `GET` | `/data/quotes/{symbol}/history` | 历史行情序列 | 200, 404, 422 |
-| `GET` | `/data/kline/{symbol}` | 日 K 线 | 200, 404, 422 |
-| `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 404, 422 |
-| `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 404, 422 |
+| `GET` | `/data/quotes/{symbol}/history` | 历史行情序列 | 200, 422 |
+| `GET` | `/data/kline/{symbol}` | 日 K 线 | 200, 422 |
+| `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 422 |
+| `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 422 |
 | `GET` | `/data/technical/{symbol}` | 技术指标 | 200, 404 |
 | `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 401, 422, 502 |
 | `POST` | `/data/shareholder/{symbol}` | 股东结构采集 | 200, 401, 502 |
@@ -52,7 +52,7 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 | `POST` | `/data/finance-refresh/{symbol}` | 刷新港美股财务 | 200, 400, 401, 422 |
 | `GET` | `/data/calendar/ipo` | 新股日历 | 200, 404, 422 |
 | `GET` | `/data/calendar/exdiv/{symbol}` | 除权日历 | 200, 404 |
-| `POST` | `/data/calendar-refresh` | 刷新新股/除权日历 | 200, 401, 422 |
+| `POST` | `/data/calendar-refresh` | 刷新新股/除权日历 | 200, 401 |
 | `GET` | `/data/chip/{symbol}` | 筹码成本 | 200, 404, 422 |
 | `GET` | `/data/margintrade/{symbol}` | 融资融券 | 200, 404, 422 |
 | `GET` | `/data/blocktrade/{symbol}` | 大宗交易 | 200, 404, 422 |
@@ -123,7 +123,11 @@ POST /api/v1/data/quotes/hk00700/refresh HTTP/1.1
 
 ## `GET /data/quotes/{symbol}/history` — 历史行情
 
-| `limit` | integer | 100 | 最大 500 |
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` | integer | 100 | 取值范围 1-500 |
+| `from` | datetime | — | 起始时间（ISO 字符串） |
+| `to` | datetime | — | 截止时间（ISO 字符串） |
 
 ```http
 GET /api/v1/data/quotes/hk00700/history?limit=24 HTTP/1.1
@@ -150,7 +154,11 @@ GET /api/v1/data/quotes/hk00700/history?limit=24 HTTP/1.1
 
 ## `GET /data/kline/{symbol}` — 日 K 线
 
-| `to` | date | — | 结束日期 |
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` | integer | 60 | 取值范围 1-365 |
+| `from` | date | — | 起始日期 YYYY-MM-DD |
+| `to` | date | — | 结束日期 YYYY-MM-DD |
 
 ```http
 GET /api/v1/data/kline/hk00700?limit=30 HTTP/1.1
@@ -307,7 +315,7 @@ POST /api/v1/data/intraday/hk00700?days=1 HTTP/1.1
 ```
 </details>
 
-> 分时数据实时采集，不落库缓存。
+> 分时数据采集并落库（`minute_klines` 表）；首次访问前需先 POST 触发采集。
 
 ---
 
@@ -353,7 +361,7 @@ POST /api/v1/data/shareholder/sh600519 HTTP/1.1
 ```
 </details>
 
-> 股东结构数据实时采集，不落库缓存。包含十大股东列表和股东人数变化历史。
+> 股东结构数据采集并落库（`top_shareholders` + `holder_count_history` 双表单事务）。包含十大股东列表和股东人数变化历史。
 
 ---
 
@@ -390,7 +398,7 @@ POST /api/v1/data/reserve/sz000001 HTTP/1.1
 ```
 </details>
 
-> 业绩预告数据实时采集，返回最新一条预告。
+> 业绩预告数据采集并落库（`profit_forecasts` 表），返回最新一条预告。
 
 ---
 
@@ -431,7 +439,7 @@ POST /api/v1/data/dividend/sh600519 HTTP/1.1
 ```
 </details>
 
-> 分红数据实时采集，按报告期倒序返回历史分红记录。
+> 分红数据采集并落库（`dividends` 表），按 ex_date 倒序返回历史分红记录。
 
 ---
 
@@ -1017,16 +1025,18 @@ X-API-Key: marketlens-local
 {
   "symbol": "sh510300",
   "summary": {
-    "info":      { "success": true,  "items": 1 },
-    "holdings":  { "success": true,  "items": 50 },
-    "nav":       { "success": true,  "items": 30 },
-    "holders":   { "success": true,  "items": 1 },
-    "financial": { "success": true,  "items": 1 }
+    "info":      { "success": true, "items": { "code": "sh510300", "etf_type": "股票型", "...": "..." } },
+    "holdings":  { "success": true, "items": [ { "constituent_code": "sh600519", "ratio": 5.8 }, { "...": "..." } ] },
+    "nav":       { "success": true, "items": [ { "date": "2026-05-01", "nav": 4.18 }, { "...": "..." } ] },
+    "holders":   { "success": true, "items": { "code": "sh510300", "holder_account": 1500000 } },
+    "financial": { "success": true, "items": { "code": "sh510300", "total_assets": 320000000000.0 } }
   },
   "start": "2026-05-01",
   "end": "2026-06-04"
 }
 ```
+
+> `items` 字段值：返回 `dict` 时为单条记录（如 `info`/`holders`/`financial`），返回 `list[dict]` 时为整组记录（如 `holdings`/`nav`），任一子任务抛异常时为 `null`。前端可按 `success` 判分支。
 </details>
 
 ---

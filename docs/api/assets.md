@@ -23,7 +23,7 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 |---|---|---|---|
 | `GET` | `/assets` | 追踪列表（分页/筛选） | 200 |
 | `POST` | `/assets` | 添加标的 | 201, 400, 401, 409 |
-| `GET` | `/assets/search` | 搜索外部标的 | 200, 400 |
+| `GET` | `/assets/search` | 搜索外部标的 | 200, 422 |
 | `GET` | `/assets/{id}` | 标的详情（聚合行情等） | 200, 404 |
 | `PATCH` | `/assets/{id}` | 部分更新（启用/标签/备注） | 200, 401, 404, 422 |
 | `DELETE` | `/assets/{id}` | 删除标的 | 204, 401, 404 |
@@ -32,7 +32,7 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 
 ## `GET /assets` — 追踪列表
 
-查询 `enabled` / `market` / `asset_type` / `tag` / `page` / `page_size` / `sort`。
+查询 `enabled` / `market` / `asset_type` / `tag` / `page` / `page_size`。
 
 ```http
 GET /api/v1/assets?market=hk&enabled=true&page=1&page_size=10 HTTP/1.1

@@ -1,7 +1,7 @@
 # MarketLens API 文档
 
 > 版本: v2 | 基准路径: `http://localhost:8000/api/v1` | 协议: HTTP / HTTPS | 内容类型: `application/json; charset=utf-8`
-> 文档校验基准: `backend/api/*.py` + `backend/main.py`（共 40 个业务接口 + 1 个数据源状态 + 1 个健康检查 + 1 个根路径）
+> 文档校验基准: `backend/api/*.py` + `backend/main.py`（共 8 个资源组 + 根路径 `/` + `/api/v1/health`，下表按资源组合计）
 
 ---
 
@@ -10,61 +10,95 @@
 | 资源组 | 文档 | 接口数 |
 |---|---|---|
 | 🏷️ 标的管理 | [assets](api/assets.md) | 6 |
-| 📊 市场数据 | [data](api/data.md) | 11 |
+| 📊 市场数据 | [data](api/data.md) | 41 |
+| 🩺 数据源 | [data-sources](api/data-sources.md) | 2 |
 | 📰 新闻 | [news / reports / tasks](api/news-reports-tasks.md#新闻) | 2 |
 | 🧠 AI 报告 | [news / reports / tasks](api/news-reports-tasks.md#ai-报告) | 4 |
 | ⏰ 任务管理 | [news / reports / tasks](api/news-reports-tasks.md#任务管理) | 3 |
 | 🔑 NeoData Token | [neodata](api/neodata.md) | 2 |
 | 💼 投资组合 | [portfolio](api/portfolio.md) | 12 |
-| 🩺 系统 | `GET /api/v1/health` | 1 |
+| 🩺 系统 | `GET /api/v1/health` · `GET /` | 2 |
 
----
+> 业务接口合计 72 个 + 系统 2 个 = 74 个路由。
 
-## 一页速览（41 个接口）
+## 一页速览（74 个接口）
 
 | 方法 | 路径 | 鉴权 | 用途 | 主要状态码 |
 |---|---|---|---|---|
-| `GET` | `/api/v1/health` | — | 健康检查 | 200 |
+| `GET` | `/` | — | 根路径（应用元信息） | 200 |
+| `GET` | `/api/v1/health` | — | 健康检查 | 200 / 503 |
 | `GET` | `/assets` | — | 追踪列表 | 200 |
-| `POST` | `/assets` | 🔑 | 添加标的 | 201 / 400 / 409 |
-| `GET` | `/assets/search` | — | 搜索外部标的 | 200 / 400 |
+| `POST` | `/assets` | 🔑 | 添加标的 | 201 / 400 / 401 / 409 |
+| `GET` | `/assets/search` | — | 搜索外部标的 | 200 / 422 |
 | `GET` | `/assets/{id}` | — | 标的详情（聚合） | 200 / 404 |
-| `PATCH` | `/assets/{id}` | 🔑 | 部分更新 | 200 / 404 |
-| `DELETE` | `/assets/{id}` | 🔑 | 删除 | 204 / 404 |
+| `PATCH` | `/assets/{id}` | 🔑 | 部分更新 | 200 / 401 / 404 / 422 |
+| `DELETE` | `/assets/{id}` | 🔑 | 删除 | 204 / 401 / 404 |
 | `GET` | `/data/quotes/{symbol}` | — | 最新行情 | 200 / 404 |
-| `POST` | `/data/quotes/{symbol}/refresh` | — | 手动刷新行情 | 200 / 502 |
-| `GET` | `/data/quotes/{symbol}/history` | — | 历史行情 | 200 / 404 / 422 |
-| `GET` | `/data/kline/{symbol}` | — | 日 K 线 | 200 / 404 / 422 |
-| `GET` | `/data/finance/{symbol}` | — | 财务数据 | 200 / 404 |
-| `GET` | `/data/fund-flow/{symbol}` | — | 资金流向 | 200 / 404 / 422 |
+| `POST` | `/data/quotes/{symbol}/refresh` | 🔑 | 手动刷新行情 | 200 / 401 / 502 |
+| `GET` | `/data/quotes/{symbol}/history` | — | 历史行情 | 200 / 422 |
+| `GET` | `/data/kline/{symbol}` | — | 日 K 线 | 200 / 422 |
+| `GET` | `/data/finance/{symbol}` | — | 财务数据 | 200 / 422 |
+| `GET` | `/data/fund-flow/{symbol}` | — | 资金流向 | 200 / 422 |
 | `GET` | `/data/technical/{symbol}` | — | 技术指标 | 200 / 404 |
-| `POST` | `/data/intraday/{symbol}` | — | 分时数据采集 | 200 / 422 / 502 |
-| `POST` | `/data/shareholder/{symbol}` | — | 股东结构采集 | 200 / 502 |
-| `POST` | `/data/dividend/{symbol}` | — | 分红数据采集 | 200 / 502 |
-| `POST` | `/data/reserve/{symbol}` | — | 业绩预告采集 | 200 / 502 |
-| `GET` | `/news` | — | 新闻列表 | 200 |
+| `POST` | `/data/intraday/{symbol}` | 🔑 | 分时数据采集并落库 | 200 / 401 / 422 / 502 |
+| `POST` | `/data/shareholder/{symbol}` | 🔑 | 股东结构采集并落库 | 200 / 401 / 502 |
+| `POST` | `/data/dividend/{symbol}` | 🔑 | 分红数据采集并落库 | 200 / 401 / 502 |
+| `POST` | `/data/reserve/{symbol}` | 🔑 | 业绩预告采集并落库 | 200 / 401 / 502 |
+| `GET` | `/data/dividend/{symbol}` | — | 分红记录（落库） | 200 / 404 / 422 |
+| `GET` | `/data/shareholder/{symbol}` | — | 股东结构（落库） | 200 / 404 / 422 |
+| `GET` | `/data/reserve/{symbol}` | — | 业绩预告（落库） | 200 / 404 / 422 |
+| `GET` | `/data/minute/{symbol}` | — | 分时 K 线（落库） | 200 / 404 / 422 |
+| `POST` | `/data/dividend/{symbol}/refresh` | 🔑 | 刷新分红 | 200 / 401 / 502 |
+| `POST` | `/data/shareholder/{symbol}/refresh` | 🔑 | 刷新股东结构 | 200 / 401 / 502 |
+| `POST` | `/data/reserve/{symbol}/refresh` | 🔑 | 刷新业绩预告 | 200 / 401 / 502 |
+| `POST` | `/data/minute/{symbol}/refresh` | 🔑 | 刷新分时 | 200 / 401 / 422 / 502 |
+| `GET` | `/data/etf/{symbol}` | — | ETF 基本信息 | 200 / 404 |
+| `GET` | `/data/etf/{symbol}/holdings` | — | ETF 成分股 | 200 / 404 / 422 |
+| `GET` | `/data/etf/{symbol}/nav` | — | ETF 历史净值 | 200 / 404 / 422 |
+| `GET` | `/data/etf/{symbol}/holders` | — | ETF 持有人结构 | 200 / 404 |
+| `GET` | `/data/etf/{symbol}/financial` | — | ETF 资产配置 | 200 / 404 |
+| `POST` | `/data/etf-refresh/{symbol}` | 🔑 | 刷新 ETF 全套 | 200 / 401 / 422 |
+| `GET` | `/data/sectors/board` | — | 板块首页（行业/概念涨幅榜） | 200 / 404 / 422 |
+| `GET` | `/data/sectors/hot` | — | 热门板块 | 200 / 404 / 422 |
+| `POST` | `/data/sectors/refresh` | 🔑 | 刷新板块首页 + 热门 | 200 / 401 / 422 |
+| `GET` | `/data/finance/us/{symbol}` | — | 美股财务 | 200 / 404 / 422 |
+| `GET` | `/data/finance/hk/{symbol}` | — | 港股财务 | 200 / 404 / 422 |
+| `POST` | `/data/finance-refresh/{symbol}` | 🔑 | 刷新港美股财务 | 200 / 400 / 401 / 422 |
+| `GET` | `/data/calendar/ipo` | — | 新股日历 | 200 / 404 / 422 |
+| `GET` | `/data/calendar/exdiv/{symbol}` | — | 除权日历 | 200 / 404 |
+| `POST` | `/data/calendar-refresh` | 🔑 | 刷新新股/除权日历 | 200 / 401 |
+| `GET` | `/data/chip/{symbol}` | — | 筹码成本 | 200 / 404 / 422 |
+| `GET` | `/data/margintrade/{symbol}` | — | 融资融券 | 200 / 404 / 422 |
+| `GET` | `/data/blocktrade/{symbol}` | — | 大宗交易 | 200 / 404 / 422 |
+| `GET` | `/data/lhb/{symbol}` | — | 龙虎榜 | 200 / 404 / 422 |
+| `POST` | `/data/chip-refresh/{symbol}` | 🔑 | 刷新筹码+融资融券 | 200 / 401 |
+| `POST` | `/data/blocktrade-refresh/{symbol}` | 🔑 | 刷新大宗交易 | 200 / 401 / 422 / 502 |
+| `POST` | `/data/lhb-refresh/{symbol}` | 🔑 | 刷新龙虎榜 | 200 / 401 / 422 / 502 |
+| `GET` | `/data-sources/config` | — | 数据源基础配置 | 200 |
+| `GET` | `/data-sources/status` | — | 数据源配置+健康状态 | 200 |
+| `GET` | `/news` | — | 新闻列表 | 200 / 422 |
 | `GET` | `/news/{id}` | — | 新闻详情 | 200 / 404 |
-| `GET` | `/reports` | — | 报告列表 | 200 |
+| `GET` | `/reports` | — | 报告列表 | 200 / 422 |
 | `GET` | `/reports/{symbol}` | — | 标的最新报告 | 200 / 404 |
-| `GET` | `/reports/{symbol}/history` | — | 历史报告 | 200 |
-| `POST` | `/reports/generate` | 🔑 | 手动生成报告 | 200 |
+| `GET` | `/reports/{symbol}/history` | — | 历史报告 | 200 / 422 |
+| `POST` | `/reports/generate` | 🔑 | 手动生成报告 | 200 / 400 / 401 |
 | `GET` | `/tasks/status` | — | 任务状态 | 200 / 503 |
 | `POST` | `/tasks/trigger/{name}` | 🔑 | 手动触发 | 202 / 401 / 404 / 500 / 503 |
-| `GET` | `/tasks/logs` | — | 运行日志 | 200 |
+| `GET` | `/tasks/logs` | — | 运行日志 | 200 / 422 |
 | `GET` | `/neodata/token-status` | — | Token 状态 | 200 |
-| `POST` | `/neodata/token` | 🔑 | 保存 Token | 200 / 401 |
-| `POST` | `/accounts` | 🔑 | 创建账户 | 201 / 400 / 409 |
+| `POST` | `/neodata/token` | 🔑 | 保存 Token | 200 / 401 / 422 |
+| `POST` | `/accounts` | 🔑 | 创建账户 | 201 / 400 / 401 / 409 |
 | `GET` | `/accounts` | — | 账户列表 | 200 |
 | `GET` | `/accounts/{account_id}` | — | 账户详情 | 200 / 404 |
-| `PATCH` | `/accounts/{account_id}` | 🔑 | 更新账户 | 200 / 400 / 404 / 409 |
-| `DELETE` | `/accounts/{account_id}` | 🔑 | 删除账户（软删除） | 204 / 404 |
-| `POST` | `/transactions` | 🔑 | 录入交易 | 201 / 400 / 404 |
-| `GET` | `/transactions` | — | 交易历史 | 200 |
+| `PATCH` | `/accounts/{account_id}` | 🔑 | 更新账户 | 200 / 400 / 401 / 404 / 409 |
+| `DELETE` | `/accounts/{account_id}` | 🔑 | 删除账户（软删除） | 204 / 401 / 404 |
+| `POST` | `/transactions` | 🔑 | 录入交易 | 201 / 400 / 401 / 404 |
+| `GET` | `/transactions` | — | 交易历史 | 200 / 422 |
 | `GET` | `/transactions/{transaction_id}` | — | 交易详情 | 200 / 404 |
-| `PATCH` | `/transactions/{transaction_id}` | 🔑 | 更新交易 | 200 / 400 / 404 |
-| `DELETE` | `/transactions/{transaction_id}` | 🔑 | 删除交易（软删除） | 204 / 400 / 404 |
+| `PATCH` | `/transactions/{transaction_id}` | 🔑 | 更新交易 | 200 / 400 / 401 / 404 / 422 |
+| `DELETE` | `/transactions/{transaction_id}` | 🔑 | 删除交易（软删除） | 204 / 400 / 401 / 404 |
 | `GET` | `/positions` | — | 持仓总览 | 200 |
-| `GET` | `/positions/realized-pnl` | — | 已实现盈亏 | 200 |
+| `GET` | `/positions/realized-pnl` | — | 已实现盈亏 | 200 / 422 |
 
 > 🔑 = 写端点，需要 `X-API-Key` 请求头，详见下文「鉴权」章节。
 
@@ -89,10 +123,11 @@
 | 资源组 | 端点 |
 |---|---|
 | 标的管理 | `POST /assets`、`PATCH /assets/{id}`、`DELETE /assets/{id}` |
-| 投资组合 | `POST /accounts`、`PATCH /accounts/{id}`、`DELETE /accounts/{id}`、`POST /transactions`、`PATCH /transactions/{transaction_id}`、`DELETE /transactions/{transaction_id}` |
+| 投资组合 | `POST /accounts`、`PATCH /accounts/{account_id}`、`DELETE /accounts/{account_id}`、`POST /transactions`、`PATCH /transactions/{transaction_id}`、`DELETE /transactions/{transaction_id}` |
 | AI 报告 | `POST /reports/generate` |
 | 任务管理 | `POST /tasks/trigger/{name}` |
 | NeoData | `POST /neodata/token` |
+| 市场数据 | `POST /data/quotes/{symbol}/refresh`、`POST /data/intraday/{symbol}`、`POST /data/shareholder/{symbol}`、`POST /data/dividend/{symbol}`、`POST /data/reserve/{symbol}`、`POST /data/dividend/{symbol}/refresh`、`POST /data/shareholder/{symbol}/refresh`、`POST /data/reserve/{symbol}/refresh`、`POST /data/minute/{symbol}/refresh`、`POST /data/etf-refresh/{symbol}`、`POST /data/sectors/refresh`、`POST /data/finance-refresh/{symbol}`、`POST /data/calendar-refresh`、`POST /data/chip-refresh/{symbol}`、`POST /data/blocktrade-refresh/{symbol}`、`POST /data/lhb-refresh/{symbol}` |
 
 > 所有 `GET` 端点（除 `/api/v1/health` 外的读操作）均无需鉴权。
 
@@ -157,7 +192,7 @@ curl -X POST http://localhost:8000/api/v1/accounts \
 }
 ```
 
-> 部分实时采集接口（如 `/data/positions`、`/data/positions/realized-pnl`）直接返回数组，不使用页码分页。
+> 部分接口（如 `/positions` 持仓总览、`/positions/realized-pnl` 已实现盈亏）直接返回数据，不使用页码分页；`/positions/realized-pnl` 实际返回 `{items, total, page, page_size}` 分页结构，详见 [portfolio.md](api/portfolio.md)。
 
 ### 错误响应
 
@@ -201,6 +236,7 @@ ISO 8601 带时区：`"2026-05-31T15:30:00+08:00"`。日期（无时间）使用
 | `404` | `NEWS_NOT_FOUND` | 新闻 ID 不存在 |
 | `404` | `REPORT_NOT_FOUND` | 标的尚无 AI 报告 |
 | `404` | `TASK_NOT_FOUND` | `task_name` 不在 `VALID_TASK_NAMES` 中 |
+| `404` | `NO_DATA` | 数据已采集但无结果（落库查询/板块/日历/ETF/筹码等通用） |
 | `409` | `ASSET_EXISTS` | 标的代码已在追踪列表 |
 | `409` | `ACCOUNT_EXISTS` | 账户名称重复 |
 | `422` | `VALIDATION_FAILED` | Pydantic 字段校验失败（默认 FastAPI 行为） |

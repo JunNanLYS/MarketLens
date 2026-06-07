@@ -1,6 +1,6 @@
 # 数据源状态 API
 
-> 资源路径: `/api/v1/data-sources` | 接口数: 1
+> 资源路径: `/api/v1/data-sources` | 接口数: 2
 
 ---
 
@@ -17,6 +17,43 @@
 ## 鉴权
 
 无。所有字段只读,GET 不修改任何状态。
+
+---
+
+### `GET /config`
+
+返回所有数据源的**基础配置**(扁平列表),不做健康探测、不读 token、不解析 command 路径,
+仅返回 UI 展示所需的轻量字段(`name` / `provider` / `type` / `enabled` / `optional` / `timeout`),
+适合频繁轮询。
+
+**响应示例**:
+
+```json
+{
+  "structured": [
+    {
+      "category": "structured",
+      "name": "westock",
+      "provider": "WeStockProvider",
+      "type": "WeStock",
+      "enabled": true,
+      "optional": false,
+      "timeout": 30
+    }
+  ],
+  "news": [
+    {
+      "category": "news",
+      "name": "bbc_world",
+      "provider": "RSSProvider",
+      "type": "RSS",
+      "enabled": true,
+      "optional": true,
+      "timeout": 30
+    }
+  ]
+}
+```
 
 ---
 
