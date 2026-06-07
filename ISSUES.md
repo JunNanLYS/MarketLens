@@ -1,6 +1,8 @@
-# MarketLens Code Review
+# MarketLens Issues
 
-> 审查日期：2026-06-05 | 审查范围：整个项目（HEAD）| 审查方式：4-Agent 并行深度复审
+> 项目自 2026-06-05 起 9 轮代码审查的 **issue tracker + 决策归档日志**。当前主体已无活跃问题登记（CRITICAL 全部修复），文件实际承载 4 块内容：①历史汇总统计快照 ②各轮审查方法论 + Top-5 优先 ③每轮修复/复验记录 ④已知问题决策追踪。后续新增 issue 追加到本文件末尾。
+>
+> 原始元数据：审查日期 2026-06-05 | 审查范围：整个项目（HEAD）| 审查方式：4-Agent 并行深度复审
 > 维度：Correctness / 数据完整性+采集可靠性 / 性能+可维护性 / UI+可访问性+集成边界
 >
 > **威胁模型**：MarketLens 是单用户本地工具（详见 `CLAUDE.md` "Project context"）。Security 维度的通用清单（CORS/CSRF/时序攻击/外部 feed 注入）已被 `CLAUDE.md` 明确**不视为安全问题**。
@@ -68,11 +70,11 @@
 
 | 状态 | 数量 | 说明 |
 |------|------|------|
-| 已修复 | 6 | `news_service` 写锁 / `_run_cleanup` 写锁 / `portfolio_service` split 校验 / WAC buy fee / `get_positions` 锁内 dict 化 / `scheduler/jobs.py` naive datetime |
-| 部分修复 | 1 | 首笔为 sell 拒绝（create 已修，update 路径残留理论窗口） |
-| 未修复 | 40 | 待修复清单全部保留（按原优先级） |
+| 已修复 | 12 | 第 8 轮：7 个 CRITICAL（portfolio update/delete 写锁 / split 校验 / WAC 幻股 / WAC fee / get_positions 长连接 / news_service 写锁 / report_service 写锁）+ 第 9 轮：5 条（quotes CTE MAJOR / naive datetime MAJOR / realized-pnl 翻页 doc MINOR / lifespan 资源清理 NIT / westock 贪婪匹配 NIT）|
+| 部分修复 | 0 | 第 9/10 轮后已无"部分修复"残留 |
+| 未修复 | 36 | 待修复清单保留（按原优先级） |
 
-> **复验结论**：第 5 轮是新功能叠加（chip/margintrade/blocktrade/lhb/calendar/etf/sector/us-hk-finance 4 张新表 + 19 个新端点），未触及已登记 P0/P1 资金/写锁 bug。这些仍是最高优先级。
+> **复验结论**：第 5 轮新发现 25 条 + 第 6 轮补登 1 条 = 26 条附加项，主体已无活跃 CRITICAL/MAJOR（资金/写锁/时区 8 个 CRITICAL + 2 个 MAJOR 全部已修），剩余 36 条以 MINOR/NIT 为主。
 
 ### 新发现条目（按 CLAUDE.md 优先级 + 严重度排序）
 
@@ -144,10 +146,34 @@
 
 ---
 
+## 第 10 轮复验记录（2026-06-07）
+
+> **范围**：第 5 轮复验表中标记"部分修复"的 1 条残留——"首笔为 sell 拒绝（create 已修，update 路径残留理论窗口）"。
+> **方法**：Sub Agent 5 逐行 Read `portfolio_service.py:346-419`（`update_transaction` 完整逻辑）+ `backend/api/portfolio.py:59-66`（`UpdateTransactionRequest` Pydantic 模型），核验 update 路径是否真存在"PATCH 把首笔 buy 改成 sell"的入口。
+> **结论**：**理论窗口不存在**——update 路径已通过三重防护完全封堵，标记升级为"已修复"。
+
+### 逐项核验
+
+| 防护层 | 位置 | 结论 |
+|--------|------|------|
+| **可更新字段白名单** | `portfolio_service.py:380-383` | `for field in ("quantity", "price", "fee", "currency", "trade_date", "notes")` —— **`type` 不在白名单内**，结构上无法 PATCH `type="buy"` → `type="sell"` |
+| **quantity > 0 校验** | `backend/api/portfolio.py:60` `quantity: float \| None = Field(default=None, gt=0)` | Pydantic `gt=0` 在 API 入口拒绝 `quantity=0`/负数；"PATCH 把 buy 数量改 0 再后续改成 sell"二阶段攻击第一阶段就过不去 |
+| **写后持仓重检** | `portfolio_service.py:392-404` | `UPDATE` 后读回行 → `_get_current_holding_from_conn` → `if current_holding < 0: raise ValueError("持仓为负")`。即使存在某种组合的 PATCH 路径（调高 sell 数量），仍会被这道 post-update 兜底拒绝（已有 `test_update_sell_transaction_holding_check` 单测守护）|
+| **写锁串行化** | `portfolio_service.py:361` `with _WRITE_LOCK:` | 整个 read-update-recheck-commit 包裹在 `_WRITE_LOCK` 内；并发场景下不会出现 check-then-act 竞态 |
+
+> **第 5 轮"理论窗口"复盘**：当时 4-Agent 审查时 update 路径的 `type` 字段白名单 + quantity Pydantic gt=0 双重防护已生效，但审查者仅看了 service 层（`update_transaction` line 380 的 `for field in` 循环），未交叉核对 API 层 Pydantic 模型；推测"PATCH 改 type"是 service 层攻击面而非 API 层入口。第 10 轮（Sub Agent 5）交叉核对后确认：API 层 `UpdateTransactionRequest` 根本没有 `type` 字段，从外部 HTTP 入口根本发不出 type=PATCH 请求；服务层 `for field` 白名单又屏蔽了内部直调路径——双重封堵。
+
+### 汇总表 / 章节改动记录
+
+- **第 5 轮已登记状态复验表**（line 71-73）："部分修复"从 1 条降为 0 条；该条目从表中删除
+- **新加"第 10 轮复验记录"小节**（本节）：1 条逐项核验表 + 复盘 + 章节改动记录，作为决策追踪历史
+
+---
+
 ## 第 9 轮复验记录（2026-06-07）
 
 > **范围**：第 5/8 轮后已修但未从登记中删除的 5 条遗留 + 1 条部分修复状态升级。
-> **方法**：Sub Agent 1 逐条 Read 当前代码 vs CODE_REVIEW.md 登记，核对是否已修。
+> **方法**：Sub Agent 1 逐条 Read 当前代码 vs ISSUES.md 登记，核对是否已修。
 > **结论**：5 条已修条目从登记中删除 + 1 条 P&L 颜色盲状态从"部分修复"升级为"已修复"。
 
 ### 逐条复验
@@ -162,7 +188,7 @@
 | 6 | P&L 颜色盲 "部分修复" 状态 | `ui/pages/portfolio.py:107-117` + `ui/pages/asset_detail.py:862-871` | **升级为已修复** | `portfolio.py` 已加 `_pnl_arrow_prefix()` 函数（▲/▼ 前缀）；`asset_detail.py` line 853-871 在 st.metric 与 spread 显示中均使用 `arrow = "▲" if profit_rate >= 0 else "▼"`；ai_reports 之前也已加 emoji。三处覆盖完整，状态从"部分修复"升级为"已修复" |
 | 7 | `evidence_builder.py:43` `_derive_finance_yoy` abs(prev_val) MINOR（Sub Agent 2 追加复验） | `backend/services/evidence_builder.py:22-44` + `backend/services/ai_analyzer.py:311-340` | **已修** | `_classify_yoy_sign` 返回 `turnaround` / `loss_narrowing` / `loss_widening` / `normal` / `None` 结构化标签；`AIAnalyzer` 按标签结构化判定（扭亏/亏损收窄→看多，亏损扩大→看空）。属于原条目"修复"段第二选项"单独写扭亏标记字段"的落地 |
 
-> **注**：# 1-2 为 8 轮复验中标注"已修但保留追踪"的 2 个 MAJOR；# 3-4 为 5 轮新发现中 2 条已修但未从条目中删除的条目；# 5 为方法论说明中提到的 "westock._detect_error 11 方法扩散"，实际修复在 R 轮已完成；# 6 为"部分修复"状态升级（剩余 1 条"首笔为 sell update 路径残留理论窗口"仍按原状保留）；# 7 为 Sub Agent 2 复验发现的最后 1 条 MINOR 残留（已修删除）。
+> **注**：# 1-2 为 8 轮复验中标注"已修但保留追踪"的 2 个 MAJOR；# 3-4 为 5 轮新发现中 2 条已修但未从条目中删除的条目；# 5 为方法论说明中提到的 "westock._detect_error 11 方法扩散"，实际修复在 R 轮已完成；# 6 为"部分修复"状态升级（另一条"首笔为 sell update 路径残留理论窗口"于第 10 轮升级为"已修复"，见"第 10 轮复验记录"）；# 7 为 Sub Agent 2 复验发现的最后 1 条 MINOR 残留（已修删除）。
 
 ### 汇总表 / 章节改动记录
 

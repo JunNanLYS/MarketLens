@@ -912,7 +912,7 @@ uv run pytest tests/services/test_collection_service.py::test_collect_quotes_con
 
 ## 17. 修复历史
 
-> 本节按"轮次"归档项目自 2026-06-05 起的 9 轮代码审查 + 修复演进，每轮仅给 1-2 段总结 + 修复文件数 + 测试数。具体 issue 追踪见 `CODE_REVIEW.md`（issue tracker 性质）；本节为 release notes 性质——只回答"修了什么、影响范围多大"。
+> 本节按"轮次"归档项目自 2026-06-05 起的 9 轮代码审查 + 修复演进，每轮仅给 1-2 段总结 + 修复文件数 + 测试数。具体 issue 追踪见 `ISSUES.md`（issue tracker 性质）；本节为 release notes 性质——只回答"修了什么、影响范围多大"。
 
 ### 第 4 轮（2026-06-05）— 48 条审查问题首次入库
 
@@ -930,11 +930,11 @@ uv run pytest tests/services/test_collection_service.py::test_collect_quotes_con
 
 **第 7 轮**：5-Agent 并行清理 MINOR/NIT 5 条（news + portfolio + asset 域）；`tencent_news` disable + westock env 最小化（5 个测试夹具不再网络命中）；`_HttpClientMixin` 抽出 5 个 Provider 重复 13 行代码；`settings` 直读 config 改端点；docs/api 字段名 + `task_status` `running` 过滤修复。
 
-**第 8 轮**（里程碑）：Sub Agent 1 逐条 Read `portfolio_service.py` / `news_service.py` / `scheduler/jobs.py` / `report_service.py` 实际代码，逐条复验第 4 轮 7 CRITICAL + 第 6 轮补登 1 CRITICAL = **8 / 8 全部已修**（5 资金主线 + 2 写锁（news + cleanup） + 1 写锁（report_service 漏审））。`CODE_REVIEW.md` 增"第 8 轮复验记录"章节作为决策追踪历史，汇总表保留 7/12/19/10/48 数字作为"登记总数"快照不变更。修复文件 0 个（仅文档归档）；测试 457 通过。
+**第 8 轮**（里程碑）：Sub Agent 1 逐条 Read `portfolio_service.py` / `news_service.py` / `scheduler/jobs.py` / `report_service.py` 实际代码，逐条复验第 4 轮 7 CRITICAL + 第 6 轮补登 1 CRITICAL = **8 / 8 全部已修**（5 资金主线 + 2 写锁（news + cleanup） + 1 写锁（report_service 漏审））。`ISSUES.md` 增"第 8 轮复验记录"章节作为决策追踪历史，汇总表保留 7/12/19/10/48 数字作为"登记总数"快照不变更。修复文件 0 个（仅文档归档）；测试 457 通过。
 
 ### 第 9 轮（2026-06-07）— 文档/UI 全面校准 + realized-pnl 同构化
 
-5-Agent 并行：Agent 1 归档第 8 轮复验（仅 `CODE_REVIEW.md` 文档 42+ 行新增/55 行删除）；Agent 2 修 `realized-pnl` page wrapper（`get_realized_pnl` 返回类型 `list[dict]` → `dict` 含 `items/total/page/page_size`，与 `/transactions` 同构，4 文件改动 +62 行）；Agent 3 校准 `docs/api/` 7 个文档（接口数 41 → 74，30+ 处状态码/鉴权标错修正，`/config` 章节补齐）；Agent 5 给 `ui/api_client.py` 补 30 个 client 方法（353 → 713 行，72 端点全覆盖）。修复文件 12 个 + 测试 457 通过。
+5-Agent 并行：Agent 1 归档第 8 轮复验（仅 `ISSUES.md` 文档 42+ 行新增/55 行删除）；Agent 2 修 `realized-pnl` page wrapper（`get_realized_pnl` 返回类型 `list[dict]` → `dict` 含 `items/total/page/page_size`，与 `/transactions` 同构，4 文件改动 +62 行）；Agent 3 校准 `docs/api/` 7 个文档（接口数 41 → 74，30+ 处状态码/鉴权标错修正，`/config` 章节补齐）；Agent 5 给 `ui/api_client.py` 补 30 个 client 方法（353 → 713 行，72 端点全覆盖）。修复文件 12 个 + 测试 457 通过。
 
 ### 累计成果
 
@@ -942,4 +942,4 @@ uv run pytest tests/services/test_collection_service.py::test_collect_quotes_con
 - **代码库**：`backend/` 16 个 service / 10 个 collector / 7 个 router；`ui/` 12 个页面；`tests/` 镜像 `backend/` 目录结构
 - **数据库**：29 张表 + 多张 CTE 视图，WAL + FK + UNIQUE 索引完整
 - **API**：74 个端点，全部 `/api/v1/` 前缀，写端点全部 `verify_api_key` 鉴权
-- **已知遗留**：见 `CLAUDE.md` "Known issues" + `CODE_REVIEW.md` "审查结论"。当前**无 P0 资金/写锁类阻断性 bug**。
+- **已知遗留**：见 `CLAUDE.md` "Known issues" + `ISSUES.md` "审查结论"。当前**无 P0 资金/写锁类阻断性 bug**。

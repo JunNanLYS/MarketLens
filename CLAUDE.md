@@ -181,6 +181,7 @@ Positions are computed in real-time (not persisted). `portfolio_service.py` aggr
 
 ## Key constraints
 
+- **所有 PR 必过 GitHub Actions CI（ruff + pytest）**：见 `.github/workflows/ci.yml`，`push` 到 `main` 与 `pull_request` 触发两个 job——`ruff` 跑 `uv run ruff check .`，`pytest` 在 Python 3.13 matrix 下跑 `uv sync --frozen` + `uv run pytest tests/ -v`。
 - **Python ≥ 3.13** with `uv` package manager; use `.venv`, never system Python
 - **Node.js ≥ v18** required for `westock-data-clawhub` CLI (WeStock data source)
 - All comments and docstrings in **Chinese**
@@ -257,7 +258,7 @@ Every APScheduler job MUST:
 
 ## Known issues
 
-See `CODE_REVIEW.md` for a comprehensive audit covering correctness, performance, and maintainability findings.
+See `ISSUES.md` for a comprehensive audit covering correctness, performance, and maintainability findings.
 
 下方 4 条 **截至 2026-06-06 已通过代码验证实际解决**，保留以追踪决策历史；新增问题请追加到本节末尾。
 

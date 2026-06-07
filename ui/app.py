@@ -29,7 +29,7 @@ PAGES: dict[str, str] = {
 with st.sidebar:
     st.title("📊 MarketLens")
     st.divider()
-    # 可访问性：保留可见标签 "导航"，屏幕阅读器能识别侧栏主导航控件（CODE_REVIEW.md MINOR）。
+    # 可访问性：保留可见标签 "导航"，屏幕阅读器能识别侧栏主导航控件（ISSUES.md MINOR）。
     st.caption("导航")
     selected_label: str = st.radio("导航", list(PAGES.keys()), label_visibility="visible")
     st.divider()

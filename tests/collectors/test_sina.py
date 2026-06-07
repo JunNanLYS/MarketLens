@@ -342,7 +342,7 @@ async def test_finance_success(provider: SinaProvider) -> None:
 
 async def test_finance_non_a_share(provider: SinaProvider) -> None:
     result = await provider.finance("hk00700")
-    # 非 A 股按新约定返回 None（修复 CODE_REVIEW 2026-06-05 边界条件条目）
+    # 非 A 股按新约定返回 None（修复 ISSUES.md 2026-06-05 边界条件条目）
     assert result is None
 
 

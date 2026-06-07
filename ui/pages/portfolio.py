@@ -108,7 +108,7 @@ def _pnl_arrow(value: float) -> str:
 
     0 不加前缀（不涨不跌无方向信号）；正负值分别用 ▲ / ▼ 配合后续的
     :green[...] / :red[...] 颜色，文本符号作为主信号、颜色作为辅助信号，
-    满足 ~8% 男性红绿色盲可达性要求（CLAUDE.md / CODE_REVIEW.md）。
+    满足 ~8% 男性红绿色盲可达性要求（CLAUDE.md / ISSUES.md）。
     """
     if value > 0:
         return "▲"

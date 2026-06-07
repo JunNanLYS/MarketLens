@@ -1,0 +1,34 @@
+# Pre-commit hooks for MarketLens
+# 单用户本地工具的提交前质量门禁：
+#   1. 文件卫生（trailing-whitespace / EOL / YAML / TOML 校验）
+#   2. ruff lint + format（与项目 pyproject.toml 锁定的 ruff>=0.15.16 对齐）
+#   3. fast pytest（pre-push 阶段；-x 遇首个失败即停）
+#
+# 安装：uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+# 手动跑全部：uv run pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.16
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest fast
+        entry: uv run pytest tests/ -x -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
