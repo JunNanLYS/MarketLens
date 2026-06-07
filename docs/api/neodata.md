@@ -23,17 +23,15 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 
 ```json
 {
-  "has_token": true,
-  "source": "cache",
-  "expires_at": "2027-04-15T12:00:00"
+  "is_valid": true,
+  "source": "cache"
 }
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `has_token` | bool | 是否有可用凭证 |
-| `source` | string | `cache` / `config` / `env` / `none` |
-| `expires_at` | string \| null | 过期时间（ISO 8601），JWT 读取 `exp`，tempToken 读取 `saved_at + 12h` |
+| `is_valid` | bool | 是否有可用凭证（由后端从 token 解析/验证后返回，不暴露原文及过期时间） |
+| `source` | string \| null | token 来源：`cache` / `config` / `env` / `none` |
 
 ---
 

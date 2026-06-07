@@ -230,10 +230,12 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 
 ### `GET /positions/realized-pnl` — 已实现盈亏汇总
 
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| `account_id` | int | 筛选账户（可选） |
-| `symbol` | string | 筛选标的（可选） |
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `account_id` | int | — | 筛选账户（可选） |
+| `symbol` | string | — | 筛选标的（可选，最小长度 1） |
+| `page` | int | 1 | 页码（≥ 1） |
+| `page_size` | int | 50 | 每页条数（1–200，DB 层强制 cap） |
 
 ```json
 [
@@ -250,4 +252,4 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 **计算规则：**
 - 已实现盈亏 = 卖出金额(数量×价格) - 卖出数量 × 均价 - 手续费
 
-> **分页支持：** `PortfolioService.get_realized_pnl()` 在 service 层支持 `page` / `page_size`（默认 50，上限 200），按 `(account_id, symbol)` 在 DB 层聚合，避免 Python 端遍历全表。当前 HTTP 端点不暴露分页参数——当结果集超过数百条时建议按 `account_id` 或 `symbol` 过滤缩小范围。后续版本将补充 `Query` 绑定。
+> **分页支持：** 端点已接受 `page` / `page_size`（默认 50，上限 200），由 `PortfolioService.get_realized_pnl()` 在 DB 层按 `(account_id, symbol)` 强制聚合分页后返回，避免 Python 端遍历全表。当前响应仍为扁平数组（单页内 `(account_id, symbol)` 聚合结果），未包装为 `items` + `page_info` 结构——若需总条数或跨页遍历，请改用 `account_id` / `symbol` 过滤缩小范围后多次请求。

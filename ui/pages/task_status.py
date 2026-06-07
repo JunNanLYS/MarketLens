@@ -61,7 +61,7 @@ def render() -> None:
         )
     with col2:
         log_status: str = st.selectbox(
-            "状态", ["全部", "success", "failed", "running"], key="log_status"
+            "状态", ["全部", "success", "failure", "skipped"], key="log_status"
         )
 
     try:
@@ -82,7 +82,7 @@ def render() -> None:
                 st.text(task_label)
             with lc2:
                 log_s: str = log.get("status", "-")
-                color: str = {"success": "green", "failed": "red", "running": "orange"}.get(log_s, "gray")
+                color: str = {"success": "green", "failure": "red", "skipped": "orange"}.get(log_s, "gray")
                 st.markdown(f":{color}[{log_s}]")
             with lc3:
                 st.text(f"标的: {log.get('affected_assets', '-')}")
