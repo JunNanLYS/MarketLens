@@ -2,24 +2,20 @@ from typing import Any
 
 import streamlit as st
 
-from ui.api_client import get_task_status
+from ui.api_client import get_data_sources_config, get_task_status
 
 
 @st.cache_data(ttl=60)
 def _fetch_data_sources() -> list[dict[str, Any]]:
-    """读取 config.yaml 中的数据源配置。
+    """通过 FastAPI 端点获取数据源配置。
 
-    注意：CLAUDE.md 规定 UI 层不应直接读 DB 或配置文件。
-    此处临时直读（settings 是只读展示，无副作用），但耦合较紧。
-    后续应新增 GET /api/v1/config/data-sources 端点替代。
+    原先直读 config.yaml 违反 CLAUDE.md Module boundaries 约束
+    （ui/ 严禁 import backend/storage/,也禁止直读 config.yaml）。
+    现改为调用 ``GET /api/v1/data-sources/config``,与后端解耦。
     """
     try:
-        import yaml
-        from pathlib import Path
-        config_path: Path = Path(__file__).resolve().parents[2] / "config.yaml"
-        with open(config_path, "r", encoding="utf-8") as f:
-            config: dict[str, Any] = yaml.safe_load(f)
-        return config.get("data_sources", [])
+        result: dict[str, Any] = get_data_sources_config()
+        return list(result.get("structured", [])) + list(result.get("news", []))
     except Exception:
         return []
 

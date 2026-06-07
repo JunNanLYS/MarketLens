@@ -118,6 +118,46 @@ def _describe_one_source(category: str, cfg: dict) -> dict[str, Any]:
 # 端点
 # ------------------------------------------------------------------
 
+@router.get("/config", summary="查询所有数据源的基础配置（name / provider / enabled）")
+def get_data_sources_config() -> dict:
+    """返回结构化 + 新闻数据源的扁平列表。
+
+    与 ``/status`` 的区别:本端点不做健康探测、不读 token、不解析 command 路径,
+    仅返回 UI 展示所需的轻量字段,适合频繁轮询。
+
+    设计原则:
+    - GET 无副作用
+    - 字段稳定: ``name`` / ``provider`` / ``type`` / ``enabled`` / ``optional`` / ``timeout``
+    """
+    config = get_config()
+    data_sources: dict = config.get("data_sources", {})
+
+    def _flatten(category: str) -> list[dict]:
+        items: list[dict] = []
+        for s in data_sources.get(category, []):
+            provider: str = s.get("provider", "")
+            # type 字段保留旧 UI "类型" 展示语义,默认从 provider 类名提取
+            # 如 "WeStockProvider" -> "WeStock";provider 缺失时回退 "-"
+            type_label: str = provider.removesuffix("Provider") if provider else "-"
+            items.append(
+                {
+                    "category": category,
+                    "name": s.get("name"),
+                    "provider": provider,
+                    "type": type_label,
+                    "enabled": bool(s.get("enabled", True)),
+                    "optional": bool(s.get("optional", False)),
+                    "timeout": s.get("timeout"),
+                }
+            )
+        return items
+
+    return {
+        "structured": _flatten("structured"),
+        "news": _flatten("news"),
+    }
+
+
 @router.get("/status", summary="查询所有数据源的配置与健康状态")
 def get_data_sources_status() -> dict:
     config = get_config()

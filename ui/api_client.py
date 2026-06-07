@@ -47,6 +47,18 @@ def check_health() -> bool:
         return False
 
 
+def get_data_sources_config() -> dict[str, Any]:
+    """查询所有数据源的基础配置（GET /data-sources/config）。
+
+    返回 ``{"structured": [...], "news": [...]}``;每项包含
+    ``name`` / ``provider`` / ``type`` / ``enabled`` / ``optional`` / ``timeout``。
+    不探测 token 健康度,适合 UI 高频刷新场景。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/data-sources/config")
+    return _handle_response(resp)
+
+
 def get_assets(**params: Any) -> dict[str, Any]:
     client: httpx.Client = _get_client()
     resp: httpx.Response = client.get("/assets", params=params)
