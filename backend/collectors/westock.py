@@ -1011,7 +1011,9 @@ class WeStockProvider(BaseProvider):
         dividendPerShare / currency / dividendPlan。"""
         sym = raw.get("code", "") or symbol
         name = raw.get("name", "")
-        market = "hk" if sym.startswith("hk") else "us" if sym.startswith("us") else ""
+        # 与同文件 _fund_flow_cmd 保持一致：基于 symbol[:2] 前缀推断市场
+        prefix = sym[:2].lower()
+        market = prefix if prefix in ("hk", "us") else ""
         return {
             "event_type": "exdiv",
             "event_date": raw.get("exDivDate", ""),

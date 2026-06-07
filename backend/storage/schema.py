@@ -672,6 +672,13 @@ INDEX_DDLS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_us_financials_collected_at
     ON us_financials(collected_at DESC)
     """,
+    # raw_data 由 cleanup 任务按 collected_at 删除（保留 30 天），
+    # 此前仅有 (symbol, data_type) 复合索引，最左列不命中 collected_at 过滤。
+    # 补单列索引加速滚动清理，与 etf_basic / etf_holdings / us_financials 保持一致风格。
+    """
+    CREATE INDEX IF NOT EXISTS idx_raw_data_collected_at
+    ON raw_data(collected_at DESC)
+    """,
 ]
 
 

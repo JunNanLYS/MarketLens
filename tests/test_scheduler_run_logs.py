@@ -106,8 +106,15 @@ class TestRunFunctionsWriteRunLogs:
         self, mock_svc_cls: MagicMock, mock_create: MagicMock, mock_asyncio_run: MagicMock
     ) -> None:
         """调用 _run_news 后 run_logs 表中应有 news 记录。"""
+        from backend.scheduler import jobs
         from backend.scheduler.jobs import _run_news
 
+        # 重置 module-level 懒加载单例，否则前次测试实例化的 NewsService 会复用
+        jobs._news_service = None
+
+        # jobs.py 顶部 import NewsService 绑定到 jobs 模块命名空间，
+        # patch `backend.services.news_service.NewsService` 不会影响 jobs.NewsService 引用。
+        # 同步 patch jobs.NewsService 让 _get_news_service() 拿到 mock 实例。
         mock_instance = MagicMock()
         async def _fake_collect():
             async with aget_db() as conn:
@@ -120,7 +127,8 @@ class TestRunFunctionsWriteRunLogs:
         mock_instance.collect_news = _fake_collect
         mock_svc_cls.return_value = mock_instance
 
-        _run_news()
+        with patch.object(jobs, "NewsService", new=mock_svc_cls):
+            _run_news()
 
         async with aget_db() as conn:
             cursor = await conn.execute(

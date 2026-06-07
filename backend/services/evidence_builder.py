@@ -20,12 +20,40 @@ class EvidenceBuilder:
         }
 
     @staticmethod
+    def _classify_yoy_sign(curr_val: float | None, prev_val: float | None) -> str | None:
+        """对 ``(curr_val, prev_val)`` 给出符号语义标签。
+
+        数值同比仅看百分比会掩盖"扭亏 / 亏损收窄 / 亏损扩大"三类经济意义。
+        返回值：
+        - ``"turnaround"``：prev<0 且 curr>0（扭亏为盈）
+        - ``"loss_narrowing"``：prev<0 且 curr<0 且 ``|curr| < |prev|``（亏损收窄）
+        - ``"loss_widening"``：prev<0 且 curr<0 且 ``|curr| > |prev|``（亏损扩大）
+        - ``"normal"``：其余可计算情形
+        - ``None``：输入缺失或 prev=0（无法分类）
+
+        调用方按标签调整 AI 评分口径，避免对"亏损收窄"误判为看空。
+        """
+        if curr_val is None or prev_val is None or prev_val == 0:
+            return None
+        if prev_val < 0 and curr_val > 0:
+            return "turnaround"
+        if prev_val < 0 and curr_val < 0:
+            if abs(curr_val) < abs(prev_val):
+                return "loss_narrowing"
+            return "loss_widening"
+        return "normal"
+
+    @staticmethod
     def _derive_finance_yoy(rows: list[dict]) -> dict | None:
         """对 ``rows``（按 collected_at DESC 排序的最近 N 期）做 YoY/差值派生。
 
         派生字段：
         - ``revenue_yoy`` / ``net_profit_yoy`` / ``eps_yoy``: 百分比（最新 vs 前一期）
         - ``roe_change``: ROE 绝对差值
+        - ``revenue_yoy_sign`` / ``net_profit_yoy_sign`` / ``eps_yoy_sign``:
+          符号语义标签（``turnaround`` / ``loss_narrowing`` / ``loss_widening`` /
+          ``normal`` / ``None``），AI 规则按标签结构化判定，避免对"扭亏"或
+          "亏损收窄"误判为看空。
         - ``prev_*``: 前一期原值（向后兼容）
         - ``history``: 多期列表（按时间从旧到新）
 
@@ -43,6 +71,8 @@ class EvidenceBuilder:
                     latest[f"{key}_yoy"] = round((curr_val - prev_val) / abs(prev_val) * 100, 2)
                 else:
                     latest[f"{key}_yoy"] = None
+                # 同步产出结构化 sign hint，便于 AIAnalyzer 按经济意义解读
+                latest[f"{key}_yoy_sign"] = EvidenceBuilder._classify_yoy_sign(curr_val, prev_val)
             if latest.get("roe") is not None and prev.get("roe") is not None:
                 latest["roe_change"] = round(latest["roe"] - prev["roe"], 2)
             else:
@@ -54,6 +84,7 @@ class EvidenceBuilder:
         else:
             for key in ("revenue", "net_profit", "eps"):
                 latest[f"{key}_yoy"] = None
+                latest[f"{key}_yoy_sign"] = None
             latest["roe_change"] = None
         latest["history"] = [dict(r) for r in reversed(rows)]
         return latest

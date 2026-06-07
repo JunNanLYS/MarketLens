@@ -304,6 +304,16 @@ class AIAnalyzer:
 
     @staticmethod
     def _check_finance(finance: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """财务信号评分。
+
+        净利润同比读数（``net_profit_yoy``）以 ``(curr - prev) / abs(prev) * 100``
+        形式给出，**单凭百分比会掩盖"扭亏 / 亏损收窄"等符号翻转语义**。
+        因此同时读取 ``net_profit_yoy_sign`` 结构化标签（由
+        ``EvidenceBuilder._classify_yoy_sign`` 产出），仅在
+        ``sign == "normal"`` 且 ``yoy < -20`` 时才判定为看空；
+        "turnaround" / "loss_narrowing" 被视为**改善信号**（+ 看多），
+        避免对扭亏为盈 / 亏损收窄的标的产生误导。
+        """
         bullish = 0.0
         bearish = 0.0
         bull_reasons: list[str] = []
@@ -314,6 +324,7 @@ class AIAnalyzer:
         roe = finance.get("roe")
         revenue_yoy = finance.get("revenue_yoy")
         net_profit_yoy = finance.get("net_profit_yoy")
+        net_profit_yoy_sign = finance.get("net_profit_yoy_sign")
 
         if roe is not None and revenue_yoy is not None:
             if roe > 15 and revenue_yoy > 0:
@@ -321,7 +332,17 @@ class AIAnalyzer:
                 bull_reasons.append(f"ROE={roe:.1f}% 且营收正增长")
 
         if net_profit_yoy is not None:
-            if net_profit_yoy < -20:
+            if net_profit_yoy_sign in ("turnaround", "loss_narrowing"):
+                # 符号翻转或亏损收窄 —— 经济意义是改善，给看多信号
+                bullish += 0.10
+                label = "扭亏为盈" if net_profit_yoy_sign == "turnaround" else "亏损收窄"
+                bull_reasons.append(f"净利润{label}（同比 {net_profit_yoy:+.1f}%）")
+            elif net_profit_yoy_sign == "loss_widening":
+                # 亏损扩大 —— 实质是看空信号（百分比"下降"不代表业绩好转）
+                bearish += 0.10
+                bear_reasons.append(f"净利润亏损扩大（同比 {net_profit_yoy:+.1f}%）")
+            elif net_profit_yoy < -20:
+                # normal 情形下的传统阈值（保持向后兼容）
                 bearish += 0.10
                 bear_reasons.append(f"净利润同比负增长 {net_profit_yoy:.1f}%")
 

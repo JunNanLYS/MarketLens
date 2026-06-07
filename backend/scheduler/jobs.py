@@ -8,10 +8,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 from backend.config import get_config
-from backend.services.collection_service import CollectionService
+from backend.services.collection_service import CollectionService, _WRITE_LOCK
 from backend.services.news_service import NewsService
 from backend.services.report_service import ReportService
-from backend.storage.database import get_db
+from backend.storage.database import get_connection_sync, get_db, query_run_logs
 
 
 def _cleanup_naive_run_logs_once() -> None:
@@ -231,8 +231,6 @@ def _run_cleanup() -> None:
     """
     try:
         logger.info("定时任务触发: cleanup")
-        from backend.services.collection_service import _WRITE_LOCK
-        from backend.storage.database import get_connection_sync
         total_deleted: int = 0
         with _WRITE_LOCK:
             conn = get_connection_sync()
@@ -486,7 +484,6 @@ class SchedulerManager:
         Returns:
             含 items 和 page_info 的字典
         """
-        from backend.storage.database import query_run_logs
         return query_run_logs(
             task_name=task_name, status=status, page=page, page_size=page_size,
         )

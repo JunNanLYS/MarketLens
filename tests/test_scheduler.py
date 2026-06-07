@@ -366,8 +366,13 @@ def test_run_cleanup_acquires_write_lock() -> None:
         def __exit__(self, *args) -> None:
             self._inner.__exit__(*args)
 
-    # 在 collection_service 模块上替换,_run_cleanup 内部 import 时会拿到新版本
-    with patch.object(collection_service, "_WRITE_LOCK", new=_ObservableLock(original)):
+    # _run_cleanup 通过 jobs 模块的 _WRITE_LOCK 引用加锁（Agent Y import 收敛后），
+    # 用 patch.object 改 jobs 模块的 _WRITE_LOCK 才能被 _run_cleanup 看到。
+    # 同时把 collection_service._WRITE_LOCK 也用同一个可观察锁替换，
+    # 保证 _run_quote / _run_news 等其他路径若内部 dereference 也保持一致。
+    from backend.scheduler import jobs
+    with patch.object(jobs, "_WRITE_LOCK", new=_ObservableLock(original)), \
+         patch.object(collection_service, "_WRITE_LOCK", new=_ObservableLock(original)):
         _run_cleanup()
 
     assert observed_held, "_run_cleanup 未进入 _WRITE_LOCK 上下文"
