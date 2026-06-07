@@ -200,7 +200,7 @@ def get_positions(account_id: int | None = None) -> list[dict[str, Any]]:
     return _handle_response(resp)
 
 
-def get_realized_pnl(account_id: int | None = None, symbol: str | None = None) -> list[dict[str, Any]]:
+def get_realized_pnl(account_id: int | None = None, symbol: str | None = None) -> dict[str, Any]:
     client: httpx.Client = _get_client()
     params: dict[str, Any] = {}
     if account_id is not None:
@@ -350,4 +350,365 @@ def trigger_task(task_name: str) -> dict[str, Any]:
 def update_transaction(transaction_id: int, data: dict[str, Any]) -> dict[str, Any]:
     client: httpx.Client = _get_client()
     resp: httpx.Response = client.patch(f"/transactions/{transaction_id}", json=data)
+    return _handle_response(resp)
+
+
+# ============================================================================
+# 阶段 8 审查补全：以下 30 个 client 方法对应 backend/api/ 中已存在但
+# 此前无 client 包装的端点。命名规则：与 backend 端点函数名 1:1 对应
+# （如 get_etf_holders / refresh_dividend）。所有 refresh 端点统一使用
+# _TIMEOUT_LIVE（westock CLI subprocess）；所有 GET 查询端点使用默认超时。
+# ============================================================================
+
+
+def get_account(account_id: int) -> dict[str, Any]:
+    """查询单账户详情（GET /accounts/{account_id}）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/accounts/{account_id}")
+    return _handle_response(resp)
+
+
+def get_transaction(transaction_id: int) -> dict[str, Any]:
+    """查询单笔交易详情（GET /transactions/{transaction_id}）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/transactions/{transaction_id}")
+    return _handle_response(resp)
+
+
+def refresh_quote(symbol: str) -> dict[str, Any]:
+    """手动触发单标行情刷新（POST /data/quotes/{symbol}/refresh）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/quotes/{symbol}/refresh", timeout=_TIMEOUT_LIVE
+    )
+    return _handle_response(resp)
+
+
+def get_quote_history(
+    symbol: str,
+    limit: int = 100,
+    from_: str | None = None,
+    to: str | None = None,
+) -> dict[str, Any]:
+    """查询标的历史行情（GET /data/quotes/{symbol}/history）。
+
+    ``from_`` / ``to`` 为 ISO 8601 时间字符串。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if from_:
+        params["from"] = from_
+    if to:
+        params["to"] = to
+    resp: httpx.Response = client.get(
+        f"/data/quotes/{symbol}/history", params=params
+    )
+    return _handle_response(resp)
+
+
+def get_dividend_records(
+    symbol: str, limit: int = 20, source: str | None = None
+) -> dict[str, Any]:
+    """查询分红记录（GET /data/dividend/{symbol}，已落库数据）。
+
+    注意：与 POST /data/dividend/{symbol}（实时采集）路径相同但方法不同。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if source:
+        params["source"] = source
+    resp: httpx.Response = client.get(f"/data/dividend/{symbol}", params=params)
+    return _handle_response(resp)
+
+
+def get_shareholder_records(
+    symbol: str, limit: int = 10, source: str | None = None
+) -> dict[str, Any]:
+    """查询股东结构（GET /data/shareholder/{symbol}，top + 户数历史）。
+
+    注意：与 POST /data/shareholder/{symbol}（实时采集）路径相同但方法不同。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if source:
+        params["source"] = source
+    resp: httpx.Response = client.get(f"/data/shareholder/{symbol}", params=params)
+    return _handle_response(resp)
+
+
+def get_reserve_records(
+    symbol: str, limit: int = 20, source: str | None = None
+) -> dict[str, Any]:
+    """查询业绩预告（GET /data/reserve/{symbol}，按 report_period 降序）。
+
+    注意：与 POST /data/reserve/{symbol}（实时采集）路径相同但方法不同。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if source:
+        params["source"] = source
+    resp: httpx.Response = client.get(f"/data/reserve/{symbol}", params=params)
+    return _handle_response(resp)
+
+
+def get_minute_klines(
+    symbol: str,
+    limit: int = 240,
+    from_: str | None = None,
+    to: str | None = None,
+) -> dict[str, Any]:
+    """查询分时 K 线（GET /data/minute/{symbol}，按 time 降序）。"""
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if from_:
+        params["from"] = from_
+    if to:
+        params["to"] = to
+    resp: httpx.Response = client.get(f"/data/minute/{symbol}", params=params)
+    return _handle_response(resp)
+
+
+def refresh_dividend(symbol: str) -> dict[str, Any]:
+    """手动触发分红数据采集并落库（POST /data/dividend/{symbol}/refresh）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/dividend/{symbol}/refresh", timeout=_TIMEOUT_LIVE
+    )
+    return _handle_response(resp)
+
+
+def refresh_shareholder(symbol: str) -> dict[str, Any]:
+    """手动触发股东结构采集并落库（POST /data/shareholder/{symbol}/refresh）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/shareholder/{symbol}/refresh", timeout=_TIMEOUT_LIVE
+    )
+    return _handle_response(resp)
+
+
+def refresh_reserve(symbol: str) -> dict[str, Any]:
+    """手动触发业绩预告采集并落库（POST /data/reserve/{symbol}/refresh）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/reserve/{symbol}/refresh", timeout=_TIMEOUT_LIVE
+    )
+    return _handle_response(resp)
+
+
+def refresh_minute(symbol: str, days: int = 1) -> dict[str, Any]:
+    """手动触发分时数据采集并落库（POST /data/minute/{symbol}/refresh）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/minute/{symbol}/refresh",
+        params={"days": days},
+        timeout=_TIMEOUT_LIVE,
+    )
+    return _handle_response(resp)
+
+
+def get_etf_holders(symbol: str) -> dict[str, Any]:
+    """查询 ETF 持有人结构（GET /data/etf/{symbol}/holders）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/etf/{symbol}/holders")
+    return _handle_response(resp)
+
+
+def get_etf_financial(symbol: str) -> dict[str, Any]:
+    """查询 ETF 资产配置（GET /data/etf/{symbol}/financial）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/etf/{symbol}/financial")
+    return _handle_response(resp)
+
+
+def refresh_etf(symbol: str, start: str, end: str) -> dict[str, Any]:
+    """手动触发 ETF 全套数据采集（5 类）并落库（POST /data/etf-refresh/{symbol}）。
+
+    ``start`` / ``end`` 为 YYYY-MM-DD 净值起止日期。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/etf-refresh/{symbol}",
+        params={"start": start, "end": end},
+        timeout=_TIMEOUT_LIVE,
+    )
+    return _handle_response(resp)
+
+
+def refresh_sectors(hot_limit: int = 10) -> dict[str, Any]:
+    """手动触发板块首页 + 热门板块采集并落库（POST /data/sectors/refresh）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        "/data/sectors/refresh",
+        params={"hot_limit": hot_limit},
+        timeout=_TIMEOUT_LIVE,
+    )
+    return _handle_response(resp)
+
+
+def get_us_finance(
+    symbol: str, period_type: str | None = None, limit: int = 20
+) -> dict[str, Any]:
+    """查询美股财务（GET /data/finance/us/{symbol}）。
+
+    ``period_type`` 可选 ``annual`` / ``quarter``；None 时返回所有。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if period_type:
+        params["period_type"] = period_type
+    resp: httpx.Response = client.get(f"/data/finance/us/{symbol}", params=params)
+    return _handle_response(resp)
+
+
+def get_hk_finance(
+    symbol: str, period_type: str | None = None, limit: int = 20
+) -> dict[str, Any]:
+    """查询港股财务（GET /data/finance/hk/{symbol}）。
+
+    ``period_type`` 可选 ``annual`` / ``quarter``；None 时返回所有。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if period_type:
+        params["period_type"] = period_type
+    resp: httpx.Response = client.get(f"/data/finance/hk/{symbol}", params=params)
+    return _handle_response(resp)
+
+
+def refresh_finance(symbol: str, num: int = 4) -> dict[str, Any]:
+    """手动触发港美股财务采集并落库（POST /data/finance-refresh/{symbol}）。
+
+    根据 symbol 前缀自动选 us_finance / hk_finance。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/finance-refresh/{symbol}",
+        params={"num": num},
+        timeout=_TIMEOUT_LIVE,
+    )
+    return _handle_response(resp)
+
+
+def refresh_calendar(market: str = "hk", exdiv_symbol: str | None = None) -> dict[str, Any]:
+    """手动触发港美新股日历（ipo）+ 除权日历（exdiv）采集并落库。
+
+    ``exdiv_symbol`` 为 None 时跳过 exdiv 采集。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"market": market}
+    if exdiv_symbol:
+        params["exdiv_symbol"] = exdiv_symbol
+    resp: httpx.Response = client.post(
+        "/data/calendar-refresh", params=params, timeout=_TIMEOUT_LIVE
+    )
+    return _handle_response(resp)
+
+
+def get_margintrade(symbol: str, limit: int = 20) -> dict[str, Any]:
+    """查询融资融券（GET /data/margintrade/{symbol}，A 股）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(
+        f"/data/margintrade/{symbol}", params={"limit": limit}
+    )
+    return _handle_response(resp)
+
+
+def get_blocktrade(symbol: str, limit: int = 20) -> dict[str, Any]:
+    """查询大宗交易（GET /data/blocktrade/{symbol}，A 股）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(
+        f"/data/blocktrade/{symbol}", params={"limit": limit}
+    )
+    return _handle_response(resp)
+
+
+def get_lhb(symbol: str, limit: int = 20) -> dict[str, Any]:
+    """查询龙虎榜（GET /data/lhb/{symbol}，A 股）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get(f"/data/lhb/{symbol}", params={"limit": limit})
+    return _handle_response(resp)
+
+
+def refresh_chip_margintrade(symbol: str) -> dict[str, Any]:
+    """手动触发筹码 + 融资融券采集并落库（POST /data/chip-refresh/{symbol}）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/chip-refresh/{symbol}", timeout=_TIMEOUT_LIVE
+    )
+    return _handle_response(resp)
+
+
+def refresh_blocktrade(symbol: str, date: str) -> dict[str, Any]:
+    """手动触发大宗交易采集（POST /data/blocktrade-refresh/{symbol}）。
+
+    ``date`` 为 YYYY-MM-DD。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/blocktrade-refresh/{symbol}",
+        params={"date": date},
+        timeout=_TIMEOUT_LIVE,
+    )
+    return _handle_response(resp)
+
+
+def refresh_lhb(symbol: str, date: str) -> dict[str, Any]:
+    """手动触发龙虎榜采集（POST /data/lhb-refresh/{symbol}）。
+
+    ``date`` 为 YYYY-MM-DD。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post(
+        f"/data/lhb-refresh/{symbol}",
+        params={"date": date},
+        timeout=_TIMEOUT_LIVE,
+    )
+    return _handle_response(resp)
+
+
+def get_data_sources_status() -> dict[str, Any]:
+    """查询所有数据源的配置与健康状态（GET /data-sources/status）。
+
+    与 /data-sources/config 的区别：本端点会读 token 状态、解析 command 路径，
+    不适合 UI 高频刷新；用于运维诊断场景。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/data-sources/status")
+    return _handle_response(resp)
+
+
+def get_neodata_token_status() -> dict[str, Any]:
+    """查询 NeoData token 状态（GET /neodata/token-status，不暴露过期时间）。"""
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.get("/neodata/token-status")
+    return _handle_response(resp)
+
+
+def save_neodata_token(token: str) -> dict[str, Any]:
+    """保存 NeoData token（POST /neodata/token，JSON body）。
+
+    该端点为写端点，后端会校验 API Key（X-API-Key header）。
+    """
+    client: httpx.Client = _get_client()
+    resp: httpx.Response = client.post("/neodata/token", json={"token": token})
+    return _handle_response(resp)
+
+
+def get_report_history(
+    symbol: str,
+    limit: int = 30,
+    from_: str | None = None,
+    to: str | None = None,
+) -> dict[str, Any]:
+    """查询 AI 报告历史（GET /reports/{symbol}/history）。
+
+    ``from_`` / ``to`` 为 ISO 8601 日期字符串（YYYY-MM-DD）。
+    """
+    client: httpx.Client = _get_client()
+    params: dict[str, Any] = {"limit": limit}
+    if from_:
+        params["from"] = from_
+    if to:
+        params["to"] = to
+    resp: httpx.Response = client.get(f"/reports/{symbol}/history", params=params)
     return _handle_response(resp)
