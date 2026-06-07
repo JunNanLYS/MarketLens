@@ -257,7 +257,12 @@ class PortfolioService:
                 pass
             elif tx["type"] == "split":
                 # N-16: quantity 在 split 类型中表示拆股比率（如 2:1 拆股则 quantity=2）
-                total_qty *= tx["quantity"]
+                # 拆股/送股：total_qty 按比例放大，avg_cost 按同等比例下调，保持总成本不变。
+                if tx["quantity"] > 0:
+                    split_ratio: float = tx["quantity"]
+                    total_qty *= split_ratio
+                    if avg_cost > 0:
+                        avg_cost = avg_cost / split_ratio
         return total_qty, avg_cost
 
     def get_transactions(
@@ -625,7 +630,13 @@ class PortfolioService:
                 total_sell_qty += tx["quantity"]
                 total_qty -= tx["quantity"]
             elif tx["type"] == "split":
-                total_qty *= tx["quantity"]
+                # 拆股/送股：total_qty 按比例放大，avg_cost 按同等比例下调。
+                # 已实现盈亏不受影响（WAC 剩余持仓的账面成本按比例调整，sell 时仍按调整后 avg_cost 计算）。
+                if tx["quantity"] > 0:
+                    split_ratio: float = tx["quantity"]
+                    total_qty *= split_ratio
+                    if avg_cost > 0:
+                        avg_cost = avg_cost / split_ratio
 
         return {
             "total_qty": total_qty,

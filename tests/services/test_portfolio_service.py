@@ -343,12 +343,14 @@ async def test_positions_unrealized_pnl(
 async def test_positions_quote_same_millisecond_takes_one(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
-    """同毫秒并发采集的两条行情行,get_positions 只能取 1 条。
+    """近似同时采集的两条行情行,get_positions 只能取 1 条。
 
     旧 SQL 用 MAX(collected_at) 在并列时返回 2 行,quotes_map 出现重复项;
     CTE + ROW_NUMBER() 保证每 symbol 严格 1 行,避免重复累加。
-    注意:ROW_NUMBER 对 ORDER BY 排序键并列时内部行序不确定,因此断言
-    current_price 必须是 380 或 420 之一,不能是其他值。
+
+    schema 约束 `UNIQUE(symbol, collected_at)` 禁止完全相同的 timestamp,
+    所以用相差 1 微秒的 collected_at 模拟"近似同时"采集场景,
+    验证 ROW_NUMBER 排序时取最新一行。
     """
     svc.create_transaction(
         {
@@ -361,25 +363,28 @@ async def test_positions_quote_same_millisecond_takes_one(
         }
     )
 
-    same_ts = "2026-05-31T15:30:00"
+    # 两条行情相差 1 微秒(模拟"同一毫秒窗口内"的并发采集):
+    # row 1 collected_at = 2026-05-31T15:30:00.000000
+    # row 2 collected_at = 2026-05-31T15:30:00.000001  (晚 1 微秒)
+    base_ts = "2026-05-31T15:30:00"
     async with aget_db() as conn:
-        # 两条同毫秒行情(模拟并发采集),id ASC 的较早行价格较低
         await conn.execute(
             "INSERT INTO market_quotes (symbol, price, collected_at) VALUES (?, ?, ?)",
-            ("hk00700", 380.0, same_ts),
+            ("hk00700", 380.0, f"{base_ts}.000000"),
         )
         await conn.execute(
             "INSERT INTO market_quotes (symbol, price, collected_at) VALUES (?, ?, ?)",
-            ("hk00700", 420.0, same_ts),
+            ("hk00700", 420.0, f"{base_ts}.000001"),
         )
 
     positions: list[dict] = svc.get_positions()
     assert len(positions) == 1
     pos: dict = positions[0]
+    # ROW_NUMBER 按 collected_at DESC 排序,应取最新一行(price=420.0)
     # 关键不变量:同 symbol 在 quotes_map 中只能有 1 个条目,聚合出 1 条持仓
-    assert pos["current_price"] in (380.0, 420.0)
-    assert pos["market_value"] == pos["current_price"] * 100
-    assert pos["unrealized_pnl"] == (pos["current_price"] - 350.0) * 100
+    assert pos["current_price"] == 420.0
+    assert pos["market_value"] == 420.0 * 100
+    assert pos["unrealized_pnl"] == (420.0 - 350.0) * 100
 
 
 async def test_positions_no_quote(
@@ -784,7 +789,7 @@ async def test_split_transaction(
     positions: list[dict] = svc.get_positions()
     assert len(positions) == 1
     assert positions[0]["total_qty"] == 200
-    assert positions[0]["avg_cost"] == 380.0
+    assert positions[0]["avg_cost"] == 190.0
 
 
 async def test_create_split_zero_quantity_rejected(
