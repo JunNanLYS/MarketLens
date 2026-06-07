@@ -514,9 +514,18 @@ class PortfolioService:
             names_map: dict[str, str | None] = {}
             all_symbols = list({str(sym) for (_, sym) in grouped})
             if all_symbols:
+                # 使用 CTE + ROW_NUMBER() 取每 symbol 唯一一条最新行情。
+                # 旧 SQL 用相关子查询 MAX(collected_at),同毫秒并发采集时返回多行,
+                # quotes_map 出现重复项;ROW_NUMBER() 保证每 symbol 严格 1 行。
                 ph = ', '.join(['?'] * len(all_symbols))
                 qrows = conn.execute(
-                    'SELECT mq.symbol, mq.price FROM market_quotes mq WHERE mq.symbol IN (' + ph + ') AND mq.collected_at = (SELECT MAX(collected_at) FROM market_quotes WHERE symbol = mq.symbol)',
+                    f"""WITH latest_quotes AS (
+                            SELECT symbol, price, collected_at,
+                                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn
+                            FROM market_quotes
+                            WHERE symbol IN ({ph})
+                        )
+                        SELECT symbol, price FROM latest_quotes WHERE rn = 1""",
                     all_symbols,
                 ).fetchall()
                 quotes_map = {r['symbol']: r['price'] for r in qrows}
@@ -716,14 +725,3 @@ class PortfolioService:
                     )
 
         return results
-
-    def _compute_avg_cost(
-        self, conn, account_id: int, symbol: str
-    ) -> float:
-        rows = conn.execute(
-            "SELECT type, quantity, price FROM transactions WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL ORDER BY trade_date, created_at",
-            (account_id, symbol),
-        ).fetchall()
-        rows_as_dicts: list[dict] = [dict(row) for row in rows]
-        _, avg_cost = self._compute_position_detail(rows_as_dicts)
-        return avg_cost

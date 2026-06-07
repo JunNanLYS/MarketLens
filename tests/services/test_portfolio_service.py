@@ -340,6 +340,48 @@ async def test_positions_unrealized_pnl(
     assert pos["unrealized_pnl_pct"] == pytest.approx(14.29, abs=0.01)
 
 
+async def test_positions_quote_same_millisecond_takes_one(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """同毫秒并发采集的两条行情行,get_positions 只能取 1 条。
+
+    旧 SQL 用 MAX(collected_at) 在并列时返回 2 行,quotes_map 出现重复项;
+    CTE + ROW_NUMBER() 保证每 symbol 严格 1 行,避免重复累加。
+    注意:ROW_NUMBER 对 ORDER BY 排序键并列时内部行序不确定,因此断言
+    current_price 必须是 380 或 420 之一,不能是其他值。
+    """
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 350.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+
+    same_ts = "2026-05-31T15:30:00"
+    async with aget_db() as conn:
+        # 两条同毫秒行情(模拟并发采集),id ASC 的较早行价格较低
+        await conn.execute(
+            "INSERT INTO market_quotes (symbol, price, collected_at) VALUES (?, ?, ?)",
+            ("hk00700", 380.0, same_ts),
+        )
+        await conn.execute(
+            "INSERT INTO market_quotes (symbol, price, collected_at) VALUES (?, ?, ?)",
+            ("hk00700", 420.0, same_ts),
+        )
+
+    positions: list[dict] = svc.get_positions()
+    assert len(positions) == 1
+    pos: dict = positions[0]
+    # 关键不变量:同 symbol 在 quotes_map 中只能有 1 个条目,聚合出 1 条持仓
+    assert pos["current_price"] in (380.0, 420.0)
+    assert pos["market_value"] == pos["current_price"] * 100
+    assert pos["unrealized_pnl"] == (pos["current_price"] - 350.0) * 100
+
+
 async def test_positions_no_quote(
     svc: PortfolioService, sample_account: dict, sample_asset: None
 ) -> None:
