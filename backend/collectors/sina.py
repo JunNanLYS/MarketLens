@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 import httpx
 from loguru import logger
 
-from backend.collectors.base import StructuredProvider
+from backend.collectors.base import StructuredProvider, _HttpClientMixin
 
 
-class SinaProvider(StructuredProvider):
+class SinaProvider(StructuredProvider, _HttpClientMixin):
     """通过新浪财经 HTTP 接口获取行情、K线、财务、资金流向数据（异步版）。"""
 
     # K线周期 → 新浪 scale 参数映射（分钟数）
@@ -23,27 +23,20 @@ class SinaProvider(StructuredProvider):
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.quote_url: str = self.params.get("quote_url", "https://hq.sinajs.cn/list={codes}")
-        # 懒加载 httpx.AsyncClient：见 rss.py 同类注释
+        # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
         self._client: httpx.AsyncClient | None = None
         self._client_headers: dict[str, str] = {
             "Referer": "https://finance.sina.com.cn",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """首次使用时创建 httpx 客户端，后续复用。"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
-                follow_redirects=True,
-                headers=self._client_headers,
-            )
-        return self._client
-
-    async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+    def _client_kwargs(self) -> dict:
+        """覆写 mixin 钩子，注入 headers + follow_redirects。"""
+        return {
+            "timeout": httpx.Timeout(self.timeout),
+            "follow_redirects": True,
+            "headers": self._client_headers,
+        }
 
     @staticmethod
     def _to_sina_code(symbol: str) -> str:

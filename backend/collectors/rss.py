@@ -5,10 +5,10 @@ import xml.etree.ElementTree as ET
 import httpx
 from loguru import logger
 
-from backend.collectors.base import NewsProvider
+from backend.collectors.base import NewsProvider, _HttpClientMixin
 
 
-class RSSProvider(NewsProvider):
+class RSSProvider(NewsProvider, _HttpClientMixin):
     """通用 RSS 新闻采集提供者（异步版）。"""
 
     _NAMESPACES: dict[str, str] = {
@@ -26,23 +26,15 @@ class RSSProvider(NewsProvider):
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.url: str = self.params.get("url", "")
-        # 懒加载 httpx.AsyncClient：避免 __init__ 阶段在 Windows + Python 3.13 上
-        # 因 SSL/连接池初始化阻塞 3.8s+。首次 await 使用时再创建。
+        # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
         self._client: httpx.AsyncClient | None = None
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """首次使用时创建 httpx 客户端，后续复用。"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
-                follow_redirects=True,
-            )
-        return self._client
-
-    async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+    def _client_kwargs(self) -> dict:
+        """覆写 mixin 钩子：RSS 源无自定义 headers，但启用 follow_redirects。"""
+        return {
+            "timeout": httpx.Timeout(self.timeout),
+            "follow_redirects": True,
+        }
 
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:

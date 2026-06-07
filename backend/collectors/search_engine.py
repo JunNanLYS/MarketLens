@@ -4,7 +4,7 @@ from urllib.parse import quote_plus
 import httpx
 from loguru import logger
 
-from backend.collectors.base import NewsProvider
+from backend.collectors.base import NewsProvider, _HttpClientMixin
 
 
 class _LinkExtractor(HTMLParser):
@@ -43,7 +43,7 @@ class _LinkExtractor(HTMLParser):
             self._current_text += data
 
 
-class SearchEngineNewsProvider(NewsProvider):
+class SearchEngineNewsProvider(NewsProvider, _HttpClientMixin):
     """多搜索引擎新闻提供者（异步版）。"""
 
     DEFAULT_ENGINES = {
@@ -68,7 +68,7 @@ class SearchEngineNewsProvider(NewsProvider):
         self._primary = self.params.get("primary_engine", "duckduckgo") if params else "duckduckgo"
         self._keywords = self.params.get("keywords", []) if params else []
         self._max_items = int(self.params.get("max_items", 30)) if params else 30
-        # 懒加载 httpx.AsyncClient：见 rss.py 同类注释
+        # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
         self._client: httpx.AsyncClient | None = None
         self._client_headers: dict[str, str] = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -76,20 +76,13 @@ class SearchEngineNewsProvider(NewsProvider):
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """首次使用时创建 httpx 客户端，后续复用。"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
-                follow_redirects=True,
-                headers=self._client_headers,
-            )
-        return self._client
-
-    async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+    def _client_kwargs(self) -> dict:
+        """覆写 mixin 钩子，注入浏览器 headers + follow_redirects。"""
+        return {
+            "timeout": httpx.Timeout(self.timeout),
+            "follow_redirects": True,
+            "headers": self._client_headers,
+        }
 
 
     def _build_query(self, base_keywords: list[str] | None = None) -> str:

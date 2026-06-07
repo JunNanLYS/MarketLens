@@ -3,10 +3,10 @@
 import httpx
 from loguru import logger
 
-from backend.collectors.base import NewsProvider
+from backend.collectors.base import NewsProvider, _HttpClientMixin
 
 
-class SinaNewsProvider(NewsProvider):
+class SinaNewsProvider(NewsProvider, _HttpClientMixin):
     """新浪财经新闻 JSON API 提供者（异步版）。"""
 
     def __init__(
@@ -19,27 +19,20 @@ class SinaNewsProvider(NewsProvider):
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.url: str = self.params.get("url", "")
         self.max_items: int = int(self.params.get("max_items", 50))
-        # 懒加载 httpx.AsyncClient：见 rss.py 同类注释
+        # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
         self._client: httpx.AsyncClient | None = None
         self._client_headers: dict[str, str] = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://finance.sina.com.cn",
         }
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """首次使用时创建 httpx 客户端，后续复用。"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
-                follow_redirects=True,
-                headers=self._client_headers,
-            )
-        return self._client
-
-    async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+    def _client_kwargs(self) -> dict:
+        """覆写 mixin 钩子，注入 headers + follow_redirects。"""
+        return {
+            "timeout": httpx.Timeout(self.timeout),
+            "follow_redirects": True,
+            "headers": self._client_headers,
+        }
 
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:

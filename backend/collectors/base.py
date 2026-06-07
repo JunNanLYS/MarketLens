@@ -15,8 +15,47 @@ BaseProvider 保留为（StructuredProvider, NewsProvider）的多继承占位�
 - 旧 Provider 子类迁移到新 ABC 后，行为不变；
 - 旧代码中 `isinstance(p, BaseProvider)` 检查依旧成立；
 - 任何缺方法的子类不会因 ABC 检查失败而无法实例化。
+
+_HttpClientMixin：httpx.AsyncClient 懒加载 + close 公共逻辑。
+子类覆写 _client_kwargs() 即可注入 headers/follow_redirects 等自定义参数。
 """
 from abc import ABC
+
+import httpx
+
+
+class _HttpClientMixin:
+    """HTTP 客户端懒加载 + close 公共 mixin。
+
+    设计要点：
+    1. 懒加载：`__init__` 不创建 client，避免 Windows + Python 3.13 上
+       SSL/连接池初始化阻塞 3.8s+。
+    2. 单例复用：首次 await 时创建，后续复用同一 client。
+    3. close 幂等：重复 close 安全，重置 _client 为 None。
+    4. 子类定制：覆写 _client_kwargs() 返回 httpx.AsyncClient 构造 kwargs，
+       不覆写 _get_client / close。
+
+    调用约定：子类业务方法统一使用 `await self._get_client()`，
+    与原 BaseProvider 提供的 async 接口保持一致。
+    """
+
+    _client: httpx.AsyncClient | None = None
+
+    def _client_kwargs(self) -> dict:
+        """返回 httpx.AsyncClient 构造 kwargs。子类可覆写以注入 headers 等。"""
+        return {"timeout": self.timeout}  # type: ignore[attr-defined]
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """首次使用时创建 httpx 客户端，后续复用。"""
+        if not hasattr(self, "_client") or self._client is None:
+            self._client = httpx.AsyncClient(**self._client_kwargs())
+        return self._client
+
+    async def close(self) -> None:
+        """关闭底层 httpx 客户端，重置为 None。幂等。"""
+        if getattr(self, "_client", None) is not None:
+            await self._client.aclose()
+            self._client = None
 
 
 class StructuredProvider(ABC):
@@ -41,7 +80,13 @@ class StructuredProvider(ABC):
         return datetime.now(timezone.utc).isoformat()
 
     async def close(self) -> None:
-        """关闭底层连接（默认空操作，子类可按需覆盖）。"""
+        """关闭底层连接（默认空操作，子类可按需覆盖）。
+
+        调用 super().close() 沿 MRO 链将关闭动作传递给后续基类
+        （如 _HttpClientMixin 会关闭 httpx 客户端），保证 MRO 上所有
+        基类的资源释放逻辑都被执行。
+        """
+        await super().close()
 
     async def search(self, keyword: str) -> list[dict]:
         """默认空实现：子类按需覆盖。"""
@@ -90,7 +135,13 @@ class NewsProvider(ABC):
         return datetime.now(timezone.utc).isoformat()
 
     async def close(self) -> None:
-        """关闭底层连接（默认空操作，子类可按需覆盖）。"""
+        """关闭底层连接（默认空操作，子类可按需覆盖）。
+
+        调用 super().close() 沿 MRO 链将关闭动作传递给后续基类
+        （如 _HttpClientMixin 会关闭 httpx 客户端），保证 MRO 上所有
+        基类的资源释放逻辑都被执行。
+        """
+        await super().close()
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         """默认空实现：子类按需覆盖。"""
