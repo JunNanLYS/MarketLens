@@ -11,6 +11,7 @@
 - 通过 patch('backend.api.data._service', mock_service) 注入受控 service，
   避免触发真实 WeStockProvider 网络调用。
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -66,7 +67,9 @@ def _insert_dividends(symbol: str, rows: list[dict]) -> None:
             )
 
 
-def _insert_shareholders(symbol: str, top: list[dict], count_hist: list[dict] | None = None) -> None:
+def _insert_shareholders(
+    symbol: str, top: list[dict], count_hist: list[dict] | None = None
+) -> None:
     with get_db() as conn:
         for r in top:
             conn.execute(
@@ -156,10 +159,16 @@ def _mock_service(**overrides: Any) -> MagicMock:
     svc.get_profit_forecasts.return_value = overrides.pop("get_profit_forecasts", [])
     svc.get_minute_klines.return_value = overrides.pop("get_minute_klines", [])
     # 异步 POST 端点依赖（使用 AsyncMock 才能 await）
-    svc.collect_dividend = AsyncMock(return_value=overrides.pop("collect_dividend", None))
-    svc.collect_shareholder = AsyncMock(return_value=overrides.pop("collect_shareholder", None))
+    svc.collect_dividend = AsyncMock(
+        return_value=overrides.pop("collect_dividend", None)
+    )
+    svc.collect_shareholder = AsyncMock(
+        return_value=overrides.pop("collect_shareholder", None)
+    )
     svc.collect_reserve = AsyncMock(return_value=overrides.pop("collect_reserve", None))
-    svc.collect_intraday = AsyncMock(return_value=overrides.pop("collect_intraday", None))
+    svc.collect_intraday = AsyncMock(
+        return_value=overrides.pop("collect_intraday", None)
+    )
     return svc
 
 
@@ -175,7 +184,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_dividend_success(client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None) -> None:
+async def test_get_dividend_success(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None
+) -> None:
     """GET /dividend/{symbol} 命中已落库数据。"""
     _insert_dividends(
         "sh600519",
@@ -222,7 +233,9 @@ async def test_get_dividend_no_data(client: TestClient) -> None:
     assert "nonexistent" in body["detail"]
 
 
-async def test_get_dividend_source_filter(client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None) -> None:
+async def test_get_dividend_source_filter(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None
+) -> None:
     """source 查询参数应被透传到 DB。"""
     _insert_dividends(
         "sh600519",
@@ -254,7 +267,9 @@ async def test_get_dividend_source_filter(client: TestClient, monkeypatch: pytes
 # ---------------------------------------------------------------------------
 
 
-async def test_get_shareholder_success(client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None) -> None:
+async def test_get_shareholder_success(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None
+) -> None:
     """GET /shareholder/{symbol} 返回 top + count_history。"""
     _insert_shareholders(
         "sh600519",
@@ -313,7 +328,9 @@ async def test_get_shareholder_no_data(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_reserve_success(client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None) -> None:
+async def test_get_reserve_success(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None
+) -> None:
     """GET /reserve/{symbol} 命中已落库业绩预告。"""
     _insert_forecasts(
         "sh600519",
@@ -352,7 +369,9 @@ async def test_get_reserve_no_data(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_minute_success(client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None) -> None:
+async def test_get_minute_success(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None
+) -> None:
     """GET /minute/{symbol} 命中已落库分时数据。"""
     _insert_minute(
         "sh600519",
@@ -382,7 +401,9 @@ async def test_get_minute_success(client: TestClient, monkeypatch: pytest.Monkey
     assert body["total"] == 2
 
 
-async def test_get_minute_with_time_range(client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None) -> None:
+async def test_get_minute_with_time_range(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, isolated_db: None
+) -> None:
     """GET /minute/{symbol}?from=...&to=... 应用时间过滤。"""
     _insert_minute(
         "sh600519",
@@ -439,7 +460,10 @@ async def test_refresh_dividend_success(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/dividend/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/dividend/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["symbol"] == "sh600519"
@@ -452,7 +476,10 @@ async def test_refresh_dividend_failure(monkeypatch: pytest.MonkeyPatch) -> None
     svc = _mock_service(collect_dividend=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/dividend/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/dividend/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -462,12 +489,17 @@ async def test_refresh_shareholder_success(monkeypatch: pytest.MonkeyPatch) -> N
     svc = _mock_service(
         collect_shareholder={
             "top_shareholders": [{"rank": 1, "name": "测试股东"}],
-            "holder_count_history": [{"report_date": "2024-03-31", "total_holders": 100}],
+            "holder_count_history": [
+                {"report_date": "2024-03-31", "total_holders": 100}
+            ],
         }
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/shareholder/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/shareholder/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert "top_shareholders" in body
@@ -480,7 +512,10 @@ async def test_refresh_shareholder_failure(monkeypatch: pytest.MonkeyPatch) -> N
     svc = _mock_service(collect_shareholder=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/shareholder/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/shareholder/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -496,7 +531,10 @@ async def test_refresh_reserve_success(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/reserve/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/reserve/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["forecast_type"] == "略增"
@@ -508,7 +546,10 @@ async def test_refresh_reserve_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     svc = _mock_service(collect_reserve=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/reserve/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/reserve/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -522,7 +563,10 @@ async def test_refresh_minute_success(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/minute/sh600519/refresh?days=1", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/minute/sh600519/refresh?days=1",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["symbol"] == "sh600519"
@@ -535,7 +579,10 @@ async def test_refresh_minute_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     svc = _mock_service(collect_intraday=None)
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/minute/sh600519/refresh", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/minute/sh600519/refresh",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 502
     assert resp.json()["error"] == "COLLECT_FAILED"
 
@@ -545,6 +592,9 @@ async def test_refresh_minute_days_validation(monkeypatch: pytest.MonkeyPatch) -
     svc = _mock_service()
     monkeypatch.setattr("backend.api.data._service", svc)
     client = TestClient(app)
-    resp = client.post("/api/v1/data/minute/sh600519/refresh?days=99", headers={"X-API-Key": "marketlens-local"})
+    resp = client.post(
+        "/api/v1/data/minute/sh600519/refresh?days=99",
+        headers={"X-API-Key": "marketlens-local"},
+    )
     assert resp.status_code == 422
     svc.collect_intraday.assert_not_awaited()

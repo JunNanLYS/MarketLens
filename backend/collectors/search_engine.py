@@ -1,4 +1,4 @@
-﻿from html.parser import HTMLParser
+from html.parser import HTMLParser
 from urllib.parse import quote_plus
 
 import httpx
@@ -61,11 +61,19 @@ class SearchEngineNewsProvider(NewsProvider, _HttpClientMixin):
         },
     }
 
-    def __init__(self, name: str, timeout: int = 30, params: dict | None = None, optional: bool = True) -> None:
+    def __init__(
+        self,
+        name: str,
+        timeout: int = 30,
+        params: dict | None = None,
+        optional: bool = True,
+    ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         engines_cfg = self.params.get("engines", {}) if params else {}
         self._engines = engines_cfg or dict(SearchEngineNewsProvider.DEFAULT_ENGINES)
-        self._primary = self.params.get("primary_engine", "duckduckgo") if params else "duckduckgo"
+        self._primary = (
+            self.params.get("primary_engine", "duckduckgo") if params else "duckduckgo"
+        )
         self._keywords = self.params.get("keywords", []) if params else []
         self._max_items = int(self.params.get("max_items", 30)) if params else 30
         # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
@@ -83,7 +91,6 @@ class SearchEngineNewsProvider(NewsProvider, _HttpClientMixin):
             "follow_redirects": True,
             "headers": self._client_headers,
         }
-
 
     def _build_query(self, base_keywords: list[str] | None = None) -> str:
         parts = []
@@ -107,25 +114,29 @@ class SearchEngineNewsProvider(NewsProvider, _HttpClientMixin):
             extractor = _LinkExtractor()
             extractor.feed(resp.text)
             results = []
-            for item in extractor.results[:self._max_items]:
-                results.append({
-                    "title": item["title"],
-                    "source": engine.get("name", engine_name),
-                    "url": item["url"],
-                    "content": "",
-                    "summary": "",
-                    "published_at": None,
-                    "sentiment": "neutral",
-                    "importance": "normal",
-                    "collected_at": self._now(),
-                })
+            for item in extractor.results[: self._max_items]:
+                results.append(
+                    {
+                        "title": item["title"],
+                        "source": engine.get("name", engine_name),
+                        "url": item["url"],
+                        "content": "",
+                        "summary": "",
+                        "published_at": None,
+                        "sentiment": "neutral",
+                        "importance": "normal",
+                        "collected_at": self._now(),
+                    }
+                )
             logger.info("{} 搜索到 {} 条结果", engine.get("name"), len(results))
             return results
         except httpx.TimeoutException:
             logger.warning("{} 超时", engine.get("name"))
             return []
         except httpx.HTTPStatusError as e:
-            logger.warning("{} HTTP 错误: {}", engine.get("name"), e.response.status_code)
+            logger.warning(
+                "{} HTTP 错误: {}", engine.get("name"), e.response.status_code
+            )
             return []
         except Exception as e:
             logger.warning("{} 异常: {}", engine.get("name"), e)

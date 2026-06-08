@@ -1,4 +1,4 @@
-﻿import json
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -100,8 +100,30 @@ QUOTE_DATA = [
 ]
 
 KLINE_DATA = [
-    {"symbol": "sh600519", "date": "2026-05-30", "open": 1780.0, "high": 1810.0, "low": 1775.0, "close": 1800.0, "volume": 5000000, "change_pct": 1.12, "source": "mock", "collected_at": "2026-05-31T16:05:00+00:00"},
-    {"symbol": "sh600519", "date": "2026-05-29", "open": 1770.0, "high": 1790.0, "low": 1765.0, "close": 1780.0, "volume": 4500000, "change_pct": -0.5, "source": "mock", "collected_at": "2026-05-31T16:05:00+00:00"},
+    {
+        "symbol": "sh600519",
+        "date": "2026-05-30",
+        "open": 1780.0,
+        "high": 1810.0,
+        "low": 1775.0,
+        "close": 1800.0,
+        "volume": 5000000,
+        "change_pct": 1.12,
+        "source": "mock",
+        "collected_at": "2026-05-31T16:05:00+00:00",
+    },
+    {
+        "symbol": "sh600519",
+        "date": "2026-05-29",
+        "open": 1770.0,
+        "high": 1790.0,
+        "low": 1765.0,
+        "close": 1780.0,
+        "volume": 4500000,
+        "change_pct": -0.5,
+        "source": "mock",
+        "collected_at": "2026-05-31T16:05:00+00:00",
+    },
 ]
 
 FINANCE_DATA = {
@@ -437,14 +459,17 @@ async def test_concurrent_collect_quotes_no_corruption() -> None:
     import asyncio
 
     _insert_assets("sh600519", "hk00700", "sz000001")
-    svc = CollectionService(providers={"structured": [mock_provider] if False else [], "news": []})
+    svc = CollectionService(
+        providers={"structured": [mock_provider] if False else [], "news": []}
+    )
     # 重新构建以使用真正的 mock_provider
     from tests.services.test_collection_service import MockProvider as _MP  # noqa: F401
 
     # mock_provider 是 fixture,不能直接引用 —— 用 QUOTE_DATA 手动构造
     provider = MockProvider(
         name="mock",
-        quote_data=QUOTE_DATA + [
+        quote_data=QUOTE_DATA
+        + [
             {
                 "symbol": "sz000001",
                 "price": 12.5,
@@ -464,7 +489,3 @@ async def test_concurrent_collect_quotes_no_corruption() -> None:
     )
     total_success = sum(r["success"] for r in results)
     assert total_success == 9  # 3 次 × 3 资产 = 9
-
-
-
-

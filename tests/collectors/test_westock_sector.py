@@ -2,6 +2,7 @@
 
 每组 3 段式：成功 / 空 / 异常
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ async def provider() -> WeStockProvider:
 # ═══════════════════════════════════════════════════════════════════
 # board_sectors (板块首页：行业/概念涨幅榜 + 行业资金流入 Top5)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_board_sectors_success(provider: WeStockProvider) -> None:
     """3 张表都返回数据 → 合并为统一 list，按 sector_type 分类。"""
@@ -91,6 +93,7 @@ async def test_board_sectors_error_returns_empty(provider: WeStockProvider) -> N
 # ═══════════════════════════════════════════════════════════════════
 # hot_sectors (热门板块)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_hot_sectors_success(provider: WeStockProvider) -> None:
     stdout = (

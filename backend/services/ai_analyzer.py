@@ -1,18 +1,20 @@
 """规则型 AI 分析引擎 —— 信号评分、风险评估与投资建议生成。"""
+
 from datetime import datetime, timezone
 
 from loguru import logger
 
 
 # 信号评分阈值
-SIGNAL_BULLISH_STRONG = 0.3    # 信号 > 0.3 发出强烈买入信号
-SIGNAL_BULLISH_WEAK = 0.1      # 信号 > 0.1 发出弱买入信号
-SIGNAL_BEARISH_STRONG = -0.3   # 信号 < -0.3 发出强烈卖出信号
-SIGNAL_BEARISH_WEAK = -0.1     # 信号 < -0.1 发出弱卖出信号
+SIGNAL_BULLISH_STRONG = 0.3  # 信号 > 0.3 发出强烈买入信号
+SIGNAL_BULLISH_WEAK = 0.1  # 信号 > 0.1 发出弱买入信号
+SIGNAL_BEARISH_STRONG = -0.3  # 信号 < -0.3 发出强烈卖出信号
+SIGNAL_BEARISH_WEAK = -0.1  # 信号 < -0.1 发出弱卖出信号
 
-RISK_HIGH_THRESHOLD = 0.6      # 风险 > 0.6 且信号 > 0.2 为高风险
-RISK_MEDIUM_THRESHOLD = 0.3    # 风险 > 0.3 为中高风险警告
-RISK_BEARISH_MIN = 0.2         # 看跌信号超 0.2 触发风险预警
+RISK_HIGH_THRESHOLD = 0.6  # 风险 > 0.6 且信号 > 0.2 为高风险
+RISK_MEDIUM_THRESHOLD = 0.3  # 风险 > 0.3 为中高风险警告
+RISK_BEARISH_MIN = 0.2  # 看跌信号超 0.2 触发风险预警
+
 
 class AIAnalyzer:
     """规则型分析引擎，基于预设规则矩阵对证据包进行分析。"""
@@ -51,19 +53,25 @@ class AIAnalyzer:
         bullish_reasons: list[str] = []
         bearish_reasons: list[str] = []
 
-        trend_bull, trend_bear, trend_bull_r, trend_bear_r = AIAnalyzer._check_trend(kline)
+        trend_bull, trend_bear, trend_bull_r, trend_bear_r = AIAnalyzer._check_trend(
+            kline
+        )
         bullish_score += trend_bull
         bearish_score += trend_bear
         bullish_reasons.extend(trend_bull_r)
         bearish_reasons.extend(trend_bear_r)
 
-        fund_bull, fund_bear, fund_bull_r, fund_bear_r = AIAnalyzer._check_fund_flow(fund_flows)
+        fund_bull, fund_bear, fund_bull_r, fund_bear_r = AIAnalyzer._check_fund_flow(
+            fund_flows
+        )
         bullish_score += fund_bull
         bearish_score += fund_bear
         bullish_reasons.extend(fund_bull_r)
         bearish_reasons.extend(fund_bear_r)
 
-        tech_bull, tech_bear, tech_bull_r, tech_bear_r = AIAnalyzer._check_technical(technical)
+        tech_bull, tech_bear, tech_bull_r, tech_bear_r = AIAnalyzer._check_technical(
+            technical
+        )
         bullish_score += tech_bull
         bearish_score += tech_bear
         bullish_reasons.extend(tech_bull_r)
@@ -82,13 +90,17 @@ class AIAnalyzer:
         bearish_reasons.extend(fin_bear_r)
 
         # 5 个新增证据维度评分（evidence-driven AI 约束：每条数据必须被使用）
-        div_bull, div_bear, div_bull_r, div_bear_r = AIAnalyzer._check_dividend(dividends)
+        div_bull, div_bear, div_bull_r, div_bear_r = AIAnalyzer._check_dividend(
+            dividends
+        )
         bullish_score += div_bull
         bearish_score += div_bear
         bullish_reasons.extend(div_bull_r)
         bearish_reasons.extend(div_bear_r)
 
-        shr_bull, shr_bear, shr_bull_r, shr_bear_r = AIAnalyzer._check_shareholder(shareholders)
+        shr_bull, shr_bear, shr_bull_r, shr_bear_r = AIAnalyzer._check_shareholder(
+            shareholders
+        )
         bullish_score += shr_bull
         bearish_score += shr_bear
         bullish_reasons.extend(shr_bull_r)
@@ -100,13 +112,17 @@ class AIAnalyzer:
         bullish_reasons.extend(fc_bull_r)
         bearish_reasons.extend(fc_bear_r)
 
-        sec_bull, sec_bear, sec_bull_r, sec_bear_r = AIAnalyzer._check_sector_context(sector_ctx)
+        sec_bull, sec_bear, sec_bull_r, sec_bear_r = AIAnalyzer._check_sector_context(
+            sector_ctx
+        )
         bullish_score += sec_bull
         bearish_score += sec_bear
         bullish_reasons.extend(sec_bull_r)
         bearish_reasons.extend(sec_bear_r)
 
-        usfin_bull, usfin_bear, usfin_bull_r, usfin_bear_r = AIAnalyzer._check_us_finance(us_finance)
+        usfin_bull, usfin_bear, usfin_bull_r, usfin_bear_r = (
+            AIAnalyzer._check_us_finance(us_finance)
+        )
         bullish_score += usfin_bull
         bearish_score += usfin_bear
         bullish_reasons.extend(usfin_bull_r)
@@ -117,7 +133,9 @@ class AIAnalyzer:
         # 置信度：相对差异 * 绝对强度系数。
         # 当 total_score 较小时（信号极弱），min(1, total/0.5) 抑制置信度，
         # 避免在证据不足时返回接近 100% 的虚假高置信度。
-        confidence = (abs(score_diff) / max(total_score, 0.01)) * min(1.0, total_score / 0.5)
+        confidence = (abs(score_diff) / max(total_score, 0.01)) * min(
+            1.0, total_score / 0.5
+        )
 
         if score_diff > SIGNAL_BULLISH_STRONG:
             action = "buy"
@@ -140,9 +158,14 @@ class AIAnalyzer:
         # key_risks 与 bearish_reasons 同源会导致 UI 显示两份相同列表
         # 改为独立字段：基于 risk_level==high 时高危信号的精简子集
         if risk_level == "high":
-            key_risks = [r for r in bearish_reasons if any(
-                kw in r for kw in ("风险", "亏损", "负增长", "减持", "看空", "下跌", "利空")
-            )][:5]
+            key_risks = [
+                r
+                for r in bearish_reasons
+                if any(
+                    kw in r
+                    for kw in ("风险", "亏损", "负增长", "减持", "看空", "下跌", "利空")
+                )
+            ][:5]
         else:
             key_risks = []
 
@@ -162,7 +185,12 @@ class AIAnalyzer:
             "data_used": data_sources,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-        logger.info("AI 分析完成: symbol={}, action={}, confidence={}", symbol, action, result["confidence"])
+        logger.info(
+            "AI 分析完成: symbol={}, action={}, confidence={}",
+            symbol,
+            action,
+            result["confidence"],
+        )
         return result
 
     @staticmethod
@@ -218,7 +246,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_fund_flow(fund_flows: list[dict]) -> tuple[float, float, list[str], list[str]]:
+    def _check_fund_flow(
+        fund_flows: list[dict],
+    ) -> tuple[float, float, list[str], list[str]]:
         bullish = 0.0
         bearish = 0.0
         bull_reasons: list[str] = []
@@ -251,7 +281,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_technical(technical: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_technical(
+        technical: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         bullish = 0.0
         bearish = 0.0
         bull_reasons: list[str] = []
@@ -303,7 +335,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_finance(finance: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_finance(
+        finance: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         """财务信号评分。
 
         净利润同比读数（``net_profit_yoy``）以 ``(curr - prev) / abs(prev) * 100``
@@ -335,7 +369,9 @@ class AIAnalyzer:
             if net_profit_yoy_sign in ("turnaround", "loss_narrowing"):
                 # 符号翻转或亏损收窄 —— 经济意义是改善，给看多信号
                 bullish += 0.10
-                label = "扭亏为盈" if net_profit_yoy_sign == "turnaround" else "亏损收窄"
+                label = (
+                    "扭亏为盈" if net_profit_yoy_sign == "turnaround" else "亏损收窄"
+                )
                 bull_reasons.append(f"净利润{label}（同比 {net_profit_yoy:+.1f}%）")
             elif net_profit_yoy_sign == "loss_widening":
                 # 亏损扩大 —— 实质是看空信号（百分比"下降"不代表业绩好转）
@@ -349,7 +385,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_dividend(dividends: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_dividend(
+        dividends: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         """分红信号：最近一期派息 + 连续性。"""
         bullish = 0.0
         bearish = 0.0
@@ -378,7 +416,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_shareholder(shareholders: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_shareholder(
+        shareholders: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         """股东结构信号：股东人数趋势（筹码集中/分散）。"""
         bullish = 0.0
         bearish = 0.0
@@ -402,7 +442,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_forecast(forecasts: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_forecast(
+        forecasts: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         """业绩预告信号：最新一期的 forecast_type。"""
         bullish = 0.0
         bearish = 0.0
@@ -427,7 +469,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_sector_context(sector_ctx: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_sector_context(
+        sector_ctx: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         """板块背景：所处行业 / 概念在 Top 涨幅榜为加分，Top 跌幅榜为减分。"""
         bullish = 0.0
         bearish = 0.0
@@ -454,7 +498,9 @@ class AIAnalyzer:
         return bullish, bearish, bull_reasons, bear_reasons
 
     @staticmethod
-    def _check_us_finance(us_finance: dict | None) -> tuple[float, float, list[str], list[str]]:
+    def _check_us_finance(
+        us_finance: dict | None,
+    ) -> tuple[float, float, list[str], list[str]]:
         """美股财务信号：年化营收同比。"""
         bullish = 0.0
         bearish = 0.0

@@ -1,4 +1,4 @@
-﻿import email.utils
+import email.utils
 import feedparser
 import xml.etree.ElementTree as ET
 
@@ -36,7 +36,6 @@ class RSSProvider(NewsProvider, _HttpClientMixin):
             "follow_redirects": True,
         }
 
-
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         if not self.url:
             logger.warning("RSS 源 URL 未配置: provider={}", self.name)
@@ -50,7 +49,9 @@ class RSSProvider(NewsProvider, _HttpClientMixin):
             logger.warning("RSS 请求超时: url={}, timeout={}s", self.url, self.timeout)
             return []
         except httpx.HTTPStatusError as e:
-            logger.error("RSS HTTP 错误: url={}, status={}", self.url, e.response.status_code)
+            logger.error(
+                "RSS HTTP 错误: url={}, status={}", self.url, e.response.status_code
+            )
             return []
         except Exception as e:
             logger.error("RSS 请求异常: url={}, error={}", self.url, e)
@@ -93,16 +94,20 @@ class RSSProvider(NewsProvider, _HttpClientMixin):
             link = self._get_text(item, "link")
             published_at = self._get_text(item, "pubDate")
             summary = self._get_text(item, "description") or ""
-            content = self._get_text(item, "content:encoded") or self._get_text(item, "description")
-            results.append({
-                "title": title,
-                "source": self.name,
-                "url": link,
-                "published_at": self._normalize_date(published_at),
-                "summary": summary,
-                "content": content,
-                "collected_at": self._now(),
-            })
+            content = self._get_text(item, "content:encoded") or self._get_text(
+                item, "description"
+            )
+            results.append(
+                {
+                    "title": title,
+                    "source": self.name,
+                    "url": link,
+                    "published_at": self._normalize_date(published_at),
+                    "summary": summary,
+                    "content": content,
+                    "collected_at": self._now(),
+                }
+            )
         return results
 
     def _parse_with_feedparser(self, text: str) -> list[dict]:
@@ -127,15 +132,17 @@ class RSSProvider(NewsProvider, _HttpClientMixin):
                 content = entry.get("description", "")
             if not content:
                 content = summary
-            results.append({
-                "title": title,
-                "source": self.name,
-                "url": link,
-                "published_at": self._normalize_date(published_at),
-                "summary": summary,
-                "content": content,
-                "collected_at": self._now(),
-            })
+            results.append(
+                {
+                    "title": title,
+                    "source": self.name,
+                    "url": link,
+                    "published_at": self._normalize_date(published_at),
+                    "summary": summary,
+                    "content": content,
+                    "collected_at": self._now(),
+                }
+            )
         return results
 
     @staticmethod

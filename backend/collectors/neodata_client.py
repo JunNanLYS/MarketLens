@@ -1,4 +1,5 @@
-﻿"""NeoData 金融数据 HTTP 客户端 —— Token 管理与查询请求。"""
+"""NeoData 金融数据 HTTP 客户端 —— Token 管理与查询请求。"""
+
 import base64
 import json
 import os
@@ -51,7 +52,9 @@ class TokenManager:
         if len(parts) == 3:
             try:
                 payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+                payload = json.loads(
+                    base64.urlsafe_b64decode(payload_b64).decode("utf-8")
+                )
                 exp = payload.get("exp")
                 if isinstance(exp, (int, float)):
                     now = time.time()
@@ -105,16 +108,28 @@ class TokenManager:
                 if len(parts) == 3:
                     try:
                         payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                        payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+                        payload = json.loads(
+                            base64.urlsafe_b64decode(payload_b64).decode("utf-8")
+                        )
                         exp = payload.get("exp")
                         if isinstance(exp, (int, float)):
-                            expires_at = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(exp))
+                            expires_at = time.strftime(
+                                "%Y-%m-%dT%H:%M:%S", time.localtime(exp)
+                            )
                     except Exception:
                         pass
                 if expires_at is None:
                     saved_at = data.get("saved_at", 0)
-                    expires_at = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(saved_at + _TOKEN_TTL_SECONDS))
-            except (FileNotFoundError, PermissionError, json.JSONDecodeError, TypeError):
+                    expires_at = time.strftime(
+                        "%Y-%m-%dT%H:%M:%S",
+                        time.localtime(saved_at + _TOKEN_TTL_SECONDS),
+                    )
+            except (
+                FileNotFoundError,
+                PermissionError,
+                json.JSONDecodeError,
+                TypeError,
+            ):
                 pass
         # verified 始终为 False：本地无服务端公钥，未做 JWT 签名验证
         return {
@@ -168,14 +183,18 @@ class NeoDataClient:
     async def query(self, query_text: str, data_type: str = "all") -> dict | None:
         token, source = self._token_manager.get_token()
         if token is None:
-            logger.warning("NeoData \u65e0\u53ef\u7528\u51ed\u8bc1\uff0c\u8df3\u8fc7\u67e5\u8be2")
+            logger.warning(
+                "NeoData \u65e0\u53ef\u7528\u51ed\u8bc1\uff0c\u8df3\u8fc7\u67e5\u8be2"
+            )
             return None
         result = await self._do_request(token, query_text, data_type)
         if result is None:
             return await self._retry_on_auth_error(token, source, query_text, data_type)
         return result
 
-    async def _do_request(self, token: str, query_text: str, data_type: str) -> dict | None:
+    async def _do_request(
+        self, token: str, query_text: str, data_type: str
+    ) -> dict | None:
         payload: dict[str, str] = {
             "query": query_text,
             "channel": "neodata",
@@ -198,10 +217,14 @@ class NeoDataClient:
                 return None
             return body
         except httpx.TimeoutException:
-            logger.warning("NeoData \u8bf7\u6c42\u8d85\u65f6: endpoint={}", self.endpoint)
+            logger.warning(
+                "NeoData \u8bf7\u6c42\u8d85\u65f6: endpoint={}", self.endpoint
+            )
             return None
         except httpx.HTTPStatusError as e:
-            logger.warning("NeoData HTTP \u9519\u8bef: status={}", e.response.status_code)
+            logger.warning(
+                "NeoData HTTP \u9519\u8bef: status={}", e.response.status_code
+            )
             return None
         except Exception as e:
             logger.warning("NeoData \u8bf7\u6c42\u5f02\u5e38: error={}", e)
@@ -213,9 +236,14 @@ class NeoDataClient:
         self._token_manager.clear_cache()
         new_token, new_source = self._token_manager.get_token()
         if new_token is None or new_token == used_token:
-            logger.warning("NeoData \u9274\u6743\u5931\u8d25\u4e14\u65e0\u5907\u9009\u51ed\u8bc1")
+            logger.warning(
+                "NeoData \u9274\u6743\u5931\u8d25\u4e14\u65e0\u5907\u9009\u51ed\u8bc1"
+            )
             return None
-        logger.info("NeoData \u9274\u6743\u5931\u8d25\uff0c\u4f7f\u7528\u5907\u9009\u51ed\u8bc1\u91cd\u8bd5 (source={})", new_source)
+        logger.info(
+            "NeoData \u9274\u6743\u5931\u8d25\uff0c\u4f7f\u7528\u5907\u9009\u51ed\u8bc1\u91cd\u8bd5 (source={})",
+            new_source,
+        )
         result = await self._do_request(new_token, query_text, data_type)
         if result is None:
             logger.warning("NeoData \u91cd\u8bd5\u4ecd\u7136\u5931\u8d25")
@@ -230,4 +258,3 @@ class NeoDataClient:
 
     def get_token_status(self) -> dict[str, Any]:
         return self._token_manager.get_status()
-

@@ -119,9 +119,7 @@ class PortfolioService:
             if not sets:
                 return dict(existing)
             params.append(account_id)
-            conn.execute(
-                f"UPDATE accounts SET {', '.join(sets)} WHERE id = ?", params
-            )
+            conn.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE id = ?", params)
             row = conn.execute(
                 "SELECT * FROM accounts WHERE id = ?", (account_id,)
             ).fetchone()
@@ -211,13 +209,25 @@ class PortfolioService:
 
                 cursor = conn.execute(
                     "INSERT INTO transactions (account_id, symbol, type, quantity, price, fee, currency, trade_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (account_id, symbol, tx_type, quantity, price, fee, currency, trade_date, notes),
+                    (
+                        account_id,
+                        symbol,
+                        tx_type,
+                        quantity,
+                        price,
+                        fee,
+                        currency,
+                        trade_date,
+                        notes,
+                    ),
                 )
                 tx_id: int = cursor.lastrowid
                 row = conn.execute(
                     "SELECT * FROM transactions WHERE id = ?", (tx_id,)
                 ).fetchone()
-                logger.info("创建交易: id={}, type={}, symbol={}", tx_id, tx_type, symbol)
+                logger.info(
+                    "创建交易: id={}, type={}, symbol={}", tx_id, tx_type, symbol
+                )
                 return dict(row)
 
     def _get_current_holding_from_conn(
@@ -249,7 +259,9 @@ class PortfolioService:
                 new_qty: float = total_qty + tx["quantity"]
                 if new_qty > 0:
                     fee: float = tx.get("fee") or 0.0
-                    avg_cost = (avg_cost * total_qty + tx["price"] * tx["quantity"] + fee) / new_qty
+                    avg_cost = (
+                        avg_cost * total_qty + tx["price"] * tx["quantity"] + fee
+                    ) / new_qty
                 total_qty = new_qty
             elif tx["type"] == "sell":
                 total_qty -= tx["quantity"]
@@ -343,9 +355,7 @@ class PortfolioService:
                 return None
             return dict(row)
 
-    def update_transaction(
-        self, transaction_id: int, data: dict
-    ) -> dict | None:
+    def update_transaction(self, transaction_id: int, data: dict) -> dict | None:
         """更新交易字段，更新后会校验当前持仓不为负。
 
         Args:
@@ -377,7 +387,14 @@ class PortfolioService:
 
                 sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
                 params: list = []
-                for field in ("quantity", "price", "fee", "currency", "trade_date", "notes"):
+                for field in (
+                    "quantity",
+                    "price",
+                    "fee",
+                    "currency",
+                    "trade_date",
+                    "notes",
+                ):
                     if field in data:
                         sets.append(f"{field} = ?")
                         params.append(data[field])
@@ -412,7 +429,11 @@ class PortfolioService:
                 try:
                     conn.rollback()
                 except Exception as rollback_err:
-                    logger.error("更新交易 rollback 失败: id={} err={}", transaction_id, rollback_err)
+                    logger.error(
+                        "更新交易 rollback 失败: id={} err={}",
+                        transaction_id,
+                        rollback_err,
+                    )
                 logger.exception("更新交易失败，已回滚: id={}", transaction_id)
                 raise
             finally:
@@ -476,9 +497,7 @@ class PortfolioService:
             finally:
                 conn.close()
 
-    def get_positions(
-        self, account_id: int | None = None
-    ) -> list[dict]:
+    def get_positions(self, account_id: int | None = None) -> list[dict]:
         """查询当前持仓列表。
 
         Args:
@@ -522,7 +541,7 @@ class PortfolioService:
                 # 使用 CTE + ROW_NUMBER() 取每 symbol 唯一一条最新行情。
                 # 旧 SQL 用相关子查询 MAX(collected_at),同毫秒并发采集时返回多行,
                 # quotes_map 出现重复项;ROW_NUMBER() 保证每 symbol 严格 1 行。
-                ph = ', '.join(['?'] * len(all_symbols))
+                ph = ", ".join(["?"] * len(all_symbols))
                 qrows = conn.execute(
                     f"""WITH latest_quotes AS (
                             SELECT symbol, price, collected_at,
@@ -533,12 +552,14 @@ class PortfolioService:
                         SELECT symbol, price FROM latest_quotes WHERE rn = 1""",
                     all_symbols,
                 ).fetchall()
-                quotes_map = {r['symbol']: r['price'] for r in qrows}
+                quotes_map = {r["symbol"]: r["price"] for r in qrows}
                 arows = conn.execute(
-                    'SELECT symbol, name FROM tracked_assets WHERE symbol IN (' + ph + ')',
+                    "SELECT symbol, name FROM tracked_assets WHERE symbol IN ("
+                    + ph
+                    + ")",
                     all_symbols,
                 ).fetchall()
-                names_map = {r['symbol']: r['name'] for r in arows}
+                names_map = {r["symbol"]: r["name"] for r in arows}
 
         positions: list[dict] = []
         for (aid, sym), txs in grouped.items():
@@ -572,14 +593,10 @@ class PortfolioService:
                     "avg_cost": round(avg_cost, 4),
                     "current_price": current_price,
                     "market_value": (
-                        round(market_value, 2)
-                        if market_value is not None
-                        else None
+                        round(market_value, 2) if market_value is not None else None
                     ),
                     "unrealized_pnl": (
-                        round(unrealized_pnl, 2)
-                        if unrealized_pnl is not None
-                        else None
+                        round(unrealized_pnl, 2) if unrealized_pnl is not None else None
                     ),
                     "unrealized_pnl_pct": (
                         round(unrealized_pnl_pct, 2)
@@ -622,9 +639,8 @@ class PortfolioService:
             elif tx["type"] == "sell":
                 # WAC 算法下，avg_cost 保持不变（基于剩余持仓的成本）
                 if total_qty > 0:
-                    realized: float = (
-                        (tx["price"] - avg_cost) * tx["quantity"]
-                        - (tx["fee"] or 0)
+                    realized: float = (tx["price"] - avg_cost) * tx["quantity"] - (
+                        tx["fee"] or 0
                     )
                     total_realized += realized
                 total_sell_qty += tx["quantity"]

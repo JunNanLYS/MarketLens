@@ -2,6 +2,7 @@
 
 每组 3 段式：成功 / 空 / 异常
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ async def provider() -> WeStockProvider:
 # ═══════════════════════════════════════════════════════════════════
 # etf_info (ETF 基本信息 + 行情)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_etf_info_success(provider: WeStockProvider) -> None:
     stdout = (
@@ -66,6 +68,7 @@ async def test_etf_info_error_returns_empty(provider: WeStockProvider) -> None:
 # etf_holdings (ETF 成分股)
 # ═══════════════════════════════════════════════════════════════════
 
+
 async def test_etf_holdings_success(provider: WeStockProvider) -> None:
     stdout = (
         "| code | name | ratio |\n"
@@ -103,6 +106,7 @@ async def test_etf_holdings_error_returns_empty(provider: WeStockProvider) -> No
 # etf_nav (ETF 历史净值)
 # ═══════════════════════════════════════════════════════════════════
 
+
 async def test_etf_nav_success(provider: WeStockProvider) -> None:
     stdout = (
         "| date | nav | navChange | navChangePct | accNav |\n"
@@ -139,6 +143,7 @@ async def test_etf_nav_error_returns_empty(provider: WeStockProvider) -> None:
 # ═══════════════════════════════════════════════════════════════════
 # etf_holders (ETF 持有人结构)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_etf_holders_success(provider: WeStockProvider) -> None:
     stdout = (
@@ -180,6 +185,7 @@ async def test_etf_holders_error_returns_empty(provider: WeStockProvider) -> Non
 # ═══════════════════════════════════════════════════════════════════
 # etf_financial (ETF 资产配置)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_etf_financial_success(provider: WeStockProvider) -> None:
     stdout = (

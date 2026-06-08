@@ -51,7 +51,9 @@ class ReportService:
             try:
                 for symbol in symbols:
                     try:
-                        if not force and await ReportService._has_today_report(conn, symbol):
+                        if not force and await ReportService._has_today_report(
+                            conn, symbol
+                        ):
                             skipped += 1
                             continue
                         evidence = await EvidenceBuilder.build(symbol, conn=conn)
@@ -75,7 +77,14 @@ class ReportService:
                     conn_sync.execute(
                         """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                            VALUES (?, ?, ?, ?, ?, ?)""",
-                        ("ai_report", status, started_at, finished_at, error_message, generated + skipped),
+                        (
+                            "ai_report",
+                            status,
+                            started_at,
+                            finished_at,
+                            error_message,
+                            generated + skipped,
+                        ),
                     )
             except Exception:
                 logger.exception("写入 ai_report run_logs 失败")

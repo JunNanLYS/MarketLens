@@ -34,7 +34,9 @@ def render() -> None:
     with col1:
         symbol_filter: str = st.text_input("标的代码", key="news_symbol")
     with col2:
-        days: int = st.selectbox("时间范围（天）", [1, 3, 7, 14, 30], index=2, key="news_days")
+        days: int = st.selectbox(
+            "时间范围（天）", [1, 3, 7, 14, 30], index=2, key="news_days"
+        )
     with col3:
         sentiment: str = st.selectbox(
             "情绪", ["全部", "positive", "negative", "neutral"], key="news_sentiment"

@@ -1,4 +1,4 @@
-﻿import re
+import re
 import json
 from datetime import datetime, timezone
 
@@ -22,7 +22,9 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
         optional: bool = False,
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
-        self.quote_url: str = self.params.get("quote_url", "https://hq.sinajs.cn/list={codes}")
+        self.quote_url: str = self.params.get(
+            "quote_url", "https://hq.sinajs.cn/list={codes}"
+        )
         # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
         self._client: httpx.AsyncClient | None = None
         self._client_headers: dict[str, str] = {
@@ -40,7 +42,10 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
 
     @staticmethod
     def _to_sina_code(symbol: str) -> str:
-        if any(symbol.startswith(p) for p in ("sh", "sz", "bj", "hk", "us", "hf", "nf", "gb")):
+        if any(
+            symbol.startswith(p)
+            for p in ("sh", "sz", "bj", "hk", "us", "hf", "nf", "gb")
+        ):
             return symbol
         code = symbol.strip()
         if code.startswith("6"):
@@ -110,7 +115,9 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
             logger.warning("新浪行情请求超时: url={}, timeout={}s", url, self.timeout)
             return []
         except httpx.HTTPStatusError as e:
-            logger.error("新浪行情 HTTP 错误: url={}, status={}", url, e.response.status_code)
+            logger.error(
+                "新浪行情 HTTP 错误: url={}, status={}", url, e.response.status_code
+            )
             return []
         except Exception as e:
             logger.error("新浪行情请求异常: url={}, error={}", url, e)
@@ -125,7 +132,9 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
             code = match.group(1)
             fields = match.group(2).split(",")
             if len(fields) < 32:
-                logger.warning("新浪行情字段不足: code={}, fields_count={}", code, len(fields))
+                logger.warning(
+                    "新浪行情字段不足: code={}, fields_count={}", code, len(fields)
+                )
                 continue
             results.append(self._normalize_quote(code, fields))
         return results
@@ -184,7 +193,10 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
 
         url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
         params: dict[str, str | int] = {
-            "symbol": sina_code, "scale": scale, "ma": "no", "datalen": 60,
+            "symbol": sina_code,
+            "scale": scale,
+            "ma": "no",
+            "datalen": 60,
         }
 
         try:
@@ -197,10 +209,16 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
                 return []
             return [self._normalize_kline(symbol, item) for item in data]
         except httpx.TimeoutException:
-            logger.warning("新浪K线请求超时: symbol={}, timeout={}s", symbol, self.timeout)
+            logger.warning(
+                "新浪K线请求超时: symbol={}, timeout={}s", symbol, self.timeout
+            )
             return []
         except httpx.HTTPStatusError as e:
-            logger.error("新浪K线 HTTP 错误: symbol={}, status={}", symbol, e.response.status_code)
+            logger.error(
+                "新浪K线 HTTP 错误: symbol={}, status={}",
+                symbol,
+                e.response.status_code,
+            )
             return []
         except Exception as e:
             logger.error("新浪K线请求异常: symbol={}, error={}", symbol, e)
@@ -228,16 +246,26 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
             resp.raise_for_status()
             parsed = self._parse_finance_html(symbol, resp.text)
             # 当 HTML 解析未提取到任何关键指标时，返回 None 而非空 dict
-            if not parsed.get("report_period") and parsed.get("revenue") is None \
-                    and parsed.get("net_profit") is None and parsed.get("eps") is None \
-                    and parsed.get("roe") is None:
+            if (
+                not parsed.get("report_period")
+                and parsed.get("revenue") is None
+                and parsed.get("net_profit") is None
+                and parsed.get("eps") is None
+                and parsed.get("roe") is None
+            ):
                 return None
             return parsed
         except httpx.TimeoutException:
-            logger.warning("新浪财务请求超时: symbol={}, timeout={}s", symbol, self.timeout)
+            logger.warning(
+                "新浪财务请求超时: symbol={}, timeout={}s", symbol, self.timeout
+            )
             return None
         except httpx.HTTPStatusError as e:
-            logger.error("新浪财务 HTTP 错误: symbol={}, status={}", symbol, e.response.status_code)
+            logger.error(
+                "新浪财务 HTTP 错误: symbol={}, status={}",
+                symbol,
+                e.response.status_code,
+            )
             return None
         except Exception as e:
             logger.error("新浪财务请求异常: symbol={}, error={}", symbol, e)
@@ -266,10 +294,16 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
                 return {}
             return self._parse_fund_flow(symbol, text)
         except httpx.TimeoutException:
-            logger.warning("新浪资金流向请求超时: symbol={}, timeout={}s", symbol, self.timeout)
+            logger.warning(
+                "新浪资金流向请求超时: symbol={}, timeout={}s", symbol, self.timeout
+            )
             return {}
         except httpx.HTTPStatusError as e:
-            logger.error("新浪资金流向 HTTP 错误: symbol={}, status={}", symbol, e.response.status_code)
+            logger.error(
+                "新浪资金流向 HTTP 错误: symbol={}, status={}",
+                symbol,
+                e.response.status_code,
+            )
             return {}
         except Exception as e:
             logger.error("新浪资金流向请求异常: symbol={}, error={}", symbol, e)
@@ -305,7 +339,10 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
             report_period = period_m.group(1)
 
         revenue: float | None = None
-        for pat in [r"营业收入[^<]*?(\d[\d,]*\.?\d*)", r"营业总收入[^<]*?(\d[\d,]*\.?\d*)"]:
+        for pat in [
+            r"营业收入[^<]*?(\d[\d,]*\.?\d*)",
+            r"营业总收入[^<]*?(\d[\d,]*\.?\d*)",
+        ]:
             m = re.search(pat, html)
             if m:
                 revenue = float(m.group(1).replace(",", "")) * 10000  # 万元 → 元
@@ -358,8 +395,10 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
             return {}
 
         latest: dict = (
-            data[0] if isinstance(data, list) and data
-            else data if isinstance(data, dict)
+            data[0]
+            if isinstance(data, list) and data
+            else data
+            if isinstance(data, dict)
             else {}
         )
         if not latest:

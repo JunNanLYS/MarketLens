@@ -12,7 +12,9 @@ from backend.storage.schema import init_db_sync as init_db
 
 
 class FakeRSSProvider(BaseProvider):
-    def __init__(self, name: str = "fake_rss", news_items: list[dict] | None = None) -> None:
+    def __init__(
+        self, name: str = "fake_rss", news_items: list[dict] | None = None
+    ) -> None:
         super().__init__(name=name)
         self._news_items = news_items or []
 
@@ -137,7 +139,10 @@ async def test_collect_news_match_symbol_by_name() -> None:
     await service.collect_news()
 
     with get_db() as conn:
-        row = conn.execute("SELECT related_symbols FROM news_items WHERE url = ?", ("https://example.com/tencent",)).fetchone()
+        row = conn.execute(
+            "SELECT related_symbols FROM news_items WHERE url = ?",
+            ("https://example.com/tencent",),
+        ).fetchone()
     assert row is not None
     symbols = json.loads(row["related_symbols"])
     assert "hk00700" in symbols
@@ -157,7 +162,10 @@ async def test_collect_news_match_multiple_symbols() -> None:
     await service.collect_news()
 
     with get_db() as conn:
-        row = conn.execute("SELECT related_symbols FROM news_items WHERE url = ?", ("https://example.com/multi",)).fetchone()
+        row = conn.execute(
+            "SELECT related_symbols FROM news_items WHERE url = ?",
+            ("https://example.com/multi",),
+        ).fetchone()
     assert row is not None
     symbols = json.loads(row["related_symbols"])
     assert "hk00700" in symbols
@@ -411,7 +419,10 @@ async def test_collect_news_default_sentiment_and_importance() -> None:
     await service.collect_news()
 
     with get_db() as conn:
-        row = conn.execute("SELECT sentiment, importance FROM news_items WHERE url = ?", ("https://example.com/default",)).fetchone()
+        row = conn.execute(
+            "SELECT sentiment, importance FROM news_items WHERE url = ?",
+            ("https://example.com/default",),
+        ).fetchone()
     assert row is not None
     assert row["sentiment"] == "neutral"
     assert row["importance"] == "normal"
@@ -435,7 +446,9 @@ async def test_collect_news_raw_data_saved() -> None:
     assert raw["title"] == "原始数据测试"
 
 
-async def test_evidence_builder_news_fields_consumable_by_ai_analyzer_via_aget_db(tmp_path: Path) -> None:
+async def test_evidence_builder_news_fields_consumable_by_ai_analyzer_via_aget_db(
+    tmp_path: Path,
+) -> None:
     """验证 EvidenceBuilder 通过 aget_db (aiosqlite) 路径构建 news 字段名与 ai_analyzer 期望一致。"""
     from backend.services.evidence_builder import EvidenceBuilder
     from backend.services.ai_analyzer import AIAnalyzer
@@ -531,8 +544,10 @@ async def test_collect_news_acquires_write_lock() -> None:
             self._inner.__exit__(*args)
 
     observable = _ObservableLock(original)
-    with patch.object(collection_service, "_WRITE_LOCK", new=observable), \
-         patch.object(ns_mod, "_WRITE_LOCK", new=observable):
+    with (
+        patch.object(collection_service, "_WRITE_LOCK", new=observable),
+        patch.object(ns_mod, "_WRITE_LOCK", new=observable),
+    ):
         await service.collect_news()
 
     assert observed_held, "collect_news 未进入 _WRITE_LOCK 上下文"

@@ -340,11 +340,13 @@ class AssetService:
                 if d["k_close"] is not None and d["k_date"] is not None:
                     kline_rows.append({"close": d["k_close"], "date": d["k_date"]})
                 if d["f_main_net_inflow"] is not None and d["f_date"] is not None:
-                    fund_rows.append({
-                        "date": d["f_date"],
-                        "main_net_inflow": d["f_main_net_inflow"],
-                        "net_inflow_ratio": d["f_net_inflow_ratio"],
-                    })
+                    fund_rows.append(
+                        {
+                            "date": d["f_date"],
+                            "main_net_inflow": d["f_main_net_inflow"],
+                            "net_inflow_ratio": d["f_net_inflow_ratio"],
+                        }
+                    )
 
             result["kline_summary"] = self._build_kline_summary(kline_rows)
             result["fund_flow_summary"] = build_fund_flow_summary(fund_rows)

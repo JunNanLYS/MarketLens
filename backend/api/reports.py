@@ -41,6 +41,7 @@ async def generate_reports(
     targets = len(symbols) if symbols else 0
     if targets == 0:
         from backend.services.report_service import ReportService as RS
+
         active = RS._get_active_symbols()
         targets = len(active)
     result = await _service.generate_reports(symbols=symbols, force=force)
@@ -92,7 +93,10 @@ def get_latest_report(symbol: str = Path(..., min_length=1)) -> dict:
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "REPORT_NOT_FOUND", "detail": f"标的 '{symbol}' 无 AI 报告"},
+            detail={
+                "error": "REPORT_NOT_FOUND",
+                "detail": f"标的 '{symbol}' 无 AI 报告",
+            },
         )
     return result
 

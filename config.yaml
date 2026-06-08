@@ -227,4 +227,3 @@ scheduler:
       interval: 60      # ? 60 ??
     ai_report:          # AI ??????
       cron: 0 20 * * *  # ?? 20:00
-

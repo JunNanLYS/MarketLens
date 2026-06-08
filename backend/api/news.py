@@ -37,6 +37,8 @@ def list_news(
 def get_news(news_id: int) -> dict:
     result = _service.get_news_by_id(news_id)
     if result is None:
-        raise HTTPException(status_code=404, detail={"error": "NEWS_NOT_FOUND", "detail": f"新闻 ID {news_id} 不存在"})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "NEWS_NOT_FOUND", "detail": f"新闻 ID {news_id} 不存在"},
+        )
     return result
-

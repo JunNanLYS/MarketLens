@@ -11,6 +11,7 @@ mock 模式：与 test_westock_extended.py 一致 ——
 patch("backend.collectors.westock.subprocess.run") + side_effect 控制
 多次调用返回不同结果。
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -45,7 +46,10 @@ async def test_retry_skill006_then_success() -> None:
     ok_proc = MagicMock(stdout=_success_stdout(), returncode=0)
 
     with (
-        patch("backend.collectors.westock.subprocess.run", side_effect=[fail_proc, ok_proc]) as mock_run,
+        patch(
+            "backend.collectors.westock.subprocess.run",
+            side_effect=[fail_proc, ok_proc],
+        ) as mock_run,
         patch("backend.collectors.westock.asyncio.sleep", new=AsyncMock()) as _,
     ):
         tables, err = await p._run_cli("search 贵州茅台")
@@ -65,7 +69,9 @@ async def test_retry_exhausted_returns_last_error() -> None:
     fail_proc = MagicMock(stdout=_skill_006_stderr(), returncode=0)
 
     with (
-        patch("backend.collectors.westock.subprocess.run", return_value=fail_proc) as mock_run,
+        patch(
+            "backend.collectors.westock.subprocess.run", return_value=fail_proc
+        ) as mock_run,
         patch("backend.collectors.westock.asyncio.sleep", new=AsyncMock()) as _,
     ):
         tables, err = await p._run_cli("search 贵州茅台")
@@ -74,7 +80,9 @@ async def test_retry_exhausted_returns_last_error() -> None:
     assert "SKILL_006" in err
     assert tables == []
     # _MAX_RETRIES = 2, 总尝试 = 3 次
-    assert mock_run.call_count == 3, f"应调用 3 次（2 次重试），实际 {mock_run.call_count}"
+    assert mock_run.call_count == 3, (
+        f"应调用 3 次（2 次重试），实际 {mock_run.call_count}"
+    )
 
 
 @pytest.mark.asyncio
@@ -135,7 +143,9 @@ async def test_no_retry_on_data_empty_error() -> None:
     fail_proc = MagicMock(stdout="数据为空，未找到匹配数据\n", returncode=0)
 
     with (
-        patch("backend.collectors.westock.subprocess.run", return_value=fail_proc) as mock_run,
+        patch(
+            "backend.collectors.westock.subprocess.run", return_value=fail_proc
+        ) as mock_run,
         patch("backend.collectors.westock.asyncio.sleep", new=AsyncMock()) as _,
     ):
         tables, err = await p._run_cli("search 不存在的股票")
@@ -156,7 +166,9 @@ async def test_no_retry_on_nonzero_returncode() -> None:
     fail_proc = MagicMock(stdout="", stderr="some error", returncode=1)
 
     with (
-        patch("backend.collectors.westock.subprocess.run", return_value=fail_proc) as mock_run,
+        patch(
+            "backend.collectors.westock.subprocess.run", return_value=fail_proc
+        ) as mock_run,
         patch("backend.collectors.westock.asyncio.sleep", new=AsyncMock()) as _,
     ):
         tables, err = await p._run_cli("bad command")

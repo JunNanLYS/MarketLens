@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
 
 import httpx
 from loguru import logger
@@ -34,7 +34,6 @@ class TencentNewsHTTPProvider(NewsProvider, _HttpClientMixin):
             "follow_redirects": True,
             "headers": self._client_headers,
         }
-
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         try:
@@ -93,7 +92,9 @@ class TencentNewsHTTPProvider(NewsProvider, _HttpClientMixin):
                 published_at = None
                 if ts:
                     try:
-                        published_at = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+                        published_at = datetime.fromtimestamp(
+                            int(ts), tz=timezone.utc
+                        ).isoformat()
                     except (ValueError, OSError):
                         pass
                 if not published_at:
@@ -113,17 +114,19 @@ class TencentNewsHTTPProvider(NewsProvider, _HttpClientMixin):
                 else:
                     importance = "low"
 
-                results.append({
-                    "title": title,
-                    "source": source,
-                    "url": url,
-                    "content": abstract,
-                    "summary": abstract,
-                    "published_at": published_at,
-                    "sentiment": "neutral",
-                    "importance": importance,
-                    "collected_at": self._now(),
-                })
+                results.append(
+                    {
+                        "title": title,
+                        "source": source,
+                        "url": url,
+                        "content": abstract,
+                        "summary": abstract,
+                        "published_at": published_at,
+                        "sentiment": "neutral",
+                        "importance": importance,
+                        "collected_at": self._now(),
+                    }
+                )
 
                 if len(results) >= self.max_items:
                     break
@@ -131,5 +134,7 @@ class TencentNewsHTTPProvider(NewsProvider, _HttpClientMixin):
             if len(results) >= self.max_items:
                 break
 
-        logger.info("TencentNews HTTP 获取 {} 条新闻: provider={}", len(results), self.name)
+        logger.info(
+            "TencentNews HTTP 获取 {} 条新闻: provider={}", len(results), self.name
+        )
         return results

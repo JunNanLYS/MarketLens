@@ -7,6 +7,7 @@
 - GET 无副作用
 - 错误响应统一为 {"error": "...", "detail": "..."}
 """
+
 from __future__ import annotations
 
 import shutil
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/v1/data-sources", tags=["data-sources"])
 # 工具函数
 # ------------------------------------------------------------------
 
+
 def _build_neo_client() -> NeoDataClient:
     """从 config 读取 NeoData 配置并构造一个轻量客户端。
 
@@ -32,9 +34,8 @@ def _build_neo_client() -> NeoDataClient:
     """
     config = get_config()
     data_sources = config.get("data_sources", {})
-    sources: list[dict] = (
-        list(data_sources.get("structured", []))
-        + list(data_sources.get("news", []))
+    sources: list[dict] = list(data_sources.get("structured", [])) + list(
+        data_sources.get("news", [])
     )
     neodata_cfg = next(
         (s for s in sources if s.get("provider") == "NeoDataProvider"),
@@ -117,6 +118,7 @@ def _describe_one_source(category: str, cfg: dict) -> dict[str, Any]:
 # ------------------------------------------------------------------
 # 端点
 # ------------------------------------------------------------------
+
 
 @router.get("/config", summary="查询所有数据源的基础配置（name / provider / enabled）")
 def get_data_sources_config() -> dict:

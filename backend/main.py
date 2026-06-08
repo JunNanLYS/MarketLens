@@ -38,7 +38,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=63072000; includeSubDomains"
+        )
         # CSP 留宽松：Swagger UI 需要 inline script/style
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
@@ -46,6 +48,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "style-src 'self' 'unsafe-inline'"
         )
         return response
+
 
 _scheduler_manager: SchedulerManager | None = None
 _db_ready = False
@@ -80,6 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 的 Provider 走空操作，有客户端的子类会覆盖 aclose()。单 Provider 失败
     # 不阻断其他 Provider 的关闭。
     from backend.scheduler.jobs import _get_collection_service, _get_news_service
+
     try:
         for provider in _get_collection_service()._get_structured_providers():
             try:

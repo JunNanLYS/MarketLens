@@ -1,4 +1,4 @@
-﻿import subprocess
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +11,7 @@ from backend.collectors.westock import (
 
 
 # ── 工具函数单测 ──────────────────────────────────────────────
+
 
 async def test_parse_single_table() -> None:
     text = (
@@ -115,6 +116,7 @@ async def test_try_number_empty() -> None:
 
 # ── Provider 单元测试 ────────────────────────────────────────
 
+
 @pytest.fixture
 async def provider() -> WeStockProvider:
     return WeStockProvider(
@@ -137,9 +139,7 @@ async def test_init_default_command() -> None:
 
 async def test_search_success(provider: WeStockProvider) -> None:
     stdout = (
-        "| code | name | type |\n"
-        "| --- | --- | --- |\n"
-        "| sh600519 | 贵州茅台 | GP-A |\n"
+        "| code | name | type |\n| --- | --- | --- |\n| sh600519 | 贵州茅台 | GP-A |\n"
     )
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
@@ -319,6 +319,7 @@ async def test_technical_success(provider: WeStockProvider) -> None:
 
 # ── 错误处理测试 ──────────────────────────────────────────────
 
+
 async def test_run_cli_timeout_returns_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="test", timeout=30)
@@ -359,6 +360,7 @@ async def test_run_cli_generic_exception(provider: WeStockProvider) -> None:
 
 
 # ── 边界条件 ──────────────────────────────────────────────────
+
 
 async def test_fund_flow_cmd_a_share() -> None:
     assert WeStockProvider._fund_flow_cmd("sh600519") == "asfund"
@@ -407,8 +409,8 @@ async def test_search_multiple_results(provider: WeStockProvider) -> None:
         assert result[1]["code"] == "sh600809"
 
 
-
 # fetch_news tests
+
 
 async def test_fetch_news_success(provider: WeStockProvider) -> None:
     lines = [

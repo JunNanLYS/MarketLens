@@ -231,4 +231,3 @@ DELETE /api/v1/assets/1 HTTP/1.1
 ```
 
 → `204 No Content`
-

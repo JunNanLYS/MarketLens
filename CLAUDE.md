@@ -311,3 +311,65 @@ Commit all changes with a conventional commit message (use `git-commit` skill):
 - **Title**: one-line summary of the change (e.g. `feat: add portfolio P&L chart`)
 - **Body**: detailed breakdown by functional module
 - After commit, push to remote if configured.
+
+## Project state
+
+> 本章节为新会话接手时的"项目当前快照"，避免重复探索已知的项目结构、规模、修复历史。事实型数据已对照代码与 `ISSUES.md` 校准（2026-06-08）。
+
+### 当前规模
+
+- **29 张表**（SQLite，DDL 全在 `backend/storage/schema.py::TABLE_DDLS`）
+- **74 端点**（68 在 `backend/api/*.py` + 2 在 `backend/main.py` 健康/根 + 4 `data_sources` 子路径，全部 `/api/v1/` 前缀）
+- **8 个 Provider**（`backend/collectors/*.py`：NeoData / RSS / SearchEngineNews / Sina / SinaNews / TencentNews / TencentNewsHTTP / WeStock）
+- **458 测试**（`tests/`，`pytest asyncio_mode = "auto"`）
+
+### 资金主线 CRITICAL 状态
+
+**8 / 8 已修**（资金 5 + 写锁 3），逐条复验见 `ISSUES.md` 第 8 轮复验记录（2026-06-07）：
+
+- 资金主线 5 条：`portfolio_service` 的 `update_transaction` 写锁 / `delete_transaction` 写锁 / split 校验 / WAC 幻股 / WAC fee
+- 写锁 3 条：`news_service` 写锁 / `_run_cleanup` 写锁 / 第 6 轮补登 `report_service.generate_reports` 写锁
+
+项目当前已无资金/写锁类 P0 阻断性 bug。
+
+### 基础设施
+
+- **CI** — `.github/workflows/ci.yml`：`push` 到 `main` 与 `pull_request` 触发两个 job
+  - `ruff`：`uv run ruff check .`
+  - `pytest`：Python 3.13 matrix，`uv sync --frozen` + `uv run pytest tests/ -v`
+- **pre-commit** — `.pre-commit-config.yaml`，钩子分三档：
+  - 文件卫生（`trailing-whitespace` / `end-of-file-fixer` / `check-yaml` / `check-toml`）
+  - ruff lint + format（锁定 `ruff>=0.15.16`）
+  - pytest fast（`pre-push` 阶段，`-x` 遇首个失败即停）
+- 安装命令：`uv run pre-commit install --hook-type pre-commit --hook-type pre-push`
+
+### 8 轮修复历史摘要
+
+- **第 4-7 轮审查** — 4-Agent 并行深度复审，发现 70+ 条（CRITICAL 8 / MAJOR 12 / MINOR 19 / NIT 10 = 48 登记条目，外加 5 轮 26 条附加项）
+- **第 8 轮** — 资金主线 8 个 CRITICAL 全部修复 + 复验记录入库
+- **第 9 轮** — 5 条收尾（quotes CTE MAJOR / naive datetime MAJOR / realized-pnl 翻页 doc MINOR / lifespan 资源清理 NIT / westock 贪婪匹配 NIT）
+- **第 10 轮** — 7 doc 校准 + 30 个 client 方法补全（72 端点全覆盖）+ realized-pnl wrapper 同构
+- **第 11 轮** — 收尾：`git mv` 清理错位文件 / pre-commit 钩子补全 / CI workflow 落地
+
+> 详细逐条复验表 + 决策追踪见 `ISSUES.md` 第 8-11 轮复验记录（行 117-200）。
+
+### 关键设计决策（经验沉淀）
+
+CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 **实操经验**（不在任何其他文档，复用时务必遵守）：
+
+1. **`_WRITE_LOCK` 必须包裹所有 SQLite 写路径**（CLAUDE.md 硬约束，第 209-213 行）
+   - 同步 `sqlite3` 不支持多协程并发写；所有写路径必须 `with _WRITE_LOCK:`，读路径可并发
+   - 历史教训：第 4 轮 5 个 portfolio 写端点全部漏锁 → 用户 P&L 串号；第 6/8 轮补登 `report_service` / `news_service` / `_run_cleanup` 3 处
+   - 新增 Service / 新增写端点 → 第一件事就是加 `with _WRITE_LOCK:`
+
+2. **`ui/` 严禁 import `backend/storage/`**（Module boundaries，第 197-207 行）
+   - UI 必须走 FastAPI（`ui/api_client.py`），绝不能直接碰 SQLite
+   - 跨层 import 是部署期地雷：UI 与 backend 用不同的 venv/进程时会立即炸
+
+3. **文档同步 = 后端代码改必动 `docs/api/*.md`**（Task Completion Checklist 第 3 步）
+   - 端点签名、状态码、字段名 3 处任一变动 → 同步更新 `docs/api/*.md`
+   - 过去教训：第 4-7 轮发现 30+ 处 doc/code drift；第 10 轮 Agent 3 专门 7 doc 校准 + 30+ 处状态码修正
+
+4. **evidence-driven AI：每条采集数据必须被 `_check_*` 消费**（Architecture 第 149-161 行）
+   - `EvidenceBuilder.build(symbol)` 只组装**真实采集**的证据；AI 输出必须含 `data_used` 字段列出每个引用源 + 采集时间
+   - 不允许 hallucinate 分析；这条是项目"证据驱动"价值主张的底线

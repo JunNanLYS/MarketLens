@@ -1,7 +1,15 @@
 import streamlit as st
 
 from ui.api_client import check_health
-from ui.pages import tracked_assets, asset_detail, ai_reports, portfolio, news_list, task_status, settings
+from ui.pages import (
+    tracked_assets,
+    asset_detail,
+    ai_reports,
+    portfolio,
+    news_list,
+    task_status,
+    settings,
+)
 
 
 @st.cache_data(ttl=30)
@@ -9,6 +17,7 @@ def _cached_health_check() -> bool:
     # 30s TTL 跨用户/跨 session 复用：避免每个新用户首次访问都打 /health。
     # Streamlit rerun 也只每 30s 重新检查。
     return check_health()
+
 
 st.set_page_config(
     page_title="MarketLens",
@@ -31,7 +40,9 @@ with st.sidebar:
     st.divider()
     # 可访问性：保留可见标签 "导航"，屏幕阅读器能识别侧栏主导航控件（ISSUES.md MINOR）。
     st.caption("导航")
-    selected_label: str = st.radio("导航", list(PAGES.keys()), label_visibility="visible")
+    selected_label: str = st.radio(
+        "导航", list(PAGES.keys()), label_visibility="visible"
+    )
     st.divider()
     if _cached_health_check():
         st.success("API 已连接")

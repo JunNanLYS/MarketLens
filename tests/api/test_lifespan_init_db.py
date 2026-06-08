@@ -3,6 +3,7 @@
 回归 f098226 修复 —— 之前 main.py 的 lifespan 漏掉 await init_db()，
 导致表不会被创建，/_check_neo_data_token_on_startup 在启动期崩溃。
 """
+
 import tempfile
 from pathlib import Path
 
@@ -19,7 +20,8 @@ def isolated_db(monkeypatch: pytest.MonkeyPatch) -> str:
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path: str = f.name
     monkeypatch.setattr(
-        "backend.storage.database._db_path_override", path,
+        "backend.storage.database._db_path_override",
+        path,
     )
     yield path
     set_db_path(None)

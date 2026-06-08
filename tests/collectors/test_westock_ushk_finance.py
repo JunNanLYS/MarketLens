@@ -2,6 +2,7 @@
 
 每组 3 段式：成功 / 空 / 异常
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ async def provider() -> WeStockProvider:
 # ═══════════════════════════════════════════════════════════════════
 # us_finance (美股财务)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_us_finance_income_success(provider: WeStockProvider) -> None:
     """美股 income 表 2 期数据 → period_type=quarter（_Q 后缀字段）。"""
@@ -84,6 +86,7 @@ async def test_us_finance_error_returns_empty(provider: WeStockProvider) -> None
 # ═══════════════════════════════════════════════════════════════════
 # hk_finance (港股财务)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_hk_finance_zhsy_success(provider: WeStockProvider) -> None:
     """港股 zhsy 表（综合损益表）含子行业/子产品分布。"""

@@ -2,6 +2,7 @@
 
 每组 3 段式：成功 / 空 / 异常
 """
+
 import json
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +22,7 @@ async def provider() -> WeStockProvider:
 # ═══════════════════════════════════════════════════════════════════
 # chip_distribution (筹码成本)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_chip_distribution_success(provider: WeStockProvider) -> None:
     stdout = (
@@ -62,6 +64,7 @@ async def test_chip_distribution_error_returns_empty(provider: WeStockProvider) 
 # margintrade (融资融券)
 # ═══════════════════════════════════════════════════════════════════
 
+
 async def test_margintrade_success(provider: WeStockProvider) -> None:
     stdout = (
         "| code | name | date | closePrice | changePct | FinanceValue | SecurityValue | "
@@ -93,6 +96,7 @@ async def test_margintrade_empty(provider: WeStockProvider) -> None:
 # ═══════════════════════════════════════════════════════════════════
 # blocktrade (大宗交易)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_blocktrade_success(provider: WeStockProvider) -> None:
     stdout = (
@@ -165,7 +169,9 @@ async def test_blocktrade_with_detail_table(provider: WeStockProvider) -> None:
     assert sell_dept == ["国泰君安证券总部"]
 
 
-async def test_blocktrade_detail_table_english_columns(provider: WeStockProvider) -> None:
+async def test_blocktrade_detail_table_english_columns(
+    provider: WeStockProvider,
+) -> None:
     """表 2 用英文列名（direction / department / price / amount）也应被解析。"""
     stdout = (
         "| code | name | date | closePrice | changePct |\n"
@@ -189,6 +195,7 @@ async def test_blocktrade_detail_table_english_columns(provider: WeStockProvider
 # lhb (龙虎榜)
 # ═══════════════════════════════════════════════════════════════════
 
+
 async def test_lhb_success(provider: WeStockProvider) -> None:
     stdout = (
         "| code | name | date | closePrice | changePct | netBuyAmount |\n"
@@ -208,9 +215,7 @@ async def test_lhb_success(provider: WeStockProvider) -> None:
 async def test_lhb_no_data_returns_none(provider: WeStockProvider) -> None:
     """当日无龙虎榜数据 → lhb 服务返回 '当日无龙虎榜数据' 文本，CLI 仍 0 exit。"""
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            stdout="当日无龙虎榜数据\n", returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout="当日无龙虎榜数据\n", returncode=0)
         result = await provider.lhb("sh600519", "2026-06-01")
     assert result is None
 

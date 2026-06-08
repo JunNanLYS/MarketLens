@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """通过 API 注入测试数据并模拟用户使用流程。"""
+
 import json
 from urllib import request, error
 
@@ -37,7 +38,12 @@ def step(label, method, path, body=None):
     return res
 
 
-step("acc-huatai", "POST", "/accounts", {"name": "华泰", "broker": "华泰证券", "currency": "CNY", "notes": "A股主账户"})
+step(
+    "acc-huatai",
+    "POST",
+    "/accounts",
+    {"name": "华泰", "broker": "华泰证券", "currency": "CNY", "notes": "A股主账户"},
+)
 
 assets = [
     {"symbol": "sh600519", "asset_type": "stock", "name": "贵州茅台"},
@@ -54,16 +60,96 @@ for a in assets:
     step(f"add-{a['symbol']}", "POST", "/assets", a)
 
 trades = [
-    {"account_id": 1, "symbol": "hk00700", "type": "buy", "quantity": 100, "price": 380.0, "fee": 50, "trade_date": "2025-12-10"},
-    {"account_id": 1, "symbol": "hk00700", "type": "buy", "quantity": 100, "price": 420.0, "fee": 50, "trade_date": "2026-02-14"},
-    {"account_id": 1, "symbol": "hk00700", "type": "sell", "quantity": 50, "price": 460.0, "fee": 30, "trade_date": "2026-05-20"},
-    {"account_id": 2, "symbol": "sh600519", "type": "buy", "quantity": 10, "price": 1680.0, "fee": 5, "trade_date": "2026-01-15"},
-    {"account_id": 2, "symbol": "sz000858", "type": "buy", "quantity": 200, "price": 142.0, "fee": 5, "trade_date": "2026-01-22"},
-    {"account_id": 2, "symbol": "sz000858", "type": "sell", "quantity": 100, "price": 158.0, "fee": 5, "trade_date": "2026-04-10"},
-    {"account_id": 1, "symbol": "usAAPL", "type": "buy", "quantity": 30, "price": 195.0, "fee": 5, "trade_date": "2026-03-05"},
-    {"account_id": 1, "symbol": "usTSLA", "type": "buy", "quantity": 20, "price": 250.0, "fee": 5, "trade_date": "2026-03-12"},
-    {"account_id": 1, "symbol": "usTSLA", "type": "sell", "quantity": 20, "price": 215.0, "fee": 5, "trade_date": "2026-05-28"},
-    {"account_id": 1, "symbol": "hk00700", "type": "dividend", "quantity": 200, "price": 3.2, "fee": 0, "trade_date": "2026-05-15"},
+    {
+        "account_id": 1,
+        "symbol": "hk00700",
+        "type": "buy",
+        "quantity": 100,
+        "price": 380.0,
+        "fee": 50,
+        "trade_date": "2025-12-10",
+    },
+    {
+        "account_id": 1,
+        "symbol": "hk00700",
+        "type": "buy",
+        "quantity": 100,
+        "price": 420.0,
+        "fee": 50,
+        "trade_date": "2026-02-14",
+    },
+    {
+        "account_id": 1,
+        "symbol": "hk00700",
+        "type": "sell",
+        "quantity": 50,
+        "price": 460.0,
+        "fee": 30,
+        "trade_date": "2026-05-20",
+    },
+    {
+        "account_id": 2,
+        "symbol": "sh600519",
+        "type": "buy",
+        "quantity": 10,
+        "price": 1680.0,
+        "fee": 5,
+        "trade_date": "2026-01-15",
+    },
+    {
+        "account_id": 2,
+        "symbol": "sz000858",
+        "type": "buy",
+        "quantity": 200,
+        "price": 142.0,
+        "fee": 5,
+        "trade_date": "2026-01-22",
+    },
+    {
+        "account_id": 2,
+        "symbol": "sz000858",
+        "type": "sell",
+        "quantity": 100,
+        "price": 158.0,
+        "fee": 5,
+        "trade_date": "2026-04-10",
+    },
+    {
+        "account_id": 1,
+        "symbol": "usAAPL",
+        "type": "buy",
+        "quantity": 30,
+        "price": 195.0,
+        "fee": 5,
+        "trade_date": "2026-03-05",
+    },
+    {
+        "account_id": 1,
+        "symbol": "usTSLA",
+        "type": "buy",
+        "quantity": 20,
+        "price": 250.0,
+        "fee": 5,
+        "trade_date": "2026-03-12",
+    },
+    {
+        "account_id": 1,
+        "symbol": "usTSLA",
+        "type": "sell",
+        "quantity": 20,
+        "price": 215.0,
+        "fee": 5,
+        "trade_date": "2026-05-28",
+    },
+    {
+        "account_id": 1,
+        "symbol": "hk00700",
+        "type": "dividend",
+        "quantity": 200,
+        "price": 3.2,
+        "fee": 0,
+        "trade_date": "2026-05-15",
+    },
 ]
 for t in trades:
     step(f"tx-{t['symbol']}-{t['type']}", "POST", "/transactions", t)

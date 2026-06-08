@@ -15,10 +15,14 @@ def _get_client() -> NeoDataClient:
     config = get_config()
     data_sources = config.get("data_sources", {})
     news_sources = data_sources.get("news", [])
-    neodata_cfg = next((s for s in news_sources if s.get("provider") == "NeoDataProvider"), {})
+    neodata_cfg = next(
+        (s for s in news_sources if s.get("provider") == "NeoDataProvider"), {}
+    )
     params = neodata_cfg.get("params") or {}
     return NeoDataClient(
-        endpoint=params.get("endpoint", "https://copilot.tencent.com/agenttool/v1/neodata"),
+        endpoint=params.get(
+            "endpoint", "https://copilot.tencent.com/agenttool/v1/neodata"
+        ),
         config_token=params.get("token") or None,
         timeout=neodata_cfg.get("timeout", 30),
     )
@@ -41,10 +45,9 @@ def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> N
     启动时若检测到默认 key 未被环境变量覆盖，仅记录 warning（本地工具可继续使用）。
     """
     config = get_config()
-    expected_key: str = (
-        os.getenv("MARKETLENS_API_KEY")
-        or config.get("security", {}).get("api_key", "marketlens-local")
-    )
+    expected_key: str = os.getenv("MARKETLENS_API_KEY") or config.get(
+        "security", {}
+    ).get("api_key", "marketlens-local")
     if not x_api_key or x_api_key != expected_key:
         raise HTTPException(
             status_code=401,
@@ -85,7 +88,7 @@ async def save_token(
     expected_key = config.get("security", {}).get("api_key", "marketlens-local")
     if expected_key == "marketlens-local" and not os.getenv("MARKETLENS_API_KEY"):
         logger.warning(
-            "NeoData token 端点仍使用默认 API Key \"marketlens-local\"。"
+            'NeoData token 端点仍使用默认 API Key "marketlens-local"。'
             "生产环境请通过环境变量 MARKETLENS_API_KEY 或 config.yaml 覆盖。"
         )
     _get_or_create_client().save_token(body.token)

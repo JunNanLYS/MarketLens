@@ -88,7 +88,9 @@ async def test_quote_parses_basic_info(provider: NeoDataProvider) -> None:
                     "apiRecall": [
                         {
                             "type": "basic_info",
-                            "content": "\n".join(f"{k}：{v}" for k, v in mock_info.items()),
+                            "content": "\n".join(
+                                f"{k}：{v}" for k, v in mock_info.items()
+                            ),
                         }
                     ]
                 }
@@ -149,7 +151,9 @@ async def test_finance_parses_basic_info(provider: NeoDataProvider) -> None:
                     "apiRecall": [
                         {
                             "type": "basic_info",
-                            "content": "\n".join(f"{k}：{v}" for k, v in mock_info.items()),
+                            "content": "\n".join(
+                                f"{k}：{v}" for k, v in mock_info.items()
+                            ),
                         }
                     ]
                 }
@@ -188,7 +192,9 @@ async def test_fund_flow_parses_basic_info(provider: NeoDataProvider) -> None:
                     "apiRecall": [
                         {
                             "type": "basic_info",
-                            "content": "\n".join(f"{k}：{v}" for k, v in mock_info.items()),
+                            "content": "\n".join(
+                                f"{k}：{v}" for k, v in mock_info.items()
+                            ),
                         }
                     ]
                 }

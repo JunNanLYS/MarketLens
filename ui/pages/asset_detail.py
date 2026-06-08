@@ -164,7 +164,9 @@ def _fetch_etf_holdings_raw(_sym: str) -> dict[str, Any]:
 
 def _fetch_etf_holdings(_sym: str) -> dict[str, Any]:
     """获取 ETF 成分股（session_state 字典版，TTL 5min）。"""
-    return _cached_get(f"etf_holdings:{_sym}", 300, lambda: _fetch_etf_holdings_raw(_sym))
+    return _cached_get(
+        f"etf_holdings:{_sym}", 300, lambda: _fetch_etf_holdings_raw(_sym)
+    )
 
 
 def _fetch_etf_nav_raw(_sym: str) -> dict[str, Any]:
@@ -204,7 +206,9 @@ def _fetch_ipo_calendar_raw(_market: str) -> dict[str, Any]:
 
 def _fetch_ipo_calendar(_market: str) -> dict[str, Any]:
     """获取 IPO 日历（session_state 字典版，TTL 10min）。"""
-    return _cached_get(f"ipo_calendar:{_market}", 600, lambda: _fetch_ipo_calendar_raw(_market))
+    return _cached_get(
+        f"ipo_calendar:{_market}", 600, lambda: _fetch_ipo_calendar_raw(_market)
+    )
 
 
 def _fetch_exdiv_calendar_raw(_sym: str) -> dict[str, Any]:
@@ -214,7 +218,9 @@ def _fetch_exdiv_calendar_raw(_sym: str) -> dict[str, Any]:
 
 def _fetch_exdiv_calendar(_sym: str) -> dict[str, Any]:
     """获取除权日历（session_state 字典版，TTL 10min）。"""
-    return _cached_get(f"exdiv_calendar:{_sym}", 600, lambda: _fetch_exdiv_calendar_raw(_sym))
+    return _cached_get(
+        f"exdiv_calendar:{_sym}", 600, lambda: _fetch_exdiv_calendar_raw(_sym)
+    )
 
 
 def _fetch_chip_raw(_sym: str) -> dict[str, Any]:
@@ -260,26 +266,60 @@ def _render_quote_section(quote: dict[str, Any]) -> None:
 
     m5, m6, m7, m8 = st.columns(4)
     with m5:
-        st.metric("开盘价", f"{quote.get('open', '-')}" if quote.get("open") is not None else "-")
+        st.metric(
+            "开盘价",
+            f"{quote.get('open', '-')}" if quote.get("open") is not None else "-",
+        )
     with m6:
-        st.metric("最高价", f"{quote.get('high', '-')}" if quote.get("high") is not None else "-")
+        st.metric(
+            "最高价",
+            f"{quote.get('high', '-')}" if quote.get("high") is not None else "-",
+        )
     with m7:
-        st.metric("最低价", f"{quote.get('low', '-')}" if quote.get("low") is not None else "-")
+        st.metric(
+            "最低价",
+            f"{quote.get('low', '-')}" if quote.get("low") is not None else "-",
+        )
     with m8:
-        st.metric("昨收价", f"{quote.get('prev_close', '-')}" if quote.get("prev_close") is not None else "-")
+        st.metric(
+            "昨收价",
+            f"{quote.get('prev_close', '-')}"
+            if quote.get("prev_close") is not None
+            else "-",
+        )
 
 
 def _render_kline_section(kline_summary: dict[str, Any]) -> None:
     st.subheader("📊 K 线摘要")
     m1, m2, m3, m4, m5 = st.columns(5)
     with m1:
-        st.metric("最新收盘", f"{kline_summary.get('latest_close', '-')}" if kline_summary.get("latest_close") is not None else "-")
+        st.metric(
+            "最新收盘",
+            f"{kline_summary.get('latest_close', '-')}"
+            if kline_summary.get("latest_close") is not None
+            else "-",
+        )
     with m2:
-        st.metric("MA5", f"{kline_summary.get('ma5', '-')}" if kline_summary.get("ma5") is not None else "-")
+        st.metric(
+            "MA5",
+            f"{kline_summary.get('ma5', '-')}"
+            if kline_summary.get("ma5") is not None
+            else "-",
+        )
     with m3:
-        st.metric("MA20", f"{kline_summary.get('ma20', '-')}" if kline_summary.get("ma20") is not None else "-")
+        st.metric(
+            "MA20",
+            f"{kline_summary.get('ma20', '-')}"
+            if kline_summary.get("ma20") is not None
+            else "-",
+        )
     with m4:
-        st.metric("MA60", f"{kline_summary.get('ma60', '-')}" if kline_summary.get("ma60") is not None else "-")
+        st.metric(
+            "MA60",
+            f"{kline_summary.get('ma60', '-')}"
+            if kline_summary.get("ma60") is not None
+            else "-",
+        )
     with m5:
         st.metric("趋势", kline_summary.get("trend", "-"))
 
@@ -357,7 +397,9 @@ def _render_report_section(latest_report: dict[str, Any]) -> None:
     if data_used:
         with st.expander("数据溯源"):
             for du in data_used:
-                st.markdown(f"- `{du.get('source', '')}` / {du.get('type', '')} — {du.get('collected_at', '')}")
+                st.markdown(
+                    f"- `{du.get('source', '')}` / {du.get('type', '')} — {du.get('collected_at', '')}"
+                )
 
 
 def render() -> None:
@@ -368,7 +410,9 @@ def render() -> None:
     # 不再清空其他页面的 cache（之前 st.cache_data.clear() 是全局清）。
     _hdr_col, _btn_col = st.columns([6, 1])
     with _btn_col:
-        if st.button("刷新数据", use_container_width=True, help="清除本页缓存并重新拉取所有数据"):
+        if st.button(
+            "刷新数据", use_container_width=True, help="清除本页缓存并重新拉取所有数据"
+        ):
             _invalidate_cache("")
             st.rerun()
 
@@ -385,7 +429,9 @@ def render() -> None:
         f"{a.get('symbol', '')} - {a.get('name', '')}": a for a in asset_items
     }
 
-    selected: str | None = st.selectbox("选择标的", options, index=None, placeholder="请选择标的...")
+    selected: str | None = st.selectbox(
+        "选择标的", options, index=None, placeholder="请选择标的..."
+    )
 
     if selected is None:
         st.caption("请在上方选择一个标的查看详情")
@@ -410,8 +456,15 @@ def render() -> None:
     # 避免在非 ETF 标的页出现一个永远为空的 tab（更可发现、更可访问）。
     is_etf: bool = asset.get("asset_type", "") == "etf"
     tab_labels: list[str] = [
-        "行情", "K 线", "财务", "资金流向",
-        "分时走势", "股东结构", "业绩预告", "分红记录", "AI 报告",
+        "行情",
+        "K 线",
+        "财务",
+        "资金流向",
+        "分时走势",
+        "股东结构",
+        "业绩预告",
+        "分红记录",
+        "AI 报告",
     ]
     if is_etf:
         tab_labels.append("ETF")
@@ -547,7 +600,9 @@ def _render_reserve_tab(symbol: str) -> None:
     try:
         with st.spinner("正在采集业绩预告..."):
             result: dict[str, Any] = _fetch_reserve(symbol)
-        forecast_type: str = result.get("forecast_type", "") or result.get("report_period", "")
+        forecast_type: str = result.get("forecast_type", "") or result.get(
+            "report_period", ""
+        )
         if not forecast_type and not result.get("profit_lower"):
             st.info("暂无业绩预告数据")
             return
@@ -556,10 +611,14 @@ def _render_reserve_tab(symbol: str) -> None:
             st.metric("预告类型", forecast_type or "-")
         with rc2:
             profit_lower: float | None = result.get("profit_lower")
-            st.metric("利润下限", f"{profit_lower / 1e8:.2f}亿" if profit_lower else "-")
+            st.metric(
+                "利润下限", f"{profit_lower / 1e8:.2f}亿" if profit_lower else "-"
+            )
         with rc3:
             profit_upper: float | None = result.get("profit_upper")
-            st.metric("利润上限", f"{profit_upper / 1e8:.2f}亿" if profit_upper else "-")
+            st.metric(
+                "利润上限", f"{profit_upper / 1e8:.2f}亿" if profit_upper else "-"
+            )
         summary: str = result.get("summary", "")
         if summary:
             st.markdown(f"> {summary}")
@@ -650,8 +709,7 @@ def _render_etf_tab(symbol: str) -> None:
                 # 后端按 date DESC 返回，前端升序展示
                 nav_items = sorted(nav_items, key=lambda x: x.get("date", ""))
                 nav_df_rows: list[dict[str, Any]] = [
-                    {"date": r.get("date", ""), "净值": r.get("nav")}
-                    for r in nav_items
+                    {"date": r.get("date", ""), "净值": r.get("nav")} for r in nav_items
                 ]
                 st.line_chart(nav_df_rows, x="date", y="净值", height=240)
         except Exception as e:
@@ -668,7 +726,9 @@ def _render_etf_tab(symbol: str) -> None:
                     {
                         "代码": h.get("constituent_code", "-"),
                         "名称": h.get("constituent_name", "-"),
-                        "权重(%)": f"{h.get('ratio', 0):.2f}" if h.get("ratio") is not None else "-",
+                        "权重(%)": f"{h.get('ratio', 0):.2f}"
+                        if h.get("ratio") is not None
+                        else "-",
                     }
                     for h in holdings[:10]
                 ]
@@ -691,7 +751,9 @@ def _render_sectors_tab() -> None:
             return
         items: list[dict[str, Any]] = board_result.get("items", [])
         if not items:
-            st.info("暂无板块数据，请先触发板块采集（POST /api/v1/data/sectors/refresh）")
+            st.info(
+                "暂无板块数据，请先触发板块采集（POST /api/v1/data/sectors/refresh）"
+            )
             return
 
         # 按 sector_type 分桶渲染
@@ -702,36 +764,52 @@ def _render_sectors_tab() -> None:
         if "industry" in by_type:
             st.markdown("**行业涨幅榜 Top 10**")
             rows: list[dict[str, Any]] = []
-            for it in sorted(by_type["industry"], key=lambda x: x.get("change_pct") or 0, reverse=True)[:10]:
+            for it in sorted(
+                by_type["industry"],
+                key=lambda x: x.get("change_pct") or 0,
+                reverse=True,
+            )[:10]:
                 pct: float | None = it.get("change_pct")
-                rows.append({
-                    "板块": it.get("name", "-"),
-                    "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
-                    "领涨股": it.get("lead_stock", "-") or "-",
-                    "主力净流入": _format_number(it.get("main_net_inflow")),
-                })
+                rows.append(
+                    {
+                        "板块": it.get("name", "-"),
+                        "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
+                        "领涨股": it.get("lead_stock", "-") or "-",
+                        "主力净流入": _format_number(it.get("main_net_inflow")),
+                    }
+                )
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
         if "fund_flow" in by_type:
             st.markdown("**资金流入 Top 5**")
             rows_ff: list[dict[str, Any]] = []
-            for it in sorted(by_type["fund_flow"], key=lambda x: x.get("main_net_inflow") or 0, reverse=True)[:5]:
-                rows_ff.append({
-                    "板块": it.get("name", "-"),
-                    "主力净流入": _format_number(it.get("main_net_inflow")),
-                    "5日主力净流入": _format_number(it.get("main_net_inflow_5d")),
-                })
+            for it in sorted(
+                by_type["fund_flow"],
+                key=lambda x: x.get("main_net_inflow") or 0,
+                reverse=True,
+            )[:5]:
+                rows_ff.append(
+                    {
+                        "板块": it.get("name", "-"),
+                        "主力净流入": _format_number(it.get("main_net_inflow")),
+                        "5日主力净流入": _format_number(it.get("main_net_inflow_5d")),
+                    }
+                )
             st.dataframe(rows_ff, use_container_width=True, hide_index=True)
 
         if "concept" in by_type:
             st.markdown("**概念涨幅榜 Top 5**")
             rows_c: list[dict[str, Any]] = []
-            for it in sorted(by_type["concept"], key=lambda x: x.get("change_pct") or 0, reverse=True)[:5]:
+            for it in sorted(
+                by_type["concept"], key=lambda x: x.get("change_pct") or 0, reverse=True
+            )[:5]:
                 pct = it.get("change_pct")
-                rows_c.append({
-                    "概念": it.get("name", "-"),
-                    "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
-                })
+                rows_c.append(
+                    {
+                        "概念": it.get("name", "-"),
+                        "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
+                    }
+                )
             st.dataframe(rows_c, use_container_width=True, hide_index=True)
     except Exception as e:
         st.warning(f"板块数据加载失败: {e}")
@@ -748,12 +826,14 @@ def _render_sectors_tab() -> None:
             hot_rows: list[dict[str, Any]] = []
             for it in hot_items[:10]:
                 pct = it.get("change_pct")
-                hot_rows.append({
-                    "排名": it.get("rank", "-"),
-                    "板块": it.get("name", "-"),
-                    "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
-                    "领涨股": it.get("lead_stock", "-") or "-",
-                })
+                hot_rows.append(
+                    {
+                        "排名": it.get("rank", "-"),
+                        "板块": it.get("name", "-"),
+                        "涨跌幅(%)": f"{pct:+.2f}" if pct is not None else "-",
+                        "领涨股": it.get("lead_stock", "-") or "-",
+                    }
+                )
             st.dataframe(hot_rows, use_container_width=True, hide_index=True)
     except Exception as e:
         st.warning(f"热门板块加载失败: {e}")
@@ -782,14 +862,18 @@ def _render_calendar_tab(symbol: str) -> None:
         if not ipo_items:
             st.info(f"{market_choice.upper()} 市场暂无 IPO 日历数据，请先触发采集")
         else:
-            st.markdown(f"**{market_choice.upper()} IPO 日历（最近 {len(ipo_items)} 条）**")
+            st.markdown(
+                f"**{market_choice.upper()} IPO 日历（最近 {len(ipo_items)} 条）**"
+            )
             ipo_rows: list[dict[str, Any]] = [
                 {
                     "事件日期": it.get("event_date", "-"),
                     "代码": it.get("symbol", "-") or "-",
                     "名称": it.get("name", "-") or "-",
                     "阶段": it.get("stage", "-") or "-",
-                    "发行价": f"{it.get('price'):.2f}" if it.get("price") is not None else "-",
+                    "发行价": f"{it.get('price'):.2f}"
+                    if it.get("price") is not None
+                    else "-",
                 }
                 for it in ipo_items[:30]
             ]
@@ -814,7 +898,9 @@ def _render_calendar_tab(symbol: str) -> None:
                 "除权日": it.get("event_date", "-"),
                 "代码": it.get("symbol", "-") or "-",
                 "名称": it.get("name", "-") or "-",
-                "每股分红": f"{it.get('dividend_per_share'):.4f}" if it.get("dividend_per_share") is not None else "-",
+                "每股分红": f"{it.get('dividend_per_share'):.4f}"
+                if it.get("dividend_per_share") is not None
+                else "-",
                 "币种": it.get("currency", "-") or "-",
                 "派息日": it.get("pay_date", "-") or "-",
             }
@@ -853,9 +939,17 @@ def _render_chip_tab(symbol: str) -> None:
         # 数字大字号展示 90/70 集中度；用 st.metric（▲/▼ 前缀覆盖颜色盲）
         mc1, mc2, mc3, mc4 = st.columns(4)
         with mc1:
-            st.metric("90% 成本集中度", f"{c90:.2f}" if c90 is not None else "-", help="90% 筹码分布的价格区间宽度，越小越集中")
+            st.metric(
+                "90% 成本集中度",
+                f"{c90:.2f}" if c90 is not None else "-",
+                help="90% 筹码分布的价格区间宽度，越小越集中",
+            )
         with mc2:
-            st.metric("70% 成本集中度", f"{c70:.2f}" if c70 is not None else "-", help="70% 筹码分布的价格区间宽度")
+            st.metric(
+                "70% 成本集中度",
+                f"{c70:.2f}" if c70 is not None else "-",
+                help="70% 筹码分布的价格区间宽度",
+            )
         with mc3:
             st.metric("平均成本", f"{avg_cost:.2f}" if avg_cost is not None else "-")
         with mc4:
@@ -869,7 +963,11 @@ def _render_chip_tab(symbol: str) -> None:
         if close is not None and avg_cost is not None and avg_cost > 0:
             spread: float = (close - avg_cost) / avg_cost * 100
             arrow_spread: str = "▲" if spread >= 0 else "▼"
-            st.metric("现价 vs 成本", f"{arrow_spread} {abs(spread):+.2f}%", help=f"收盘价 {close:.2f} vs 平均成本 {avg_cost:.2f}")
+            st.metric(
+                "现价 vs 成本",
+                f"{arrow_spread} {abs(spread):+.2f}%",
+                help=f"收盘价 {close:.2f} vs 平均成本 {avg_cost:.2f}",
+            )
 
         # 历史曲线（近 10 期）
         if len(chip_items) > 1:
@@ -883,6 +981,8 @@ def _render_chip_tab(symbol: str) -> None:
                 }
                 for r in history
             ]
-            st.line_chart(chart_rows, x="date", y=["90% 集中度", "70% 集中度"], height=240)
+            st.line_chart(
+                chart_rows, x="date", y=["90% 集中度", "70% 集中度"], height=240
+            )
     except Exception as e:
         st.warning(f"筹码数据加载失败: {e}")

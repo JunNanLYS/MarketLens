@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import os
 import re
@@ -124,7 +124,6 @@ _RETRY_BACKOFF: float = 0.5
 
 
 class WeStockProvider(BaseProvider):
-
     def __init__(
         self,
         name: str,
@@ -133,7 +132,9 @@ class WeStockProvider(BaseProvider):
         optional: bool = False,
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
-        self.command: str = self.params.get("command", "npx -y westock-data-clawhub@1.0.4")
+        self.command: str = self.params.get(
+            "command", "npx -y westock-data-clawhub@1.0.4"
+        )
         # 在初始化时解析 npx 绝对路径并构建最小化 env，避免：
         # 1) PATH 中存在多个 npx 时版本漂移
         # 2) 父进程 env 泄漏给子进程（不必要的环境变量可见性）
@@ -153,7 +154,9 @@ class WeStockProvider(BaseProvider):
             "HOME": os.environ.get("HOME", ""),
         }
 
-    async def _run_cli(self, args: str) -> tuple[list[list[dict[str, str]]], str | None]:
+    async def _run_cli(
+        self, args: str
+    ) -> tuple[list[list[dict[str, str]]], str | None]:
         # 使用 shlex 解析 self.command，正确处理带引号/空格的复杂命令
         # cmd_parts[0] 用 __init__ 时已解析的绝对路径替代，避免运行时 PATH 变化导致版本漂移
         cmd_parts = shlex.split(self.command)
@@ -182,7 +185,9 @@ class WeStockProvider(BaseProvider):
                 last_err = f"CLI 超时 ({self.timeout}s)"
                 logger.warning(
                     "WeStock CLI 超时 [attempt {}/{}]: cmd={}",
-                    attempt + 1, _MAX_RETRIES + 1, cmd_parts,
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    cmd_parts,
                 )
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
@@ -207,17 +212,28 @@ class WeStockProvider(BaseProvider):
                 if is_skill_006 and attempt < _MAX_RETRIES:
                     logger.warning(
                         "WeStock CLI 冷启动失败 [attempt {}/{}]: cmd={}, error={}",
-                        attempt + 1, _MAX_RETRIES + 1, cmd_parts, last_err,
+                        attempt + 1,
+                        _MAX_RETRIES + 1,
+                        cmd_parts,
+                        last_err,
                     )
                     await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
                     continue
-                logger.warning("WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, last_err)
+                logger.warning(
+                    "WeStock CLI 业务错误: cmd={}, error={}", cmd_parts, last_err
+                )
                 return [], last_err
 
             if proc.returncode != 0:
                 # 非零退出码立即返回，不重试（重试也无法修复 CLI bug）
-                msg = stderr.strip() or stdout.strip()[:200] or f"exit code {proc.returncode}"
-                logger.warning("WeStock CLI 非零退出: rc={}, msg={}", proc.returncode, msg)
+                msg = (
+                    stderr.strip()
+                    or stdout.strip()[:200]
+                    or f"exit code {proc.returncode}"
+                )
+                logger.warning(
+                    "WeStock CLI 非零退出: rc={}, msg={}", proc.returncode, msg
+                )
                 return [], msg
 
             tables = _parse_markdown_tables(stdout)
@@ -235,7 +251,11 @@ class WeStockProvider(BaseProvider):
             return []
         rows = tables[0]
         return [
-            {"code": r.get("code", ""), "name": r.get("name", ""), "type": r.get("type", "")}
+            {
+                "code": r.get("code", ""),
+                "name": r.get("name", ""),
+                "type": r.get("type", ""),
+            }
             for r in rows
         ]
 
@@ -259,7 +279,9 @@ class WeStockProvider(BaseProvider):
 
     async def kline(self, symbol: str, period: str = "daily") -> list[dict]:
         cli_period = _PERIOD_MAP.get(period, "day")
-        tables, err = await self._run_cli(f"kline {symbol} --period {cli_period} --limit 60")
+        tables, err = await self._run_cli(
+            f"kline {symbol} --period {cli_period} --limit 60"
+        )
         if err or not tables:
             return []
         results: list[dict] = []
@@ -298,8 +320,11 @@ class WeStockProvider(BaseProvider):
             published_at = None
             if isinstance(ts, (int, float)):
                 from datetime import timezone as _tz
+
                 try:
-                    published_at = datetime.fromtimestamp(float(ts), tz=_tz.utc).isoformat()
+                    published_at = datetime.fromtimestamp(
+                        float(ts), tz=_tz.utc
+                    ).isoformat()
                 except (ValueError, OSError):
                     pass
             news_id = row.get("news_id", "")
@@ -311,17 +336,19 @@ class WeStockProvider(BaseProvider):
                 importance = "normal"
             else:
                 importance = "low"
-            items.append({
-                "title": row.get("news_title", ""),
-                "source": row.get("source", ""),
-                "url": f"wehot://{news_id}" if news_id else None,
-                "content": None,
-                "summary": None,
-                "published_at": published_at,
-                "sentiment": "neutral",
-                "importance": importance,
-                "collected_at": self._now(),
-            })
+            items.append(
+                {
+                    "title": row.get("news_title", ""),
+                    "source": row.get("source", ""),
+                    "url": f"wehot://{news_id}" if news_id else None,
+                    "content": None,
+                    "summary": None,
+                    "published_at": published_at,
+                    "sentiment": "neutral",
+                    "importance": importance,
+                    "collected_at": self._now(),
+                }
+            )
         return items
 
     # ------------------------------------------------------------------
@@ -331,10 +358,14 @@ class WeStockProvider(BaseProvider):
     def _normalize_quote(self, raw: dict, symbol: str) -> dict:
         last_val = _try_number(raw.get("last", ""))
         open_val = _try_number(raw.get("open", ""))
-        prev_close = _try_number(raw.get("prev_close", raw.get("pre_close", raw.get("settlement"))))
+        prev_close = _try_number(
+            raw.get("prev_close", raw.get("pre_close", raw.get("settlement")))
+        )
         if prev_close is None:
             change_val = _try_number(raw.get("change", raw.get("chg", "")))
-            if isinstance(last_val, (int, float)) and isinstance(change_val, (int, float)):
+            if isinstance(last_val, (int, float)) and isinstance(
+                change_val, (int, float)
+            ):
                 prev_close = last_val - change_val
         change = None
         if isinstance(prev_close, (int, float)) and isinstance(last_val, (int, float)):
@@ -343,7 +374,9 @@ class WeStockProvider(BaseProvider):
             "symbol": symbol,
             "price": last_val if isinstance(last_val, (int, float)) else None,
             "change": change,
-            "change_pct": _try_number(raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))),
+            "change_pct": _try_number(
+                raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))
+            ),
             "open": open_val if isinstance(open_val, (int, float)) else None,
             "high": _try_number(raw.get("high", "")),
             "low": _try_number(raw.get("low", "")),
@@ -368,12 +401,16 @@ class WeStockProvider(BaseProvider):
             "close": _try_number(raw.get("last", "")),
             "volume": _try_number(raw.get("volume", "")),
             "amount": _try_number(raw.get("amount", "")),
-            "change_pct": _try_number(raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))),
+            "change_pct": _try_number(
+                raw.get("percent", raw.get("chg_rate", raw.get("涨跌幅")))
+            ),
             "source": "westock",
             "collected_at": self._now(),
         }
 
-    def _normalize_finance(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
+    def _normalize_finance(
+        self, tables: list[list[dict[str, str]]], symbol: str
+    ) -> dict:
         flat: dict[str, str] = {}
         for table in tables:
             if table:
@@ -398,15 +435,30 @@ class WeStockProvider(BaseProvider):
                 gross_margin = round((revenue - operating_cost) / revenue * 100, 2)
 
         net_margin = None
-        if revenue and isinstance(revenue, (int, float)) and net_profit and isinstance(net_profit, (int, float)):
+        if (
+            revenue
+            and isinstance(revenue, (int, float))
+            and net_profit
+            and isinstance(net_profit, (int, float))
+        ):
             net_margin = round(net_profit / revenue * 100, 2)
 
         roe = None
-        if net_profit and isinstance(net_profit, (int, float)) and se_wo_mi and isinstance(se_wo_mi, (int, float)):
+        if (
+            net_profit
+            and isinstance(net_profit, (int, float))
+            and se_wo_mi
+            and isinstance(se_wo_mi, (int, float))
+        ):
             roe = round(net_profit / se_wo_mi * 100, 2)
 
         debt_ratio = None
-        if total_assets and isinstance(total_assets, (int, float)) and total_liability and isinstance(total_liability, (int, float)):
+        if (
+            total_assets
+            and isinstance(total_assets, (int, float))
+            and total_liability
+            and isinstance(total_liability, (int, float))
+        ):
             debt_ratio = round(total_liability / total_assets * 100, 2)
 
         return {
@@ -525,8 +577,12 @@ class WeStockProvider(BaseProvider):
         return {
             "symbol": symbol,
             "ex_date": raw.get("ex_date", raw.get("ex_dividend_date", "")),
-            "cash_dividend": _try_number(raw.get("cash_dividend", raw.get("CashDiv", ""))),
-            "share_bonus": _try_number(raw.get("share_bonus", raw.get("BonusShareRatio", ""))),
+            "cash_dividend": _try_number(
+                raw.get("cash_dividend", raw.get("CashDiv", ""))
+            ),
+            "share_bonus": _try_number(
+                raw.get("share_bonus", raw.get("BonusShareRatio", ""))
+            ),
             "record_date": raw.get("record_date", raw.get("recordDate", "")),
             "announce_date": raw.get("announce_date", raw.get("announceDate", "")),
             "dividend_year": raw.get("dividend_year", raw.get("year", "")),
@@ -534,7 +590,9 @@ class WeStockProvider(BaseProvider):
             "collected_at": self._now(),
         }
 
-    def _normalize_shareholder(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
+    def _normalize_shareholder(
+        self, tables: list[list[dict[str, str]]], symbol: str
+    ) -> dict:
         result: dict = {
             "symbol": symbol,
             "source": "westock",
@@ -543,27 +601,41 @@ class WeStockProvider(BaseProvider):
         share_holders: list[dict] = []
         if tables and tables[0]:
             for row in tables[0]:
-                share_holders.append({
-                    "rank": _try_number(row.get("rank", row.get("HolderRank", ""))),
-                    "name": row.get("name", row.get("HolderName", "")),
-                    "shares": _try_number(row.get("shares", row.get("HoldAmount", ""))),
-                    "ratio": _try_number(row.get("ratio", row.get("HoldPercent", ""))),
-                    "change": _try_number(row.get("change", row.get("Change", ""))),
-                })
+                share_holders.append(
+                    {
+                        "rank": _try_number(row.get("rank", row.get("HolderRank", ""))),
+                        "name": row.get("name", row.get("HolderName", "")),
+                        "shares": _try_number(
+                            row.get("shares", row.get("HoldAmount", ""))
+                        ),
+                        "ratio": _try_number(
+                            row.get("ratio", row.get("HoldPercent", ""))
+                        ),
+                        "change": _try_number(row.get("change", row.get("Change", ""))),
+                    }
+                )
         result["top_shareholders"] = share_holders
 
         holder_count: list[dict] = []
         if len(tables) >= 2 and tables[1]:
             for row in tables[1]:
-                holder_count.append({
-                    "date": row.get("date", row.get("EndDate", "")),
-                    "total_holders": _try_number(row.get("total_holders", row.get("HolderTotal", ""))),
-                    "avg_shares": _try_number(row.get("avg_shares", row.get("AvgShares", ""))),
-                })
+                holder_count.append(
+                    {
+                        "date": row.get("date", row.get("EndDate", "")),
+                        "total_holders": _try_number(
+                            row.get("total_holders", row.get("HolderTotal", ""))
+                        ),
+                        "avg_shares": _try_number(
+                            row.get("avg_shares", row.get("AvgShares", ""))
+                        ),
+                    }
+                )
         result["holder_count_history"] = holder_count
         return result
 
-    def _normalize_reserve(self, tables: list[list[dict[str, str]]], symbol: str) -> dict:
+    def _normalize_reserve(
+        self, tables: list[list[dict[str, str]]], symbol: str
+    ) -> dict:
         if not tables or not tables[0]:
             return {
                 "symbol": symbol,
@@ -575,10 +647,18 @@ class WeStockProvider(BaseProvider):
             "symbol": symbol,
             "report_period": row.get("report_period", row.get("ReportDate", "")),
             "forecast_type": row.get("forecast_type", row.get("ForcastType", "")),
-            "profit_lower": _try_number(row.get("profit_lower", row.get("NetProfitLow", ""))),
-            "profit_upper": _try_number(row.get("profit_upper", row.get("NetProfitHigh", ""))),
-            "change_lower": _try_number(row.get("change_lower", row.get("ChangeLow", ""))),
-            "change_upper": _try_number(row.get("change_upper", row.get("ChangeHigh", ""))),
+            "profit_lower": _try_number(
+                row.get("profit_lower", row.get("NetProfitLow", ""))
+            ),
+            "profit_upper": _try_number(
+                row.get("profit_upper", row.get("NetProfitHigh", ""))
+            ),
+            "change_lower": _try_number(
+                row.get("change_lower", row.get("ChangeLow", ""))
+            ),
+            "change_upper": _try_number(
+                row.get("change_upper", row.get("ChangeHigh", ""))
+            ),
             "summary": row.get("summary", row.get("Summary", "")),
             "source": "westock",
             "collected_at": self._now(),
@@ -705,10 +785,18 @@ class WeStockProvider(BaseProvider):
             "symbol": symbol,
             "report_date": raw.get("date", ""),
             "holder_account": _try_number(raw.get("holderAccount", "")),
-            "individual_holder_share": _try_number(raw.get("individualHolderShare", "")),
-            "individual_holder_ratio": _try_number(raw.get("individualHolderRatio", "")),
-            "institution_holder_share": _try_number(raw.get("institutionHolderShare", "")),
-            "institution_holder_ratio": _try_number(raw.get("institutionHolderRatio", "")),
+            "individual_holder_share": _try_number(
+                raw.get("individualHolderShare", "")
+            ),
+            "individual_holder_ratio": _try_number(
+                raw.get("individualHolderRatio", "")
+            ),
+            "institution_holder_share": _try_number(
+                raw.get("institutionHolderShare", "")
+            ),
+            "institution_holder_ratio": _try_number(
+                raw.get("institutionHolderRatio", "")
+            ),
             "top10_share": _try_number(raw.get("top10Share", "")),
             "top10_ratio": _try_number(raw.get("top10Ratio", "")),
             "source": "westock",
@@ -767,9 +855,7 @@ class WeStockProvider(BaseProvider):
             return []
         return [self._normalize_hot_sector_row(row) for row in tables[0]]
 
-    def _normalize_board_sector_row(
-        self, raw: dict, sector_type: str
-    ) -> dict:
+    def _normalize_board_sector_row(self, raw: dict, sector_type: str) -> dict:
         """board 输出字段:
         - 行业/概念涨幅: name / changePct / turnoverRate / changePct5d /
           changePct20d / leadStock
@@ -884,13 +970,13 @@ class WeStockProvider(BaseProvider):
     # 港股 xjll 表:  EndDate / NetOperateCashFlow / NetInvestCashFlow / ...
     # ------------------------------------------------------------------
 
-    def _normalize_us_finance_row(
-        self, raw: dict, symbol: str, ftype: str
-    ) -> dict:
+    def _normalize_us_finance_row(self, raw: dict, symbol: str, ftype: str) -> dict:
         # 区分季度（_Q 后缀）和年度（无后缀）
-        period_type = "quarter" if any(
-            str(k).endswith("_Q") for k in raw.keys() if k != "SecuCode"
-        ) else "annual"
+        period_type = (
+            "quarter"
+            if any(str(k).endswith("_Q") for k in raw.keys() if k != "SecuCode")
+            else "annual"
+        )
         # 优先取 EndDate，否则用 _date
         end_date = raw.get("EndDate", "") or raw.get("_date", "")
         # 选对应周期的字段（季度优先 _Q 后缀，年度无后缀）
@@ -900,7 +986,11 @@ class WeStockProvider(BaseProvider):
         if end_str and len(end_str) >= 10:
             year = end_str[:4]
             month = end_str[5:7]
-            period_mark = f"{year}Q{(int(month) - 1) // 3 + 1}" if period_type == "quarter" else f"{year}FY"
+            period_mark = (
+                f"{year}Q{(int(month) - 1) // 3 + 1}"
+                if period_type == "quarter"
+                else f"{year}FY"
+            )
         else:
             period_mark = ""
 
@@ -940,17 +1030,17 @@ class WeStockProvider(BaseProvider):
             "collected_at": self._now(),
         }
 
-    def _normalize_hk_finance_row(
-        self, raw: dict, symbol: str, ftype: str
-    ) -> dict:
+    def _normalize_hk_finance_row(self, raw: dict, symbol: str, ftype: str) -> dict:
         # 港股 zhsy 表字段例: BasicEPS / OperatingIncome / OperatingProfit /
         #  NetAssetPS / ProfitToShareholders / OperatingIncome / ...
         # zcfz 表字段例: TotalAssets / TotalLiability / SEWithoutMI / ...
         # xjll 表字段例: NetOperateCashFlow / NetInvestCashFlow /
         #  NetFinanceCashFlow / ...
-        period_type = "quarter" if raw.get("ReportType") in (
-            "第一季报", "中报", "第三季报"
-        ) else "annual"
+        period_type = (
+            "quarter"
+            if raw.get("ReportType") in ("第一季报", "中报", "第三季报")
+            else "annual"
+        )
         end_date = raw.get("EndDate", "") or raw.get("_date", "")
         end_str = str(end_date)
         if end_str and len(end_str) >= 10:
@@ -1031,9 +1121,7 @@ class WeStockProvider(BaseProvider):
         """
         # event_date 优先 sgrq（申购日），无则 listingDate（美股），最后 ssrq
         event_date = (
-            raw.get("sgrq", "")
-            or raw.get("listingDate", "")
-            or raw.get("ssrq", "")
+            raw.get("sgrq", "") or raw.get("listingDate", "") or raw.get("ssrq", "")
         )
         return {
             "event_type": "ipo",
@@ -1105,7 +1193,9 @@ class WeStockProvider(BaseProvider):
         tables, err = await self._run_cli(f"chip {symbol}")
         if err or not tables or not tables[0]:
             return {
-                "symbol": symbol, "source": "westock", "collected_at": self._now(),
+                "symbol": symbol,
+                "source": "westock",
+                "collected_at": self._now(),
             }
         return self._normalize_chip_row(tables[0][0], symbol)
 
@@ -1120,7 +1210,9 @@ class WeStockProvider(BaseProvider):
         tables, err = await self._run_cli(f"margintrade {symbol}")
         if err or not tables or not tables[0]:
             return {
-                "symbol": symbol, "source": "westock", "collected_at": self._now(),
+                "symbol": symbol,
+                "source": "westock",
+                "collected_at": self._now(),
             }
         return self._normalize_margintrade_row(tables[0][0], symbol)
 
@@ -1142,8 +1234,10 @@ class WeStockProvider(BaseProvider):
             return None
         if not tables[0]:
             return {
-                "symbol": symbol, "date": date,
-                "source": "westock", "collected_at": self._now(),
+                "symbol": symbol,
+                "date": date,
+                "source": "westock",
+                "collected_at": self._now(),
             }
         return self._normalize_blocktrade_row(tables, symbol, date)
 
@@ -1228,11 +1322,21 @@ class WeStockProvider(BaseProvider):
             )
             if isinstance(tv, (int, float)):
                 turnover_value = (turnover_value or 0) + float(tv)
-            tp_raw = row.get("turnoverPrice") or row.get("成交价格") or row.get("price") or ""
+            tp_raw = (
+                row.get("turnoverPrice")
+                or row.get("成交价格")
+                or row.get("price")
+                or ""
+            )
             tp = _try_number(tp_raw)
             if isinstance(tp, (int, float)) and turnover_price is None:
                 turnover_price = float(tp)
-            dr_raw = row.get("discountRate") or row.get("closeDiscountRate") or row.get("折溢率") or ""
+            dr_raw = (
+                row.get("discountRate")
+                or row.get("closeDiscountRate")
+                or row.get("折溢率")
+                or ""
+            )
             dr = _try_number(dr_raw)
             if isinstance(dr, (int, float)) and close_discount_rate is None:
                 close_discount_rate = float(dr)
@@ -1266,8 +1370,12 @@ class WeStockProvider(BaseProvider):
             "turnover_price": turnover_price,
             "turnover_value": turnover_value,
             "close_discount_rate": close_discount_rate,
-            "buy_department": json.dumps(buy_departments, ensure_ascii=False) if buy_departments else None,
-            "sell_department": json.dumps(sell_departments, ensure_ascii=False) if sell_departments else None,
+            "buy_department": json.dumps(buy_departments, ensure_ascii=False)
+            if buy_departments
+            else None,
+            "sell_department": json.dumps(sell_departments, ensure_ascii=False)
+            if sell_departments
+            else None,
             "source": "westock",
             "collected_at": self._now(),
         }
@@ -1328,8 +1436,12 @@ class WeStockProvider(BaseProvider):
             "close_price": _try_number(overview.get("closePrice")),
             "change_pct": _try_number(overview.get("changePct")),
             "net_buy_amount": _try_number(overview.get("netBuyAmount")),
-            "buy_department": json.dumps(buy_departments, ensure_ascii=False) if buy_departments else None,
-            "sell_department": json.dumps(sell_departments, ensure_ascii=False) if sell_departments else None,
+            "buy_department": json.dumps(buy_departments, ensure_ascii=False)
+            if buy_departments
+            else None,
+            "sell_department": json.dumps(sell_departments, ensure_ascii=False)
+            if sell_departments
+            else None,
             "reason": overview.get("reason", ""),
             "source": "westock",
             "collected_at": self._now(),

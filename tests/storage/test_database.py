@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -73,6 +73,7 @@ async def test_get_db_auto_close(db_path: str) -> None:
     with pytest.raises(sqlite3.ProgrammingError):
         conn.execute("SELECT 1")
 
+
 async def test_get_db_commit_fail_triggers_rollback_and_close() -> None:
     """验证 commit 失败时触发 rollback 且连接关闭 (commit→rollback→close 链)。"""
     import aiosqlite
@@ -127,5 +128,3 @@ async def test_get_db_commit_fail_triggers_rollback_and_close() -> None:
 
     # 清理
     Path(db_path).unlink(missing_ok=True)
-
-

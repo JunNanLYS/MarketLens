@@ -19,6 +19,7 @@ BaseProvider 保留为（StructuredProvider, NewsProvider）的多继承占位�
 _HttpClientMixin：httpx.AsyncClient 懒加载 + close 公共逻辑。
 子类覆写 _client_kwargs() 即可注入 headers/follow_redirects 等自定义参数。
 """
+
 from abc import ABC
 
 import httpx
@@ -77,6 +78,7 @@ class StructuredProvider(ABC):
     def _now() -> str:
         """返回当前 UTC 时间的 ISO 格式字符串。"""
         from datetime import datetime, timezone
+
         return datetime.now(timezone.utc).isoformat()
 
     async def close(self) -> None:
@@ -132,6 +134,7 @@ class NewsProvider(ABC):
     def _now() -> str:
         """返回当前 UTC 时间的 ISO 格式字符串。"""
         from datetime import datetime, timezone
+
         return datetime.now(timezone.utc).isoformat()
 
     async def close(self) -> None:

@@ -693,6 +693,7 @@ async def init_db(db_path: str | None = None) -> None:
 
 def init_db_sync(db_path: str | None = None) -> None:
     from backend.storage.database import get_db
+
     with get_db(db_path) as conn:
         for ddl in TABLE_DDLS:
             conn.execute(ddl)

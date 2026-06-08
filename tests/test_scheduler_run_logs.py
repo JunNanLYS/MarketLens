@@ -66,15 +66,22 @@ class TestRunFunctionsWriteRunLogs:
     """验证 _run_* 包装函数调用子服务后 run_logs 持久化。"""
 
     @patch("backend.scheduler.jobs.asyncio.run", side_effect=_run_coro_in_thread)
-    @patch("backend.collectors.create_providers", return_value={"structured": [], "news": []})
+    @patch(
+        "backend.collectors.create_providers",
+        return_value={"structured": [], "news": []},
+    )
     @patch("backend.services.collection_service.CollectionService")
     async def test_run_quote_writes_run_log(
-        self, mock_svc_cls: MagicMock, mock_create: MagicMock, mock_asyncio_run: MagicMock
+        self,
+        mock_svc_cls: MagicMock,
+        mock_create: MagicMock,
+        mock_asyncio_run: MagicMock,
     ) -> None:
         """调用 _run_quote 后 run_logs 表中应有 quote 记录。"""
         from backend.scheduler.jobs import _run_quote
 
         mock_instance = MagicMock()
+
         async def _fake_collect():
             async with aget_db() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -82,6 +89,7 @@ class TestRunFunctionsWriteRunLogs:
                     "INSERT INTO run_logs (task_name, status, started_at, finished_at, affected_assets) VALUES (?, ?, ?, ?, ?)",
                     ("quote", "success", now, now, 3),
                 )
+
         mock_instance.collect_quotes = _fake_collect
         mock_svc_cls.return_value = mock_instance
 
@@ -100,10 +108,16 @@ class TestRunFunctionsWriteRunLogs:
         assert row["finished_at"] is not None
 
     @patch("backend.scheduler.jobs.asyncio.run", side_effect=_run_coro_in_thread)
-    @patch("backend.collectors.create_providers", return_value={"structured": [], "news": []})
+    @patch(
+        "backend.collectors.create_providers",
+        return_value={"structured": [], "news": []},
+    )
     @patch("backend.services.news_service.NewsService")
     async def test_run_news_writes_run_log(
-        self, mock_svc_cls: MagicMock, mock_create: MagicMock, mock_asyncio_run: MagicMock
+        self,
+        mock_svc_cls: MagicMock,
+        mock_create: MagicMock,
+        mock_asyncio_run: MagicMock,
     ) -> None:
         """调用 _run_news 后 run_logs 表中应有 news 记录。"""
         from backend.scheduler import jobs
@@ -116,6 +130,7 @@ class TestRunFunctionsWriteRunLogs:
         # patch `backend.services.news_service.NewsService` 不会影响 jobs.NewsService 引用。
         # 同步 patch jobs.NewsService 让 _get_news_service() 拿到 mock 实例。
         mock_instance = MagicMock()
+
         async def _fake_collect():
             async with aget_db() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -124,6 +139,7 @@ class TestRunFunctionsWriteRunLogs:
                     ("news", "success", now, now, 5),
                 )
             return {"collected": 0, "skipped": 0}
+
         mock_instance.collect_news = _fake_collect
         mock_svc_cls.return_value = mock_instance
 

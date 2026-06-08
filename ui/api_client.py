@@ -34,7 +34,9 @@ def _handle_response(response: httpx.Response) -> dict[str, Any] | list[Any]:
         error_data: dict[str, Any] = response.json()
     except Exception:
         error_data = {"error": "UNKNOWN", "detail": response.text}
-    st.error(f"请求失败: {error_data.get('detail', error_data.get('error', '未知错误'))}")
+    st.error(
+        f"请求失败: {error_data.get('detail', error_data.get('error', '未知错误'))}"
+    )
     return error_data
 
 
@@ -112,13 +114,17 @@ def get_kline(symbol: str, limit: int = 60) -> dict[str, Any]:
 
 def get_finance(symbol: str, limit: int = 4) -> dict[str, Any]:
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get(f"/data/finance/{symbol}", params={"limit": limit})
+    resp: httpx.Response = client.get(
+        f"/data/finance/{symbol}", params={"limit": limit}
+    )
     return _handle_response(resp)
 
 
 def get_fund_flow(symbol: str, days: int = 5) -> dict[str, Any]:
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get(f"/data/fund-flow/{symbol}", params={"days": days})
+    resp: httpx.Response = client.get(
+        f"/data/fund-flow/{symbol}", params={"days": days}
+    )
     return _handle_response(resp)
 
 
@@ -140,18 +146,24 @@ def get_latest_report(symbol: str) -> dict[str, Any]:
     return _handle_response(resp)
 
 
-def generate_reports(symbols: list[str] | None = None, force: bool = False) -> dict[str, Any]:
+def generate_reports(
+    symbols: list[str] | None = None, force: bool = False
+) -> dict[str, Any]:
     client: httpx.Client = _get_client()
     payload: dict[str, Any] = {"force": force}
     if symbols:
         payload["symbols"] = symbols
-    resp: httpx.Response = client.post("/reports/generate", json=payload, timeout=_TIMEOUT_LIVE)
+    resp: httpx.Response = client.post(
+        "/reports/generate", json=payload, timeout=_TIMEOUT_LIVE
+    )
     return _handle_response(resp)
 
 
 def get_accounts(include_deleted: bool = False) -> list[dict[str, Any]]:
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.get("/accounts", params={"include_deleted": include_deleted})
+    resp: httpx.Response = client.get(
+        "/accounts", params={"include_deleted": include_deleted}
+    )
     return _handle_response(resp)
 
 
@@ -200,7 +212,9 @@ def get_positions(account_id: int | None = None) -> list[dict[str, Any]]:
     return _handle_response(resp)
 
 
-def get_realized_pnl(account_id: int | None = None, symbol: str | None = None) -> dict[str, Any]:
+def get_realized_pnl(
+    account_id: int | None = None, symbol: str | None = None
+) -> dict[str, Any]:
     client: httpx.Client = _get_client()
     params: dict[str, Any] = {}
     if account_id is not None:
@@ -241,9 +255,7 @@ def get_shareholder(symbol: str) -> dict[str, Any]:
 def get_reserve(symbol: str) -> dict[str, Any]:
     """实时采集业绩预告——会触发 westock CLI subprocess。"""
     client: httpx.Client = _get_client()
-    resp: httpx.Response = client.post(
-        f"/data/reserve/{symbol}", timeout=_TIMEOUT_LIVE
-    )
+    resp: httpx.Response = client.post(f"/data/reserve/{symbol}", timeout=_TIMEOUT_LIVE)
     return _handle_response(resp)
 
 
@@ -400,9 +412,7 @@ def get_quote_history(
         params["from"] = from_
     if to:
         params["to"] = to
-    resp: httpx.Response = client.get(
-        f"/data/quotes/{symbol}/history", params=params
-    )
+    resp: httpx.Response = client.get(f"/data/quotes/{symbol}/history", params=params)
     return _handle_response(resp)
 
 
@@ -589,7 +599,9 @@ def refresh_finance(symbol: str, num: int = 4) -> dict[str, Any]:
     return _handle_response(resp)
 
 
-def refresh_calendar(market: str = "hk", exdiv_symbol: str | None = None) -> dict[str, Any]:
+def refresh_calendar(
+    market: str = "hk", exdiv_symbol: str | None = None
+) -> dict[str, Any]:
     """手动触发港美新股日历（ipo）+ 除权日历（exdiv）采集并落库。
 
     ``exdiv_symbol`` 为 None 时跳过 exdiv 采集。

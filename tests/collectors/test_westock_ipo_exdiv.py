@@ -2,6 +2,7 @@
 
 每组 3 段式：成功 / 空 / 异常
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ async def provider() -> WeStockProvider:
 # ═══════════════════════════════════════════════════════════════════
 # ipo_calendar (新股日历)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_ipo_calendar_hk_success(provider: WeStockProvider) -> None:
     """港股新股日历 → event_type=ipo / market=hk。"""
@@ -81,6 +83,7 @@ async def test_ipo_calendar_error_returns_empty(provider: WeStockProvider) -> No
 # ═══════════════════════════════════════════════════════════════════
 # exdiv_calendar (除权日历)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_exdiv_calendar_hk_success(provider: WeStockProvider) -> None:
     """港股 exdiv（腾讯）。"""

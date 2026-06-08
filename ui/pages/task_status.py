@@ -78,11 +78,17 @@ def render() -> None:
         for log in log_items:
             lc1, lc2, lc3, lc4, lc5 = st.columns([1.5, 1, 1, 1.5, 2])
             with lc1:
-                task_label: str = TASK_LABELS.get(log.get("task_name", ""), log.get("task_name", "-"))
+                task_label: str = TASK_LABELS.get(
+                    log.get("task_name", ""), log.get("task_name", "-")
+                )
                 st.text(task_label)
             with lc2:
                 log_s: str = log.get("status", "-")
-                color: str = {"success": "green", "failure": "red", "skipped": "orange"}.get(log_s, "gray")
+                color: str = {
+                    "success": "green",
+                    "failure": "red",
+                    "skipped": "orange",
+                }.get(log_s, "gray")
                 st.markdown(f":{color}[{log_s}]")
             with lc3:
                 st.text(f"标的: {log.get('affected_assets', '-')}")

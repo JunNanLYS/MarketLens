@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.neodata import verify_api_key
 from backend.scheduler.jobs import SchedulerManager, VALID_TASK_NAMES
@@ -18,7 +18,10 @@ def get_scheduler() -> SchedulerManager:
     if _manager is None:
         raise HTTPException(
             status_code=503,
-            detail={"error": "SCHEDULER_NOT_READY", "detail": "调度器未初始化，请稍后重试"},
+            detail={
+                "error": "SCHEDULER_NOT_READY",
+                "detail": "调度器未初始化，请稍后重试",
+            },
         )
     return _manager
 
@@ -40,10 +43,19 @@ def trigger_task(
     manager: SchedulerManager = Depends(get_scheduler),
 ) -> dict:
     if task_name not in VALID_TASK_NAMES:
-        raise HTTPException(status_code=404, detail={"error": "TASK_NOT_FOUND", "detail": f"任务 '{task_name}' 不存在"})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "TASK_NOT_FOUND", "detail": f"任务 '{task_name}' 不存在"},
+        )
     success: bool = manager.trigger_task(task_name)
     if not success:
-        raise HTTPException(status_code=500, detail={"error": "TRIGGER_FAILED", "detail": f"任务 '{task_name}' 触发失败"})
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "TRIGGER_FAILED",
+                "detail": f"任务 '{task_name}' 触发失败",
+            },
+        )
     return {"status": "triggered", "task_name": task_name}
 
 
@@ -57,8 +69,12 @@ def get_task_logs(
 ) -> dict:
     """查询任务运行日志。调度器不可用时回退到数据库直读。"""
     try:
-        return manager.get_task_logs(task_name=task_name, status=status, page=page, page_size=page_size)
+        return manager.get_task_logs(
+            task_name=task_name, status=status, page=page, page_size=page_size
+        )
     except RuntimeError:
         from backend.storage.database import query_run_logs
-        return query_run_logs(task_name=task_name, status=status, page=page, page_size=page_size)
 
+        return query_run_logs(
+            task_name=task_name, status=status, page=page, page_size=page_size
+        )

@@ -3,6 +3,7 @@
 验证 Provider 子类正确继承 StructuredProvider / NewsProvider，
 并保证 BaseProvider 仍可用作向后兼容的占位。
 """
+
 from __future__ import annotations
 
 from backend.collectors.base import BaseProvider, NewsProvider, StructuredProvider

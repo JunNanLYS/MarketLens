@@ -102,7 +102,10 @@ def get_account(account_id: int) -> dict:
     if account is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "ACCOUNT_NOT_FOUND", "detail": f"账户 {account_id} 不存在"},
+            detail={
+                "error": "ACCOUNT_NOT_FOUND",
+                "detail": f"账户 {account_id} 不存在",
+            },
         )
     return account
 
@@ -119,7 +122,10 @@ def update_account(
         if account is None:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "ACCOUNT_NOT_FOUND", "detail": f"账户 {account_id} 不存在"},
+                detail={
+                    "error": "ACCOUNT_NOT_FOUND",
+                    "detail": f"账户 {account_id} 不存在",
+                },
             )
         return account
     try:
@@ -137,7 +143,10 @@ def update_account(
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "ACCOUNT_NOT_FOUND", "detail": f"账户 {account_id} 不存在"},
+            detail={
+                "error": "ACCOUNT_NOT_FOUND",
+                "detail": f"账户 {account_id} 不存在",
+            },
         )
     return result
 
@@ -151,7 +160,10 @@ def delete_account(
     if not success:
         raise HTTPException(
             status_code=404,
-            detail={"error": "ACCOUNT_NOT_FOUND", "detail": f"账户 {account_id} 不存在"},
+            detail={
+                "error": "ACCOUNT_NOT_FOUND",
+                "detail": f"账户 {account_id} 不存在",
+            },
         )
     return None
 
@@ -213,7 +225,10 @@ def get_transaction(transaction_id: int) -> dict:
     if tx is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "TRANSACTION_NOT_FOUND", "detail": f"交易 {transaction_id} 不存在"},
+            detail={
+                "error": "TRANSACTION_NOT_FOUND",
+                "detail": f"交易 {transaction_id} 不存在",
+            },
         )
     return tx
 
@@ -230,7 +245,10 @@ def update_transaction(
         if tx is None:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "TRANSACTION_NOT_FOUND", "detail": f"交易 {transaction_id} 不存在"},
+                detail={
+                    "error": "TRANSACTION_NOT_FOUND",
+                    "detail": f"交易 {transaction_id} 不存在",
+                },
             )
         return tx
     try:
@@ -249,7 +267,10 @@ def update_transaction(
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "TRANSACTION_NOT_FOUND", "detail": f"交易 {transaction_id} 不存在"},
+            detail={
+                "error": "TRANSACTION_NOT_FOUND",
+                "detail": f"交易 {transaction_id} 不存在",
+            },
         )
     return result
 
@@ -269,7 +290,10 @@ def delete_transaction(
     if not success:
         raise HTTPException(
             status_code=404,
-            detail={"error": "TRANSACTION_NOT_FOUND", "detail": f"交易 {transaction_id} 不存在"},
+            detail={
+                "error": "TRANSACTION_NOT_FOUND",
+                "detail": f"交易 {transaction_id} 不存在",
+            },
         )
     return None
 

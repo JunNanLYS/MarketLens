@@ -11,7 +11,9 @@ from backend.storage.schema import init_db_sync as init_db
 
 
 class FakeProvider(BaseProvider):
-    def __init__(self, name: str = "fake", search_results: list[dict] | None = None) -> None:
+    def __init__(
+        self, name: str = "fake", search_results: list[dict] | None = None
+    ) -> None:
         super().__init__(name=name)
         self._search_results = search_results or []
 
@@ -65,12 +67,14 @@ async def test_add_asset_success(service: AssetService) -> None:
 
 
 async def test_add_asset_with_name_and_tags(service: AssetService) -> None:
-    result = await service.add_asset({
-        "symbol": "sh600519",
-        "name": "贵州茅台",
-        "tags": ["白酒", "A股"],
-        "notes": "长期持有",
-    })
+    result = await service.add_asset(
+        {
+            "symbol": "sh600519",
+            "name": "贵州茅台",
+            "tags": ["白酒", "A股"],
+            "notes": "长期持有",
+        }
+    )
     assert result["name"] == "贵州茅台"
     assert result["tags"] == ["白酒", "A股"]
     assert result["notes"] == "长期持有"
@@ -153,8 +157,12 @@ async def test_get_assets_filter_by_market(service: AssetService) -> None:
 
 
 async def test_get_assets_filter_by_tag(service: AssetService) -> None:
-    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股", "tags": ["互联网"]})
-    await service.add_asset({"symbol": "sh600519", "name": "贵州茅台", "tags": ["白酒"]})
+    await service.add_asset(
+        {"symbol": "hk00700", "name": "腾讯控股", "tags": ["互联网"]}
+    )
+    await service.add_asset(
+        {"symbol": "sh600519", "name": "贵州茅台", "tags": ["白酒"]}
+    )
 
     result = service.get_assets(filters={"tag": "互联网"})
     assert len(result["items"]) == 1
@@ -214,7 +222,7 @@ async def test_get_asset_by_id_with_kline(service: AssetService) -> None:
             await conn.execute(
                 """INSERT INTO kline_daily (symbol, date, close, collected_at)
                    VALUES (?, ?, ?, datetime('now'))""",
-                ("hk00700", f"2026-05-{i+1:02d}", 370.0 + i * 0.3),
+                ("hk00700", f"2026-05-{i + 1:02d}", 370.0 + i * 0.3),
             )
 
     result = service.get_asset_by_id(asset["id"])
@@ -250,7 +258,7 @@ async def test_get_asset_by_id_with_fund_flow(service: AssetService) -> None:
             await conn.execute(
                 """INSERT INTO fund_flows (symbol, date, main_net_inflow, collected_at)
                    VALUES (?, ?, ?, datetime('now'))""",
-                ("hk00700", f"2026-05-{26+i:02d}", 100000000.0),
+                ("hk00700", f"2026-05-{26 + i:02d}", 100000000.0),
             )
 
     result = service.get_asset_by_id(asset["id"])

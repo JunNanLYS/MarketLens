@@ -70,7 +70,9 @@ async def aget_connection(db_path: str | None = None) -> aiosqlite.Connection:
 
 
 @asynccontextmanager
-async def aget_db(db_path: str | None = None) -> AsyncGenerator[aiosqlite.Connection, None]:
+async def aget_db(
+    db_path: str | None = None,
+) -> AsyncGenerator[aiosqlite.Connection, None]:
     """异步数据库上下文管理器。"""
     conn = await aget_connection(db_path)
     try:

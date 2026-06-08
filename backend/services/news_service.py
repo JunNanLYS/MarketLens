@@ -13,7 +13,6 @@ from backend.storage.database import get_connection_sync, get_db
 
 
 class NewsService:
-
     def __init__(self, news_providers: list[BaseProvider] | None = None) -> None:
         if news_providers is not None:
             self._providers = news_providers
@@ -28,7 +27,6 @@ class NewsService:
         # tags 缓存：(symbol, tags_str) -> list[re.Pattern]。旧实现用 id(row)
         # 作为 key,sqlite3.Row 的 id() 在 fetchall 后被 GC 回收,缓存实际从不命中。
         self._tag_patterns_cache: dict[tuple[str | None, str], list[re.Pattern]] = {}
-
 
     async def collect_news(self) -> dict[str, int]:
         """采集新闻并写入 news_items / raw_data，同时记录 run_logs 审计行。
@@ -55,7 +53,9 @@ class NewsService:
                 tracked_symbol_rows = conn.execute(
                     "SELECT symbol, name FROM tracked_assets WHERE enabled = 1"
                 ).fetchall()
-            tracked_symbols = [f"{r['name']}({r['symbol']})" for r in tracked_symbol_rows]
+            tracked_symbols = [
+                f"{r['name']}({r['symbol']})" for r in tracked_symbol_rows
+            ]
 
             for provider in self._providers:
                 try:
@@ -109,7 +109,9 @@ class NewsService:
                         )
                         for s in related_symbols:
                             affected_symbols_set.add(s)
-                        related_symbols_json = json.dumps(related_symbols, ensure_ascii=False)
+                        related_symbols_json = json.dumps(
+                            related_symbols, ensure_ascii=False
+                        )
 
                         now = datetime.now(timezone.utc).isoformat()
                         news_data = {
@@ -155,14 +157,18 @@ class NewsService:
                                 existing_urls.add(url)
 
                             if url:
-                                raw_json = json.dumps(item, ensure_ascii=False, default=str)
+                                raw_json = json.dumps(
+                                    item, ensure_ascii=False, default=str
+                                )
                                 conn.execute(
                                     """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
                                        VALUES (?, ?, ?, ?, ?)""",
                                     (None, news_data["source"], "news", raw_json, now),
                                 )
                         except Exception:
-                            logger.exception("新闻入库失败: title={}", news_data["title"])
+                            logger.exception(
+                                "新闻入库失败: title={}", news_data["title"]
+                            )
                             skipped += 1
 
                     finished_at = datetime.now(timezone.utc).isoformat()
@@ -178,7 +184,14 @@ class NewsService:
                     conn.execute(
                         """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                            VALUES (?, ?, ?, ?, ?, ?)""",
-                        ("news", status, started_at, finished_at, error_message, affected_assets),
+                        (
+                            "news",
+                            status,
+                            started_at,
+                            finished_at,
+                            error_message,
+                            affected_assets,
+                        ),
                     )
                     conn.commit()
                 except Exception:
@@ -221,13 +234,26 @@ class NewsService:
                         conn_finish.execute(
                             """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                                VALUES (?, ?, ?, ?, ?, ?)""",
-                            ("news", status, started_at, finished_at_final, error_message, 0),
+                            (
+                                "news",
+                                status,
+                                started_at,
+                                finished_at_final,
+                                error_message,
+                                0,
+                            ),
                         )
             except Exception:
                 # 兜底写入 run_logs 失败：仅记日志，不影响原异常向上传播。
                 logger.exception("collect_news 兜底写入 run_logs 失败")
 
-    def _match_symbols_with_conn(self, conn: sqlite3.Connection, title: str, content: str | None = None, tracked_assets_rows: list | None = None) -> list[str]:
+    def _match_symbols_with_conn(
+        self,
+        conn: sqlite3.Connection,
+        title: str,
+        content: str | None = None,
+        tracked_assets_rows: list | None = None,
+    ) -> list[str]:
         if tracked_assets_rows is None:
             tracked_assets_rows = conn.execute(
                 "SELECT symbol, name, tags FROM tracked_assets WHERE enabled = 1"
@@ -270,7 +296,7 @@ class NewsService:
         pattern = self._symbol_patterns.get(symbol)
         if pattern is None:
             pattern = re.compile(
-                r'(?<![a-zA-Z0-9])' + re.escape(symbol) + r'(?![a-zA-Z0-9])'
+                r"(?<![a-zA-Z0-9])" + re.escape(symbol) + r"(?![a-zA-Z0-9])"
             )
             self._symbol_patterns[symbol] = pattern
         return pattern
@@ -284,9 +310,7 @@ class NewsService:
         if cached is not None:
             return cached
         tags = [t.strip() for t in tags_str.split(",") if t.strip()]
-        compiled: list[re.Pattern] = [
-            re.compile(re.escape(t)) for t in tags if t
-        ]
+        compiled: list[re.Pattern] = [re.compile(re.escape(t)) for t in tags if t]
         self._tag_patterns_cache[cache_key] = compiled
         return compiled
 
@@ -315,7 +339,7 @@ class NewsService:
 
         if "days" in effective_filters:
             conditions.append("published_at >= datetime('now', ?)")
-            params.append(f'-{effective_filters["days"]} days')
+            params.append(f"-{effective_filters['days']} days")
 
         if "sentiment" in effective_filters:
             conditions.append("sentiment = ?")
@@ -342,7 +366,9 @@ class NewsService:
         items: list[dict[str, Any]] = []
         for row in rows:
             item = dict(row)
-            item["related_symbols"] = self._parse_related_symbols(item.get("related_symbols"))
+            item["related_symbols"] = self._parse_related_symbols(
+                item.get("related_symbols")
+            )
             items.append(item)
 
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -365,7 +391,9 @@ class NewsService:
             if row is None:
                 return None
             result = dict(row)
-            result["related_symbols"] = self._parse_related_symbols(result.get("related_symbols"))
+            result["related_symbols"] = self._parse_related_symbols(
+                result.get("related_symbols")
+            )
             return result
 
     @staticmethod

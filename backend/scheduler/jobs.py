@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -60,10 +60,9 @@ def _check_neo_data_token_on_startup() -> None:
         from backend.collectors.neodata_client import NeoDataClient
 
         config = get_config()
-        sources: list[dict] = (
-            list(config.get("data_sources", {}).get("structured", []))
-            + list(config.get("data_sources", {}).get("news", []))
-        )
+        sources: list[dict] = list(
+            config.get("data_sources", {}).get("structured", [])
+        ) + list(config.get("data_sources", {}).get("news", []))
         neodata_cfg = next(
             (s for s in sources if s.get("provider") == "NeoDataProvider"),
             {},
@@ -119,6 +118,7 @@ def _check_neo_data_token_on_startup() -> None:
             )
     except Exception:
         logger.exception("写入 NeoData 健康检查 run_logs 失败")
+
 
 TASK_DESCRIPTIONS: dict[str, str] = {
     "quote": "实时行情采集",
@@ -247,7 +247,10 @@ def _run_cleanup() -> None:
                         if deleted > 0:
                             logger.info(
                                 "清理了 {} 条 {} 过期数据 ({}>{}天)",
-                                deleted, table, time_col, days,
+                                deleted,
+                                table,
+                                time_col,
+                                days,
                             )
                     except Exception:
                         # 单表失败不影响其他表：cleanup 是幂等可重入的
@@ -485,8 +488,8 @@ class SchedulerManager:
             含 items 和 page_info 的字典
         """
         return query_run_logs(
-            task_name=task_name, status=status, page=page, page_size=page_size,
+            task_name=task_name,
+            status=status,
+            page=page,
+            page_size=page_size,
         )
-
-
-

@@ -20,9 +20,17 @@ class NeoDataProvider(BaseProvider):
     详见 backend/collectors/neodata_client.py::TokenManager。
     """
 
-    def __init__(self, name: str, timeout: int = 30, params: dict | None = None, optional: bool = True) -> None:
+    def __init__(
+        self,
+        name: str,
+        timeout: int = 30,
+        params: dict | None = None,
+        optional: bool = True,
+    ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
-        self._endpoint: str = self.params.get("endpoint", "https://copilot.tencent.com/agenttool/v1/neodata")
+        self._endpoint: str = self.params.get(
+            "endpoint", "https://copilot.tencent.com/agenttool/v1/neodata"
+        )
         self._config_token: str | None = self.params.get("token", "") or None
         # 懒加载 NeoDataClient：底层持有 httpx.AsyncClient，
         # 延迟到首次 await 使用时再创建，避免 import 阶段阻塞。
@@ -46,7 +54,6 @@ class NeoDataProvider(BaseProvider):
             await self._client.close()
             self._client = None
 
-
     def _log_error(self, msg: str, **kwargs: object) -> None:
         if self.optional:
             logger.warning(msg, **kwargs)
@@ -58,7 +65,11 @@ class NeoDataProvider(BaseProvider):
             client = self._get_inner_client()
             return await client.query(query_text, data_type=data_type)
         except Exception as e:
-            self._log_error("NeoData 查询异常: query={query}, error={error}", query=query_text, error=e)
+            self._log_error(
+                "NeoData 查询异常: query={query}, error={error}",
+                query=query_text,
+                error=e,
+            )
             return None
 
     # ------------------------------------------------------------------
@@ -72,7 +83,7 @@ class NeoDataProvider(BaseProvider):
         entities: list[dict] = []
         try:
             api_data = result.get("data", {}).get("apiData", {})
-            for ent in (api_data.get("entity") or []):
+            for ent in api_data.get("entity") or []:
                 code = ent.get("code", "")
                 name = ent.get("name", "")
                 market = ""
@@ -80,13 +91,15 @@ class NeoDataProvider(BaseProvider):
                     suffix = code.rsplit(".", 1)[1].upper()
                     market_map = {"HK": "hk", "US": "us", "SH": "sh", "SZ": "sz"}
                     market = market_map.get(suffix, "")
-                entities.append({
-                    "symbol": code,
-                    "name": name,
-                    "market": market,
-                    "source": "neodata",
-                    "collected_at": self._now(),
-                })
+                entities.append(
+                    {
+                        "symbol": code,
+                        "name": name,
+                        "market": market,
+                        "source": "neodata",
+                        "collected_at": self._now(),
+                    }
+                )
         except Exception as e:
             self._log_error("NeoData search 解析异常: {error}", error=e)
         return entities
@@ -125,7 +138,7 @@ class NeoDataProvider(BaseProvider):
             return ""
         parts: list[str] = []
         api_data = result.get("data", {}).get("apiData", {})
-        for recall in (api_data.get("apiRecall") or []):
+        for recall in api_data.get("apiRecall") or []:
             c = recall.get("content", "")
             if c:
                 parts.append(c)
@@ -139,7 +152,10 @@ class NeoDataProvider(BaseProvider):
             (r"归母净利润\s*[:：]?\s*([\d,]+\.?\d*)\s*亿", "净利润"),
             (r"净利润\s*[:：]?\s*([\d,]+\.?\d*)\s*亿", "净利润"),
             (r"营收[^\d]*?[增加长涨]\s*[:：]?\s*([\-\d,]+\.?\d*)%?", "营收同比增长"),
-            (r"净利润[^\d]*?[增加长涨]\s*[:：]?\s*([\-\d,]+\.?\d*)%?", "净利润同比增长"),
+            (
+                r"净利润[^\d]*?[增加长涨]\s*[:：]?\s*([\-\d,]+\.?\d*)%?",
+                "净利润同比增长",
+            ),
             (r"每股收益\s*[:：]?\s*([\d,]+\.?\d*)\s*元?", "每股收益"),
             (r"净资产收益率\s*[:：]?\s*([\d,]+\.?\d*)%?", "净资产收益率"),
             (r"ROE\s*[:：]?\s*([\d,]+\.?\d*)%?", "净资产收益率"),
@@ -156,7 +172,9 @@ class NeoDataProvider(BaseProvider):
                 result[key] = m.group(1)
         return result
 
-    async def _get_basic_info(self, symbol: str, query_text: str, result: dict | None = None) -> dict[str, str] | None:
+    async def _get_basic_info(
+        self, symbol: str, query_text: str, result: dict | None = None
+    ) -> dict[str, str] | None:
         if result is None:
             result = await self._query(query_text)
         if result is None:
@@ -164,14 +182,18 @@ class NeoDataProvider(BaseProvider):
         try:
             api_data = result.get("data", {}).get("apiData", {})
             merged: dict[str, str] = {}
-            for recall in (api_data.get("apiRecall") or []):
+            for recall in api_data.get("apiRecall") or []:
                 content = recall.get("content", "")
                 if content and (":" in content or "：" in content):
                     parsed = self._parse_basic_info_content(content)
                     merged.update(parsed)
             return merged if merged else None
         except Exception as e:
-            self._log_error("NeoData basic_info 解析异常: symbol={symbol}, error={error}", symbol=symbol, error=e)
+            self._log_error(
+                "NeoData basic_info 解析异常: symbol={symbol}, error={error}",
+                symbol=symbol,
+                error=e,
+            )
         return None
 
     @staticmethod
@@ -204,13 +226,21 @@ class NeoDataProvider(BaseProvider):
                 "symbol": symbol,
                 "price": self._try_float(info.get("最新价格") or info.get("最新价")),
                 "change": self._try_float(info.get("涨跌额")),
-                "change_pct": self._try_float(info.get("当日涨跌幅") or info.get("涨跌幅")),
+                "change_pct": self._try_float(
+                    info.get("当日涨跌幅") or info.get("涨跌幅")
+                ),
                 "open": self._try_float(info.get("今日开盘价格") or info.get("今开")),
                 "high": self._try_float(info.get("最高价") or info.get("最高")),
                 "low": self._try_float(info.get("最低价") or info.get("最低")),
-                "prev_close": self._try_float(info.get("昨日收盘价格") or info.get("昨收")),
-                "volume": self._try_float(info.get("成交数量(手)") or info.get("成交量")),
-                "amount": self._try_float(info.get("成交金额(万元)") or info.get("成交额")),
+                "prev_close": self._try_float(
+                    info.get("昨日收盘价格") or info.get("昨收")
+                ),
+                "volume": self._try_float(
+                    info.get("成交数量(手)") or info.get("成交量")
+                ),
+                "amount": self._try_float(
+                    info.get("成交金额(万元)") or info.get("成交额")
+                ),
                 "source": "neodata",
                 "collected_at": self._now(),
             }
@@ -281,25 +311,33 @@ class NeoDataProvider(BaseProvider):
                 return items
             try:
                 doc_data = result.get("data", {}).get("docData", {})
-                for group in (doc_data.get("docRecall") or []):
-                    for doc in (group.get("docList") or []):
+                for group in doc_data.get("docRecall") or []:
+                    for doc in group.get("docList") or []:
                         published_at = None
                         pt = doc.get("publishTime")
                         if pt:
                             try:
-                                published_at = datetime.fromtimestamp(pt, tz=timezone.utc).isoformat()
+                                published_at = datetime.fromtimestamp(
+                                    pt, tz=timezone.utc
+                                ).isoformat()
                             except (ValueError, OSError):
                                 published_at = None
-                        items.append({
-                            "title": doc.get("title", ""),
-                            "source": doc.get("source", ""),
-                            "url": doc.get("url", "") or None,
-                            "content": doc.get("content"),
-                            "published_at": published_at,
-                            "collected_at": self._now(),
-                        })
+                        items.append(
+                            {
+                                "title": doc.get("title", ""),
+                                "source": doc.get("source", ""),
+                                "url": doc.get("url", "") or None,
+                                "content": doc.get("content"),
+                                "published_at": published_at,
+                                "collected_at": self._now(),
+                            }
+                        )
             except Exception as e:
-                self._log_error("NeoData fetch_news 解析异常: symbol={symbol}, error={error}", symbol=symbol, error=e)
+                self._log_error(
+                    "NeoData fetch_news 解析异常: symbol={symbol}, error={error}",
+                    symbol=symbol,
+                    error=e,
+                )
             return items
 
         per_symbol = await asyncio.gather(

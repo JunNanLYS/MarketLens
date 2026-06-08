@@ -87,12 +87,13 @@ async def test_safe_float() -> None:
 
 # ── quote 测试 ───────────────────────────────────────────────
 
+
 async def test_quote_success(provider: SinaProvider) -> None:
     sina_response = (
         'var hq_str_sh600519="贵州茅台,1800.00,1790.00,1810.00,1820.00,1795.00,'
-        '1805.00,1806.00,50000,90000000.00,1000,1805.00,2000,1806.00,'
-        '3000,1807.00,4000,1808.00,5000,1809.00,6000,1810.00,'
-        "2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00\";"
+        "1805.00,1806.00,50000,90000000.00,1000,1805.00,2000,1806.00,"
+        "3000,1807.00,4000,1808.00,5000,1809.00,6000,1810.00,"
+        '2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00";'
     )
     mock_resp = MagicMock()
     mock_resp.text = sina_response
@@ -114,9 +115,9 @@ async def test_quote_success(provider: SinaProvider) -> None:
 async def test_quote_change_calculation(provider: SinaProvider) -> None:
     sina_response = (
         'var hq_str_sh600519="贵州茅台,1790.00,1790.00,1800.00,1810.00,1785.00,'
-        '1805.00,1806.00,50000,90000000.00,1000,1805.00,2000,1806.00,'
-        '3000,1807.00,4000,1808.00,5000,1809.00,6000,1810.00,'
-        "2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00\";"
+        "1805.00,1806.00,50000,90000000.00,1000,1805.00,2000,1806.00,"
+        "3000,1807.00,4000,1808.00,5000,1809.00,6000,1810.00,"
+        '2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00";'
     )
     mock_resp = MagicMock()
     mock_resp.text = sina_response
@@ -135,13 +136,13 @@ async def test_quote_change_calculation(provider: SinaProvider) -> None:
 async def test_quote_multiple_symbols(provider: SinaProvider) -> None:
     sina_response = (
         'var hq_str_sh600519="贵州茅台,1800.00,1790.00,1810.00,1820.00,1795.00,'
-        '1805.00,1806.00,50000,90000000.00,1000,1805.00,2000,1806.00,'
-        '3000,1807.00,4000,1808.00,5000,1809.00,6000,1810.00,'
-        "2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00\";\n"
+        "1805.00,1806.00,50000,90000000.00,1000,1805.00,2000,1806.00,"
+        "3000,1807.00,4000,1808.00,5000,1809.00,6000,1810.00,"
+        '2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00";\n'
         'var hq_str_sz000001="平安银行,12.00,11.90,12.10,12.20,11.95,'
-        '12.05,12.06,100000,1200000.00,500,12.05,600,12.06,'
-        '700,12.07,800,12.08,900,12.09,1000,12.10,'
-        "2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00\";"
+        "12.05,12.06,100000,1200000.00,500,12.05,600,12.06,"
+        "700,12.07,800,12.08,900,12.09,1000,12.10,"
+        '2026-05-30,15:00:00,00,0.00,0.00,0.00,0.00,0.00,0.00,0.00";'
     )
     mock_resp = MagicMock()
     mock_resp.text = sina_response
@@ -165,9 +166,11 @@ async def test_quote_timeout_returns_empty(provider: SinaProvider) -> None:
 async def test_quote_http_error_returns_empty(provider: SinaProvider) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 500
-    mock_get = AsyncMock(side_effect=httpx.HTTPStatusError(
-        "Server Error", request=MagicMock(), response=mock_resp
-    ))
+    mock_get = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Server Error", request=MagicMock(), response=mock_resp
+        )
+    )
     _inject_client(provider, mock_get)
 
     result = await provider.quote(["sh600519"])
@@ -197,12 +200,25 @@ async def test_technical_returns_empty(provider: SinaProvider) -> None:
 
 # ── kline 测试 ────────────────────────────────────────────────
 
+
 async def test_kline_success(provider: SinaProvider) -> None:
     mock_data = [
-        {"day": "2026-06-01", "open": "1327.000", "high": "1327.000",
-         "low": "1301.310", "close": "1309.600", "volume": "43845"},
-        {"day": "2026-05-29", "open": "1270.600", "high": "1329.000",
-         "low": "1270.000", "close": "1326.000", "volume": "76478"},
+        {
+            "day": "2026-06-01",
+            "open": "1327.000",
+            "high": "1327.000",
+            "low": "1301.310",
+            "close": "1309.600",
+            "volume": "43845",
+        },
+        {
+            "day": "2026-05-29",
+            "open": "1270.600",
+            "high": "1329.000",
+            "low": "1270.000",
+            "close": "1326.000",
+            "volume": "76478",
+        },
     ]
     mock_resp = MagicMock()
     mock_resp.json.return_value = mock_data
@@ -268,9 +284,11 @@ async def test_kline_timeout(provider: SinaProvider) -> None:
 async def test_kline_http_error(provider: SinaProvider) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 500
-    mock_get = AsyncMock(side_effect=httpx.HTTPStatusError(
-        "Server Error", request=MagicMock(), response=mock_resp
-    ))
+    mock_get = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Server Error", request=MagicMock(), response=mock_resp
+        )
+    )
     _inject_client(provider, mock_get)
 
     result = await provider.kline("sh600519")
@@ -278,8 +296,16 @@ async def test_kline_http_error(provider: SinaProvider) -> None:
 
 
 async def test_kline_weekly_period(provider: SinaProvider) -> None:
-    mock_data = [{"day": "2026-06-01", "open": "1300", "high": "1320",
-                   "low": "1290", "close": "1310", "volume": "100000"}]
+    mock_data = [
+        {
+            "day": "2026-06-01",
+            "open": "1300",
+            "high": "1320",
+            "low": "1290",
+            "close": "1310",
+            "volume": "100000",
+        }
+    ]
     mock_resp = MagicMock()
     mock_resp.json.return_value = mock_data
     mock_resp.raise_for_status = MagicMock()
@@ -294,8 +320,16 @@ async def test_kline_weekly_period(provider: SinaProvider) -> None:
 
 
 async def test_kline_monthly_period(provider: SinaProvider) -> None:
-    mock_data = [{"day": "2026-05-01", "open": "1300", "high": "1310",
-                   "low": "1290", "close": "1305", "volume": "200000"}]
+    mock_data = [
+        {
+            "day": "2026-05-01",
+            "open": "1300",
+            "high": "1310",
+            "low": "1290",
+            "close": "1305",
+            "volume": "200000",
+        }
+    ]
     mock_resp = MagicMock()
     mock_resp.json.return_value = mock_data
     mock_resp.raise_for_status = MagicMock()
@@ -310,15 +344,16 @@ async def test_kline_monthly_period(provider: SinaProvider) -> None:
 
 # ── finance 测试 ──────────────────────────────────────────────
 
+
 async def test_finance_success(provider: SinaProvider) -> None:
     html = (
-        '<html><body>'
-        '<td>报告期：2025-12-31</td>'
-        '<td>营业收入 1,688,381.03</td>'
-        '<td>净利润 823,200.67</td>'
-        '<td>每股收益 65.66</td>'
-        '<td>净资产收益率 22.50</td>'
-        '</body></html>'
+        "<html><body>"
+        "<td>报告期：2025-12-31</td>"
+        "<td>营业收入 1,688,381.03</td>"
+        "<td>净利润 823,200.67</td>"
+        "<td>每股收益 65.66</td>"
+        "<td>净资产收益率 22.50</td>"
+        "</body></html>"
     )
     mock_resp = MagicMock()
     mock_resp.text = html
@@ -357,9 +392,11 @@ async def test_finance_timeout(provider: SinaProvider) -> None:
 async def test_finance_http_error(provider: SinaProvider) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 404
-    mock_get = AsyncMock(side_effect=httpx.HTTPStatusError(
-        "Not Found", request=MagicMock(), response=mock_resp
-    ))
+    mock_get = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Not Found", request=MagicMock(), response=mock_resp
+        )
+    )
     _inject_client(provider, mock_get)
 
     result = await provider.finance("sh600519")
@@ -368,16 +405,19 @@ async def test_finance_http_error(provider: SinaProvider) -> None:
 
 # ── fund_flow 测试 ───────────────────────────────────────────
 
+
 async def test_fund_flow_success(provider: SinaProvider) -> None:
-    mock_json = [{
-        "date": "2026-06-01",
-        "main_net_inflow": -189981349.0,
-        "superlarge_net": 100236788.0,
-        "large_net": -290218137.0,
-        "medium_net": 190296011.0,
-        "small_net": -314662.0,
-        "net_ratio": 0.01,
-    }]
+    mock_json = [
+        {
+            "date": "2026-06-01",
+            "main_net_inflow": -189981349.0,
+            "superlarge_net": 100236788.0,
+            "large_net": -290218137.0,
+            "medium_net": 190296011.0,
+            "small_net": -314662.0,
+            "net_ratio": 0.01,
+        }
+    ]
     mock_resp = MagicMock()
     mock_resp.text = json.dumps(mock_json)
     mock_resp.raise_for_status = MagicMock()

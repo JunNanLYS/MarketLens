@@ -1,4 +1,4 @@
-﻿"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
+"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
 
 import json
 from contextlib import suppress
@@ -7,7 +7,6 @@ from backend.config import get_config
 
 
 class EvidenceBuilder:
-
     @staticmethod
     def _evidence_limits() -> dict:
         """从配置文件获取证据查询的行数限制。"""
@@ -20,7 +19,9 @@ class EvidenceBuilder:
         }
 
     @staticmethod
-    def _classify_yoy_sign(curr_val: float | None, prev_val: float | None) -> str | None:
+    def _classify_yoy_sign(
+        curr_val: float | None, prev_val: float | None
+    ) -> str | None:
         """对 ``(curr_val, prev_val)`` 给出符号语义标签。
 
         数值同比仅看百分比会掩盖"扭亏 / 亏损收窄 / 亏损扩大"三类经济意义。
@@ -68,11 +69,15 @@ class EvidenceBuilder:
                 curr_val = latest.get(key)
                 prev_val = prev.get(key)
                 if curr_val is not None and prev_val is not None and prev_val != 0:
-                    latest[f"{key}_yoy"] = round((curr_val - prev_val) / abs(prev_val) * 100, 2)
+                    latest[f"{key}_yoy"] = round(
+                        (curr_val - prev_val) / abs(prev_val) * 100, 2
+                    )
                 else:
                     latest[f"{key}_yoy"] = None
                 # 同步产出结构化 sign hint，便于 AIAnalyzer 按经济意义解读
-                latest[f"{key}_yoy_sign"] = EvidenceBuilder._classify_yoy_sign(curr_val, prev_val)
+                latest[f"{key}_yoy_sign"] = EvidenceBuilder._classify_yoy_sign(
+                    curr_val, prev_val
+                )
             if latest.get("roe") is not None and prev.get("roe") is not None:
                 latest["roe_change"] = round(latest["roe"] - prev["roe"], 2)
             else:
@@ -116,27 +121,89 @@ class EvidenceBuilder:
         """
         data_sources: list[dict] = []
         if quote:
-            data_sources.append({"type": "quote", "source": quote.get("source", ""), "collected_at": quote.get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "quote",
+                    "source": quote.get("source", ""),
+                    "collected_at": quote.get("collected_at", ""),
+                }
+            )
         if klines:
-            data_sources.append({"type": "kline", "source": klines[0].get("source", ""), "collected_at": klines[0].get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "kline",
+                    "source": klines[0].get("source", ""),
+                    "collected_at": klines[0].get("collected_at", ""),
+                }
+            )
         if flows:
-            data_sources.append({"type": "fund_flow", "source": flows[0].get("source", ""), "collected_at": flows[0].get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "fund_flow",
+                    "source": flows[0].get("source", ""),
+                    "collected_at": flows[0].get("collected_at", ""),
+                }
+            )
         if finance:
-            data_sources.append({"type": "finance", "source": finance.get("source", ""), "collected_at": finance.get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "finance",
+                    "source": finance.get("source", ""),
+                    "collected_at": finance.get("collected_at", ""),
+                }
+            )
         if news:
-            data_sources.append({"type": "news", "source": "news_provider", "collected_at": ""})
+            data_sources.append(
+                {"type": "news", "source": "news_provider", "collected_at": ""}
+            )
         if technical:
-            data_sources.append({"type": "technical", "source": technical.get("source", ""), "collected_at": technical.get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "technical",
+                    "source": technical.get("source", ""),
+                    "collected_at": technical.get("collected_at", ""),
+                }
+            )
         if dividends:
-            data_sources.append({"type": "dividend", "source": dividends.get("source", ""), "collected_at": ""})
+            data_sources.append(
+                {
+                    "type": "dividend",
+                    "source": dividends.get("source", ""),
+                    "collected_at": "",
+                }
+            )
         if shareholders:
-            data_sources.append({"type": "shareholder", "source": shareholders.get("source", ""), "collected_at": ""})
+            data_sources.append(
+                {
+                    "type": "shareholder",
+                    "source": shareholders.get("source", ""),
+                    "collected_at": "",
+                }
+            )
         if forecasts:
-            data_sources.append({"type": "forecast", "source": forecasts.get("source", ""), "collected_at": ""})
+            data_sources.append(
+                {
+                    "type": "forecast",
+                    "source": forecasts.get("source", ""),
+                    "collected_at": "",
+                }
+            )
         if sector_ctx:
-            data_sources.append({"type": "sector_context", "source": sector_ctx.get("source", ""), "collected_at": sector_ctx.get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "sector_context",
+                    "source": sector_ctx.get("source", ""),
+                    "collected_at": sector_ctx.get("collected_at", ""),
+                }
+            )
         if us_finance:
-            data_sources.append({"type": "us_finance", "source": us_finance.get("source", ""), "collected_at": us_finance.get("collected_at", "")})
+            data_sources.append(
+                {
+                    "type": "us_finance",
+                    "source": us_finance.get("source", ""),
+                    "collected_at": us_finance.get("collected_at", ""),
+                }
+            )
         return data_sources
 
     @staticmethod
@@ -144,6 +211,7 @@ class EvidenceBuilder:
         close_conn = conn is None
         if conn is None:
             from backend.storage.database import aget_connection
+
             conn = await aget_connection()
 
         try:
@@ -165,8 +233,17 @@ class EvidenceBuilder:
             )
 
             data_sources = EvidenceBuilder._assemble_data_sources(
-                quote, klines, fund_flows, finance, news, technical,
-                dividends, shareholders, forecasts, sector_ctx, us_finance,
+                quote,
+                klines,
+                fund_flows,
+                finance,
+                news,
+                technical,
+                dividends,
+                shareholders,
+                forecasts,
+                sector_ctx,
+                us_finance,
             )
 
             return {
@@ -189,13 +266,13 @@ class EvidenceBuilder:
                 with suppress(Exception):
                     await conn.close()
 
-
     @staticmethod
     async def build_multi(symbols: list[str]) -> dict[str, dict]:
         """批量构建多个标的的证据包，用 WHERE IN 减少查询次数。"""
         if not symbols:
             return {}
         from backend.storage.database import aget_connection
+
         conn = await aget_connection()
         try:
             result: dict[str, dict] = {}
@@ -360,7 +437,11 @@ class EvidenceBuilder:
                 if not related_raw:
                     continue
                 try:
-                    related = json.loads(related_raw) if isinstance(related_raw, str) else related_raw
+                    related = (
+                        json.loads(related_raw)
+                        if isinstance(related_raw, str)
+                        else related_raw
+                    )
                 except (json.JSONDecodeError, TypeError):
                     continue
                 if not isinstance(related, list):
@@ -387,7 +468,9 @@ class EvidenceBuilder:
 
             # sector_context：板块背景是市场级数据，不依赖具体 symbol，
             # 所有标的共享同一份结果（与 build() 中 _build_sector_context 语义一致）。
-            sector_ctx_shared = await EvidenceBuilder._build_sector_context(conn, symbols[0])
+            sector_ctx_shared = await EvidenceBuilder._build_sector_context(
+                conn, symbols[0]
+            )
             # us_finance：仅 us 前缀的标的才查询（避免浪费 IO，与 build() 路径一致）。
             us_symbols = [s for s in symbols if s.startswith("us")]
             us_finance_map: dict[str, dict | None] = {}
@@ -414,7 +497,9 @@ class EvidenceBuilder:
                             item[f"ma{w}"] = None
                 flows = list(reversed(flows_by_symbol.get(symbol, [])[:5]))
                 # 财务：复用单标的 _derive_finance_yoy 保证语义一致
-                finance = EvidenceBuilder._derive_finance_yoy(fin_by_symbol.get(symbol, []))
+                finance = EvidenceBuilder._derive_finance_yoy(
+                    fin_by_symbol.get(symbol, [])
+                )
                 # dividends：取最近 4 期（按 ex_date DESC 已是当前顺序）
                 divs = divs_by_symbol.get(symbol, [])
                 dividends = None
@@ -428,7 +513,10 @@ class EvidenceBuilder:
                 # shareholders：来自 shr_by_symbol；组装同单标的版对齐
                 shr_bucket = shr_by_symbol.get(symbol)
                 shareholders = None
-                if shr_bucket and (shr_bucket.get("top_shareholders") or shr_bucket.get("holder_count_trend")):
+                if shr_bucket and (
+                    shr_bucket.get("top_shareholders")
+                    or shr_bucket.get("holder_count_trend")
+                ):
                     shareholders = {
                         "top_shareholders": shr_bucket.get("top_shareholders", []),
                         "holder_count_trend": shr_bucket.get("holder_count_trend", []),
@@ -448,7 +536,9 @@ class EvidenceBuilder:
                 news_rows = news_by_symbol.get(symbol, [])
                 news = None
                 if news_rows:
-                    sentiments = [item.get("sentiment", "neutral") for item in news_rows]
+                    sentiments = [
+                        item.get("sentiment", "neutral") for item in news_rows
+                    ]
                     positive = sentiments.count("positive")
                     negative = sentiments.count("negative")
                     neutral = sentiments.count("neutral")
@@ -465,8 +555,17 @@ class EvidenceBuilder:
                 sector_ctx = sector_ctx_shared
                 us_finance = us_finance_map.get(symbol)
                 data_sources = EvidenceBuilder._assemble_data_sources(
-                    quote, klines, flows, finance, news, tech,
-                    dividends, shareholders, forecasts, sector_ctx, us_finance,
+                    quote,
+                    klines,
+                    flows,
+                    finance,
+                    news,
+                    tech,
+                    dividends,
+                    shareholders,
+                    forecasts,
+                    sector_ctx,
+                    us_finance,
                 )
 
                 result[symbol] = {
@@ -604,7 +703,8 @@ class EvidenceBuilder:
             "top_shareholders": [dict(r) for r in top_rows],
             "holder_count_trend": [dict(r) for r in count_rows],
             "source": (
-                top_rows[0]["source"] if top_rows
+                top_rows[0]["source"]
+                if top_rows
                 else (count_rows[0]["source"] if count_rows else None)
             ),
         }
@@ -660,9 +760,13 @@ class EvidenceBuilder:
         if not top_gainers and not top_losers and not top_fund_inflow:
             return None
 
-        source = top_gainers[0].get("source") if top_gainers else (
-            top_losers[0].get("source") if top_losers else (
-                top_fund_inflow[0].get("source") if top_fund_inflow else None
+        source = (
+            top_gainers[0].get("source")
+            if top_gainers
+            else (
+                top_losers[0].get("source")
+                if top_losers
+                else (top_fund_inflow[0].get("source") if top_fund_inflow else None)
             )
         )
         collected_at = top_gainers[0].get("collected_at") if top_gainers else None
@@ -702,7 +806,13 @@ class EvidenceBuilder:
         if len(annual) >= 2:
             curr = annual[0]
             prev = annual[1]
-            for k in ("revenue", "net_income", "operating_income", "ebitda", "basic_eps"):
+            for k in (
+                "revenue",
+                "net_income",
+                "operating_income",
+                "ebitda",
+                "basic_eps",
+            ):
                 c, p = curr.get(k), prev.get(k)
                 if c is not None and p is not None and p != 0:
                     yoy[f"{k}_yoy"] = round((c - p) / p * 100, 2)
@@ -757,4 +867,3 @@ class EvidenceBuilder:
             prev = dict(rows[1])
             latest["prev_macd_histogram"] = prev.get("macd_histogram")
         return latest
-

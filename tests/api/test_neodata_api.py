@@ -1,4 +1,4 @@
-﻿from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,7 +24,9 @@ async def test_client(mock_client: MagicMock) -> TestClient:
         yield TestClient(app)
 
 
-async def test_get_token_status(test_client: TestClient, mock_client: MagicMock) -> None:
+async def test_get_token_status(
+    test_client: TestClient, mock_client: MagicMock
+) -> None:
     mock_client.get_token_status.return_value = {
         "has_token": True,
         "source": "config",
@@ -51,7 +53,9 @@ async def test_get_token_status_unconfigured(test_client: TestClient) -> None:
     assert "expires_at" not in data
 
 
-async def test_save_token_success(test_client: TestClient, mock_client: MagicMock) -> None:
+async def test_save_token_success(
+    test_client: TestClient, mock_client: MagicMock
+) -> None:
     resp = test_client.post(
         "/api/v1/neodata/token",
         json={"token": "my_secret_token"},

@@ -1,4 +1,4 @@
-﻿import json
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -42,7 +42,17 @@ async def _seed_full_data(symbol: str = "hk00700") -> None:
             conn.execute(
                 """INSERT INTO kline_daily (symbol, date, open, high, low, close, volume, source, collected_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (symbol, date, close - 1, close + 2, close - 2, close, 500000, "westock", now),
+                (
+                    symbol,
+                    date,
+                    close - 1,
+                    close + 2,
+                    close - 2,
+                    close,
+                    500000,
+                    "westock",
+                    now,
+                ),
             )
         for i in range(5):
             date = (base_date - timedelta(days=4 - i)).strftime("%Y-%m-%d")
@@ -56,9 +66,25 @@ async def _seed_full_data(symbol: str = "hk00700") -> None:
                (symbol, report_period, revenue, revenue_yoy, net_profit, net_profit_yoy,
                 eps, roe, debt_ratio, gross_margin, net_margin, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (symbol, "2026Q1", 150000000000, 8.5, 40000000000, 5.2, 4.2, 18.5, 45.0, 52.0, 26.7, "westock", now),
+            (
+                symbol,
+                "2026Q1",
+                150000000000,
+                8.5,
+                40000000000,
+                5.2,
+                4.2,
+                18.5,
+                45.0,
+                52.0,
+                26.7,
+                "westock",
+                now,
+            ),
         )
-        for i, sentiment in enumerate(["positive", "positive", "positive", "negative", "neutral"]):
+        for i, sentiment in enumerate(
+            ["positive", "positive", "positive", "negative", "neutral"]
+        ):
             conn.execute(
                 """INSERT INTO news_items (title, source, url, sentiment, importance, related_symbols, published_at, collected_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -78,14 +104,48 @@ async def _seed_full_data(symbol: str = "hk00700") -> None:
                (symbol, date, ma5, ma10, ma20, ma60, macd_dif, macd_dea, macd_histogram,
                 rsi6, rsi14, boll_upper, boll_middle, boll_lower, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (symbol, "2026-05-30", 375.0, 372.0, 368.0, 360.0, 2.5, 1.8, 0.7, 55.0, 52.0, 390.0, 375.0, 360.0, "westock", now),
+            (
+                symbol,
+                "2026-05-30",
+                375.0,
+                372.0,
+                368.0,
+                360.0,
+                2.5,
+                1.8,
+                0.7,
+                55.0,
+                52.0,
+                390.0,
+                375.0,
+                360.0,
+                "westock",
+                now,
+            ),
         )
         conn.execute(
             """INSERT INTO technical_indicators
                (symbol, date, ma5, ma10, ma20, ma60, macd_dif, macd_dea, macd_histogram,
                 rsi6, rsi14, boll_upper, boll_middle, boll_lower, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (symbol, "2026-05-29", 374.0, 371.0, 367.0, 359.0, 1.5, 1.6, -0.1, 54.0, 51.0, 389.0, 374.0, 359.0, "westock", now),
+            (
+                symbol,
+                "2026-05-29",
+                374.0,
+                371.0,
+                367.0,
+                359.0,
+                1.5,
+                1.6,
+                -0.1,
+                54.0,
+                51.0,
+                389.0,
+                374.0,
+                359.0,
+                "westock",
+                now,
+            ),
         )
 
 
@@ -207,10 +267,14 @@ class TestReportServiceHistory:
 
         tz_name = get_config().get("scheduler", {}).get("timezone", "Asia/Shanghai")
         today = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
-        history = ReportService.get_report_history("hk00700", from_date=today, to_date=today)
+        history = ReportService.get_report_history(
+            "hk00700", from_date=today, to_date=today
+        )
         assert len(history) == 1
 
-        history = ReportService.get_report_history("hk00700", from_date="2020-01-01", to_date="2020-12-31")
+        history = ReportService.get_report_history(
+            "hk00700", from_date="2020-01-01", to_date="2020-12-31"
+        )
         assert len(history) == 0
 
 
@@ -246,15 +310,15 @@ async def test_generate_reports_run_logs_failure_isolated(tmp_db) -> None:
 
     # 显式传 symbols 跳过 _get_active_symbols 中的 get_db() 调用;
     # 这样 mock 触发的 RuntimeError 只在 run_logs 写入时被抛出,被 try/except 捕获。
-    with patch("backend.services.report_service.get_db", side_effect=RuntimeError("disk full")):
+    with patch(
+        "backend.services.report_service.get_db", side_effect=RuntimeError("disk full")
+    ):
         result: dict = await ReportService.generate_reports(symbols=["hk00700"])
     assert "generated" in result
     assert "skipped" in result
     # 实际生成的报告仍应进入 ai_reports
     with get_db() as conn:
-        count: int = conn.execute(
-            "SELECT COUNT(*) FROM ai_reports"
-        ).fetchone()[0]
+        count: int = conn.execute("SELECT COUNT(*) FROM ai_reports").fetchone()[0]
     assert count >= 1
 
 
@@ -301,9 +365,7 @@ async def test_generate_reports_acquires_write_lock(tmp_db: Path) -> None:
     # 业务功能仍正常：报告确实写入 ai_reports
     assert result["generated"] == 1
     with get_db() as conn:
-        count: int = conn.execute(
-            "SELECT COUNT(*) FROM ai_reports"
-        ).fetchone()[0]
+        count: int = conn.execute("SELECT COUNT(*) FROM ai_reports").fetchone()[0]
     assert count == 1
 
 
@@ -354,16 +416,18 @@ def test_run_ai_report_acquires_write_lock() -> None:
     def _fake_asyncio_run(coro_or_callable, *args, **kwargs):
         return None
 
-    with patch.object(
-        report_service.ReportService,
-        "generate_reports",
-        new=MagicMock(side_effect=_probe_with_lock),
-    ), patch(
-        "backend.scheduler.jobs.asyncio.run",
-        side_effect=_fake_asyncio_run,
+    with (
+        patch.object(
+            report_service.ReportService,
+            "generate_reports",
+            new=MagicMock(side_effect=_probe_with_lock),
+        ),
+        patch(
+            "backend.scheduler.jobs.asyncio.run",
+            side_effect=_fake_asyncio_run,
+        ),
     ):
         _run_ai_report()
 
     assert observed_held, "_run_ai_report 链路未进入 _WRITE_LOCK 上下文"
     assert observed_held[0] is True
-

@@ -1,4 +1,4 @@
-﻿"""WeStockProvider 扩展方法测试：minute / dividend / shareholder / reserve"""
+"""WeStockProvider 扩展方法测试：minute / dividend / shareholder / reserve"""
 
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +18,7 @@ async def provider() -> WeStockProvider:
 # ═══════════════════════════════════════════════════════════════════
 # minute (分时数据)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_minute_success(provider: WeStockProvider) -> None:
     stdout = (
@@ -59,6 +60,7 @@ async def test_minute_with_days(provider: WeStockProvider) -> None:
 # dividend (分红记录)
 # ═══════════════════════════════════════════════════════════════════
 
+
 async def test_dividend_success(provider: WeStockProvider) -> None:
     stdout = (
         "| ex_dividend_date | CashDiv | BonusShareRatio | recordDate | announceDate |\n"
@@ -86,6 +88,7 @@ async def test_dividend_empty(provider: WeStockProvider) -> None:
 # ═══════════════════════════════════════════════════════════════════
 # shareholder (股东结构)
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_shareholder_success(provider: WeStockProvider) -> None:
     """CLI 返回两个表格：十大股东 + 股东人数变化"""
@@ -122,6 +125,7 @@ async def test_shareholder_empty(provider: WeStockProvider) -> None:
 # reserve (业绩预告)
 # ═══════════════════════════════════════════════════════════════════
 
+
 async def test_reserve_success(provider: WeStockProvider) -> None:
     stdout = (
         "| ReportDate | ForcastType | NetProfitLow | NetProfitHigh | ChangeLow | ChangeHigh | Summary |\n"
@@ -149,6 +153,7 @@ async def test_reserve_empty(provider: WeStockProvider) -> None:
 # ═══════════════════════════════════════════════════════════════════
 # 错误路径：CLI 超时等
 # ═══════════════════════════════════════════════════════════════════
+
 
 async def test_minute_error_returns_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:

@@ -2,7 +2,13 @@ from typing import Any
 
 import streamlit as st
 
-from ui.api_client import get_assets, create_asset, update_asset, delete_asset, search_assets
+from ui.api_client import (
+    get_assets,
+    create_asset,
+    update_asset,
+    delete_asset,
+    search_assets,
+)
 
 MARKET_OPTIONS: dict[str, str] = {
     "全部": "",
@@ -40,12 +46,22 @@ def _format_change_pct(value: float | None) -> str:
 def _render_filters() -> tuple[str, str, str | None]:
     col1, col2, col3 = st.columns(3)
     with col1:
-        market_label: str = st.selectbox("市场", list(MARKET_OPTIONS.keys()), key="filter_market")
+        market_label: str = st.selectbox(
+            "市场", list(MARKET_OPTIONS.keys()), key="filter_market"
+        )
     with col2:
-        type_label: str = st.selectbox("资产类型", list(ASSET_TYPE_OPTIONS.keys()), key="filter_type")
+        type_label: str = st.selectbox(
+            "资产类型", list(ASSET_TYPE_OPTIONS.keys()), key="filter_type"
+        )
     with col3:
-        status_label: str = st.selectbox("状态", list(STATUS_OPTIONS.keys()), key="filter_status")
-    return MARKET_OPTIONS[market_label], ASSET_TYPE_OPTIONS[type_label], STATUS_OPTIONS[status_label]
+        status_label: str = st.selectbox(
+            "状态", list(STATUS_OPTIONS.keys()), key="filter_status"
+        )
+    return (
+        MARKET_OPTIONS[market_label],
+        ASSET_TYPE_OPTIONS[type_label],
+        STATUS_OPTIONS[status_label],
+    )
 
 
 def _render_asset_table(assets: list[dict[str, Any]]) -> None:
@@ -71,8 +87,16 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                 change_pct: float | None = asset.get("latest_change_pct")
                 formatted: str = _format_change_pct(change_pct)
                 if change_pct is not None:
-                    color: str = "green" if change_pct > 0 else "red" if change_pct < 0 else "inherit"
-                    arrow: str = "▲" if change_pct > 0 else "▼" if change_pct < 0 else ""
+                    color: str = (
+                        "green"
+                        if change_pct > 0
+                        else "red"
+                        if change_pct < 0
+                        else "inherit"
+                    )
+                    arrow: str = (
+                        "▲" if change_pct > 0 else "▼" if change_pct < 0 else ""
+                    )
                     st.markdown(f":{color}[{arrow} {formatted}]".strip())
                 else:
                     st.text("-")
@@ -86,7 +110,9 @@ def _render_asset_table(assets: list[dict[str, Any]]) -> None:
                     new_status: bool = not status
                     label: str = "停用" if status else "启用"
                     if st.button(label, key=f"toggle_{asset_id}"):
-                        result: dict[str, Any] = update_asset(asset_id, {"enabled": new_status})
+                        result: dict[str, Any] = update_asset(
+                            asset_id, {"enabled": new_status}
+                        )
                         if "error" not in result and "id" in result:
                             st.success(f"已{label}")
                             st.rerun()
@@ -133,7 +159,9 @@ def _render_add_form() -> None:
                     ["stock", "etf", "index", "future"],
                     key="add_asset_type",
                 )
-            tags_input: str = st.text_input("标签（逗号分隔）", placeholder="如 互联网,港股通")
+            tags_input: str = st.text_input(
+                "标签（逗号分隔）", placeholder="如 互联网,港股通"
+            )
             notes: str = st.text_area("备注", height=68)
             submitted: bool = st.form_submit_button("添加")
             if submitted:
@@ -142,7 +170,9 @@ def _render_add_form() -> None:
                 else:
                     tags_split: list[str] = []
                     if tags_input.strip():
-                        tags_split = [t.strip() for t in tags_input.split(",") if t.strip()]
+                        tags_split = [
+                            t.strip() for t in tags_input.split(",") if t.strip()
+                        ]
                     if len(tags_split) > 10:
                         st.error("标签数量不能超过 10 个")
                         return
@@ -173,7 +203,9 @@ def _render_search() -> None:
     with st.expander("🔍 搜索外部标的"):
         col1, col2 = st.columns([3, 1])
         with col1:
-            keyword: str = st.text_input("搜索关键词", placeholder="输入代码或名称", key="search_keyword")
+            keyword: str = st.text_input(
+                "搜索关键词", placeholder="输入代码或名称", key="search_keyword"
+            )
         with col2:
             search_market: str = st.selectbox(
                 "市场",
@@ -184,8 +216,12 @@ def _render_search() -> None:
             if not keyword.strip():
                 st.warning("请输入搜索关键词")
             else:
-                market_param: str | None = search_market if search_market != "全部" else None
-                result: dict[str, Any] = search_assets(keyword.strip(), market=market_param)
+                market_param: str | None = (
+                    search_market if search_market != "全部" else None
+                )
+                result: dict[str, Any] = search_assets(
+                    keyword.strip(), market=market_param
+                )
                 items: list[dict[str, Any]] = result.get("items", [])
                 if not items:
                     st.info("未找到匹配标的")
@@ -193,11 +229,17 @@ def _render_search() -> None:
                     for item in items:
                         c1, c2, c3 = st.columns([3, 2, 1])
                         with c1:
-                            st.markdown(f"**{item.get('symbol', '')}** — {item.get('name', '')}")
+                            st.markdown(
+                                f"**{item.get('symbol', '')}** — {item.get('name', '')}"
+                            )
                         with c2:
-                            st.text(f"{item.get('market', '').upper()} / {item.get('asset_type', '')}")
+                            st.text(
+                                f"{item.get('market', '').upper()} / {item.get('asset_type', '')}"
+                            )
                         with c3:
-                            if st.button("添加", key=f"search_add_{item.get('symbol', '')}"):
+                            if st.button(
+                                "添加", key=f"search_add_{item.get('symbol', '')}"
+                            ):
                                 add_data: dict[str, Any] = {
                                     "symbol": item["symbol"],
                                     "name": item.get("name"),
@@ -218,7 +260,9 @@ def render() -> None:
     market_filter, type_filter, status_filter = _render_filters()
 
     @st.cache_data(ttl=30)
-    def _fetch_assets(_market: str, _type: str, _status: bool | None) -> list[dict[str, Any]]:
+    def _fetch_assets(
+        _market: str, _type: str, _status: bool | None
+    ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"page_size": 100}
         if _market:
             params["market"] = _market
@@ -229,7 +273,9 @@ def render() -> None:
         result: dict[str, Any] = get_assets(**params)
         return result.get("items", [])
 
-    items: list[dict[str, Any]] = _fetch_assets(market_filter, type_filter, status_filter)
+    items: list[dict[str, Any]] = _fetch_assets(
+        market_filter, type_filter, status_filter
+    )
 
     _render_asset_table(items)
 

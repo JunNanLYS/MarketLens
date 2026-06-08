@@ -6,6 +6,7 @@
 - 异常路径    → failure
 - NeoData 禁用 → skipped
 """
+
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -73,8 +74,10 @@ def test_check_enabled_no_token_writes_skipped_log() -> None:
 
 def test_check_disabled_writes_skipped_log() -> None:
     """NeoData 禁用 → run_logs 写入 skipped,不调用 NeoDataClient。"""
-    with patch("backend.scheduler.jobs.get_config") as mock_cfg, \
-         patch("backend.collectors.neodata_client.NeoDataClient") as MockClient:
+    with (
+        patch("backend.scheduler.jobs.get_config") as mock_cfg,
+        patch("backend.collectors.neodata_client.NeoDataClient") as MockClient,
+    ):
         mock_cfg.return_value = {
             "data_sources": {
                 "structured": [],

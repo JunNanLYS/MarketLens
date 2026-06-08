@@ -81,7 +81,14 @@ class CollectionService:
         conn.execute(
             """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (task_name, status, started_at, finished_at, error_message, affected_assets),
+            (
+                task_name,
+                status,
+                started_at,
+                finished_at,
+                error_message,
+                affected_assets,
+            ),
         )
 
     @staticmethod
@@ -124,7 +131,9 @@ class CollectionService:
                                 1,
                             )
                     except Exception as log_err:
-                        logger.warning("写入 run_logs 失败: task={} err={}", task_name, log_err)
+                        logger.warning(
+                            "写入 run_logs 失败: task={} err={}", task_name, log_err
+                        )
 
             return wrapper
 
@@ -195,7 +204,13 @@ class CollectionService:
                         conn.close()
                 return data
             except Exception as e:
-                logger.warning("Provider {} 采集{}失败: {} - {}", provider.name, error_label, target, e)
+                logger.warning(
+                    "Provider {} 采集{}失败: {} - {}",
+                    provider.name,
+                    error_label,
+                    target,
+                    e,
+                )
                 continue
         return None
 
@@ -251,7 +266,13 @@ class CollectionService:
                         conn.close()
                 return all_items
             except Exception as e:
-                logger.warning("Provider {} 采集{}失败: {} - {}", provider.name, error_label, target, e)
+                logger.warning(
+                    "Provider {} 采集{}失败: {} - {}",
+                    provider.name,
+                    error_label,
+                    target,
+                    e,
+                )
                 continue
         return None
 
@@ -279,7 +300,9 @@ class CollectionService:
                 with write_lock:
                     conn = get_connection_sync()
                     try:
-                        self._save_raw_data(conn, symbol, source, "quote", raw_json, collected_at)
+                        self._save_raw_data(
+                            conn, symbol, source, "quote", raw_json, collected_at
+                        )
                         conn.execute(
                             """INSERT OR IGNORE INTO market_quotes
                                (symbol, price, change, change_pct, open, high, low, prev_close,
@@ -309,7 +332,9 @@ class CollectionService:
                         conn.close()
                 return item
             except Exception as e:
-                logger.warning("Provider {} 采集行情失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集行情失败: {} - {}", provider.name, symbol, e
+                )
                 continue
         return None
 
@@ -349,7 +374,9 @@ class CollectionService:
         status = "success" if failed == 0 else "failure"
         error_message = "; ".join(errors) if errors else None
         with get_db() as conn:
-            self._write_run_log(conn, "quote", status, started_at, finished_at, error_message, total)
+            self._write_run_log(
+                conn, "quote", status, started_at, finished_at, error_message, total
+            )
 
         return {"success": success, "failed": failed, "total": total}
 
@@ -403,7 +430,15 @@ class CollectionService:
         error_message = "; ".join(all_errors) if all_errors else None
         affected = len(assets)
         with get_db() as conn:
-            self._write_run_log(conn, "daily_close", status, started_at, finished_at, error_message, affected)
+            self._write_run_log(
+                conn,
+                "daily_close",
+                status,
+                started_at,
+                finished_at,
+                error_message,
+                affected,
+            )
 
         return summary
 
@@ -425,25 +460,33 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
-                    rows.append((
-                        symbol,
-                        item.get("date"),
-                        item.get("open"),
-                        item.get("high"),
-                        item.get("low"),
-                        item.get("close"),
-                        item.get("volume"),
-                        item.get("change_pct"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
+                    rows.append(
+                        (
+                            symbol,
+                            item.get("date"),
+                            item.get("open"),
+                            item.get("high"),
+                            item.get("low"),
+                            item.get("close"),
+                            item.get("volume"),
+                            item.get("change_pct"),
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集K线失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集K线失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -456,7 +499,9 @@ class CollectionService:
     def _insert_kline(self, conn: sqlite3.Connection, payload: dict) -> None:
         """纯同步落盘，由 commit 阶段在 write_lock 内调用。"""
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "kline", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "kline", raw_json, collected_at
+            )
         for row in payload["rows"]:
             conn.execute(
                 """INSERT OR IGNORE INTO kline_daily
@@ -478,9 +523,17 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
-                report_period = data.get("report_period") or data.get("period") or data.get("report_date")
+                report_period = (
+                    data.get("report_period")
+                    or data.get("period")
+                    or data.get("report_date")
+                )
                 row = (
                     symbol,
                     report_period,
@@ -499,7 +552,9 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集财务数据失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集财务数据失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -511,7 +566,9 @@ class CollectionService:
 
     def _insert_finance(self, conn: sqlite3.Connection, payload: dict) -> None:
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "finance", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "finance", raw_json, collected_at
+            )
         if payload["row"] is not None:
             conn.execute(
                 """INSERT OR IGNORE INTO financial_reports
@@ -534,7 +591,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 item = data
                 row = (
@@ -552,7 +613,9 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集资金流向失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集资金流向失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -564,7 +627,9 @@ class CollectionService:
 
     def _insert_fund_flow(self, conn: sqlite3.Connection, payload: dict) -> None:
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "fund_flow", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "fund_flow", raw_json, collected_at
+            )
         if payload["row"] is not None:
             conn.execute(
                 """INSERT OR IGNORE INTO fund_flows
@@ -587,7 +652,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -612,7 +681,9 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集技术指标失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集技术指标失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -624,7 +695,9 @@ class CollectionService:
 
     def _insert_technical(self, conn: sqlite3.Connection, payload: dict) -> None:
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "technical", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "technical", raw_json, collected_at
+            )
         if payload["row"] is not None:
             conn.execute(
                 """INSERT OR IGNORE INTO technical_indicators
@@ -653,31 +726,43 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
                     # dividend_year 在 westock 输出是字符串如 "2023"，_try_number 已转 int
                     year_val = item.get("dividend_year")
                     if not isinstance(year_val, int):
                         try:
-                            year_val = int(str(year_val).strip()) if year_val is not None and str(year_val).strip() else None
+                            year_val = (
+                                int(str(year_val).strip())
+                                if year_val is not None and str(year_val).strip()
+                                else None
+                            )
                         except (ValueError, TypeError):
                             year_val = None
-                    rows.append((
-                        symbol,
-                        item.get("ex_date", ""),
-                        item.get("cash_dividend"),
-                        item.get("share_bonus"),
-                        item.get("record_date"),
-                        item.get("announce_date"),
-                        year_val,
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
+                    rows.append(
+                        (
+                            symbol,
+                            item.get("ex_date", ""),
+                            item.get("cash_dividend"),
+                            item.get("share_bonus"),
+                            item.get("record_date"),
+                            item.get("announce_date"),
+                            year_val,
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集分红失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集分红失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -693,7 +778,9 @@ class CollectionService:
         Returns: 实际写入行数（SQLite executemany 的 rowcount）。
         """
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "dividend", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "dividend", raw_json, collected_at
+            )
         if not payload["rows"]:
             return 0
         cur = conn.executemany(
@@ -720,7 +807,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 # forecast_type 是 NOT NULL；缺失时填 "未知" 防止约束失败
                 forecast_type = data.get("forecast_type") or "未知"
@@ -739,7 +830,9 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集业绩预告失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -755,7 +848,9 @@ class CollectionService:
         Returns: 实际写入行数（0 或 1）。
         """
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "reserve", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "reserve", raw_json, collected_at
+            )
         if payload["row"] is None:
             return 0
         cur = conn.execute(
@@ -787,7 +882,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -821,10 +920,20 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集 ETF 基础信息失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集 ETF 基础信息失败: {} - {}",
+                    provider.name,
+                    symbol,
+                    e,
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_etf_holdings(self, symbol: str) -> dict:
         """ETF 成分股 fetch（多行 rows）。"""
@@ -842,25 +951,38 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
-                    rows.append((
-                        symbol,
-                        item.get("constituent_code", ""),
-                        item.get("constituent_name"),
-                        item.get("ratio"),
-                        item.get("date", ""),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
+                    rows.append(
+                        (
+                            symbol,
+                            item.get("constituent_code", ""),
+                            item.get("constituent_name"),
+                            item.get("ratio"),
+                            item.get("date", ""),
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集 ETF 成分股失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集 ETF 成分股失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_etf_nav(self, symbol: str, start: str, end: str) -> dict:
         """ETF 历史净值 fetch（多行）。"""
@@ -878,26 +1000,39 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
-                    rows.append((
-                        symbol,
-                        item.get("date", ""),
-                        item.get("nav"),
-                        item.get("nav_change"),
-                        item.get("nav_change_pct"),
-                        item.get("acc_nav"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
+                    rows.append(
+                        (
+                            symbol,
+                            item.get("date", ""),
+                            item.get("nav"),
+                            item.get("nav_change"),
+                            item.get("nav_change_pct"),
+                            item.get("acc_nav"),
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集 ETF 净值失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集 ETF 净值失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_etf_holders(self, symbol: str) -> dict:
         """ETF 持有人结构 fetch（单条）。"""
@@ -915,7 +1050,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -933,10 +1072,17 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集 ETF 持有人失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集 ETF 持有人失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_chip_distribution(self, symbol: str) -> dict:
         """筹码成本 fetch（单条）。"""
@@ -954,7 +1100,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -970,10 +1120,17 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集筹码成本失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集筹码成本失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_margintrade(self, symbol: str) -> dict:
         """融资融券 fetch（单条）。"""
@@ -991,7 +1148,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -1012,10 +1173,17 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集融资融券失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集融资融券失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_blocktrade(self, symbol: str, date: str) -> dict:
         """大宗交易 fetch（单只 + 日期）。"""
@@ -1033,7 +1201,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -1051,10 +1223,17 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集大宗交易失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集大宗交易失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_lhb(self, symbol: str, date: str) -> dict:
         """龙虎榜 fetch（单只 + 日期）。"""
@@ -1072,7 +1251,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -1090,10 +1273,17 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集龙虎榜失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集龙虎榜失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_ipo_calendar(self, market: str) -> dict:
         """新股日历 fetch（market=hk/us）。"""
@@ -1111,17 +1301,28 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
                     rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集新股日历失败: {} - {}", provider.name, market, e)
+                logger.warning(
+                    "Provider {} 采集新股日历失败: {} - {}", provider.name, market, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_exdiv_calendar(self, symbol: str) -> dict:
         """除权日历 fetch（港美单只）。"""
@@ -1139,17 +1340,28 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
                     rows.append(self._ipo_exdiv_row_tuple(item, source, collected_at))
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集除权日历失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集除权日历失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     @staticmethod
     def _ipo_exdiv_row_tuple(item: dict, source: str, collected_at: str) -> tuple:
@@ -1175,7 +1387,9 @@ class CollectionService:
             item.get("collected_at", collected_at),
         )
 
-    async def _fetch_us_finance(self, symbol: str, ftype: str = "income", num: int = 4) -> dict:
+    async def _fetch_us_finance(
+        self, symbol: str, ftype: str = "income", num: int = 4
+    ) -> dict:
         """美股财务 fetch（多期，--type income/balance/cashflow）。"""
         success = 0
         failed = 0
@@ -1191,19 +1405,32 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
                     rows.append(self._us_finance_row_tuple(item, source, collected_at))
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集美股财务失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集美股财务失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
-    async def _fetch_hk_finance(self, symbol: str, ftype: str = "zhsy", num: int = 4) -> dict:
+    async def _fetch_hk_finance(
+        self, symbol: str, ftype: str = "zhsy", num: int = 4
+    ) -> dict:
         """港股财务 fetch（多期，--type zhsy/zcfz/xjll）。"""
         success = 0
         failed = 0
@@ -1219,17 +1446,28 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
                     rows.append(self._us_finance_row_tuple(item, source, collected_at))
                 success = len(items)
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集港股财务失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集港股财务失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     @staticmethod
     def _us_finance_row_tuple(item: dict, source: str, collected_at: str) -> tuple:
@@ -1280,34 +1518,45 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
-                    rows.append((
-                        item.get("name", ""),
-                        item.get("date", ""),
-                        item.get("sector_type", "industry"),
-                        item.get("symbol"),
-                        item.get("change_pct"),
-                        item.get("turnover_rate"),
-                        item.get("change_pct_5d"),
-                        item.get("change_pct_20d"),
-                        item.get("lead_stock"),
-                        item.get("main_net_inflow"),
-                        item.get("main_net_inflow_5d"),
-                        item.get("up_down_ratio"),
-                        item.get("rank"),
-                        item.get("zxj"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
+                    rows.append(
+                        (
+                            item.get("name", ""),
+                            item.get("date", ""),
+                            item.get("sector_type", "industry"),
+                            item.get("symbol"),
+                            item.get("change_pct"),
+                            item.get("turnover_rate"),
+                            item.get("change_pct_5d"),
+                            item.get("change_pct_20d"),
+                            item.get("lead_stock"),
+                            item.get("main_net_inflow"),
+                            item.get("main_net_inflow_5d"),
+                            item.get("up_down_ratio"),
+                            item.get("rank"),
+                            item.get("zxj"),
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(items)
                 break
             except Exception as e:
                 logger.warning("Provider {} 采集板块首页失败: {}", provider.name, e)
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_sector_hot(self, limit: int = 10) -> dict:
         """热门板块 fetch（top N）。"""
@@ -1325,34 +1574,45 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 for item in items:
-                    rows.append((
-                        item.get("name", ""),
-                        item.get("date", ""),
-                        item.get("sector_type", "industry"),
-                        item.get("symbol"),
-                        item.get("change_pct"),
-                        item.get("turnover_rate"),
-                        item.get("change_pct_5d"),
-                        item.get("change_pct_20d"),
-                        item.get("lead_stock"),
-                        item.get("main_net_inflow"),
-                        item.get("main_net_inflow_5d"),
-                        item.get("up_down_ratio"),
-                        item.get("rank"),
-                        item.get("zxj"),
-                        item.get("source", source),
-                        item.get("collected_at", collected_at),
-                    ))
+                    rows.append(
+                        (
+                            item.get("name", ""),
+                            item.get("date", ""),
+                            item.get("sector_type", "industry"),
+                            item.get("symbol"),
+                            item.get("change_pct"),
+                            item.get("turnover_rate"),
+                            item.get("change_pct_5d"),
+                            item.get("change_pct_20d"),
+                            item.get("lead_stock"),
+                            item.get("main_net_inflow"),
+                            item.get("main_net_inflow_5d"),
+                            item.get("up_down_ratio"),
+                            item.get("rank"),
+                            item.get("zxj"),
+                            item.get("source", source),
+                            item.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(items)
                 break
             except Exception as e:
                 logger.warning("Provider {} 采集热门板块失败: {}", provider.name, e)
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "rows": rows, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "rows": rows,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_etf_financial(self, symbol: str) -> dict:
         """ETF 资产配置 fetch（单条）。"""
@@ -1370,7 +1630,11 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 row = (
                     symbol,
@@ -1387,10 +1651,20 @@ class CollectionService:
                 success = 1
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集 ETF 资产配置失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集 ETF 资产配置失败: {} - {}",
+                    provider.name,
+                    symbol,
+                    e,
+                )
                 failed += 1
                 continue
-        return {"success": success, "failed": failed, "row": row, "raw_packets": raw_packets}
+        return {
+            "success": success,
+            "failed": failed,
+            "row": row,
+            "raw_packets": raw_packets,
+        }
 
     async def _fetch_shareholder(self, symbol: str) -> dict:
         """仅网络 IO，不写库；返回股东结构 + 股东户数历史 + 计数供上层落盘。
@@ -1411,36 +1685,48 @@ class CollectionService:
                 collected_at = self._now_iso()
                 source = provider.name
                 raw_packets.append(
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 )
                 # westock 股东表每行无 report_period 字段；CLI 输出通常带 EndDate
                 # 若规范数据无 period 字段则用 collected_at 作占位，确保 UNIQUE 不冲突
-                report_period_fallback = data.get("report_period") or data.get("end_date") or collected_at
+                report_period_fallback = (
+                    data.get("report_period") or data.get("end_date") or collected_at
+                )
                 for sh in data["top_shareholders"]:
-                    top_rows.append((
-                        symbol,
-                        report_period_fallback,
-                        sh.get("rank"),
-                        sh.get("name"),
-                        sh.get("shares"),
-                        sh.get("ratio"),
-                        sh.get("change"),  # 对应 shareholders.change_amount
-                        data.get("source", source),
-                        data.get("collected_at", collected_at),
-                    ))
+                    top_rows.append(
+                        (
+                            symbol,
+                            report_period_fallback,
+                            sh.get("rank"),
+                            sh.get("name"),
+                            sh.get("shares"),
+                            sh.get("ratio"),
+                            sh.get("change"),  # 对应 shareholders.change_amount
+                            data.get("source", source),
+                            data.get("collected_at", collected_at),
+                        )
+                    )
                 for hc in data.get("holder_count_history", []):
-                    count_rows.append((
-                        symbol,
-                        hc.get("date", ""),
-                        hc.get("total_holders"),
-                        hc.get("avg_shares"),
-                        data.get("source", source),
-                        data.get("collected_at", collected_at),
-                    ))
+                    count_rows.append(
+                        (
+                            symbol,
+                            hc.get("date", ""),
+                            hc.get("total_holders"),
+                            hc.get("avg_shares"),
+                            data.get("source", source),
+                            data.get("collected_at", collected_at),
+                        )
+                    )
                 success = len(data["top_shareholders"])
                 break
             except Exception as e:
-                logger.warning("Provider {} 采集股东结构失败: {} - {}", provider.name, symbol, e)
+                logger.warning(
+                    "Provider {} 采集股东结构失败: {} - {}", provider.name, symbol, e
+                )
                 failed += 1
                 continue
         return {
@@ -1462,7 +1748,9 @@ class CollectionService:
         Returns: (top_inserted, count_inserted) 行数元组。
         """
         for source, raw_json, collected_at in payload["raw_packets"]:
-            self._save_raw_data(conn, payload["symbol"], source, "shareholder", raw_json, collected_at)
+            self._save_raw_data(
+                conn, payload["symbol"], source, "shareholder", raw_json, collected_at
+            )
         top_inserted = 0
         if payload["top_rows"]:
             cur = conn.executemany(
@@ -1569,7 +1857,12 @@ class CollectionService:
         """筹码成本落库。"""
         for source, raw_json, collected_at in payload["raw_packets"]:
             CollectionService._save_raw_data(
-                conn, payload["symbol"], source, "chip_distribution", raw_json, collected_at
+                conn,
+                payload["symbol"],
+                source,
+                "chip_distribution",
+                raw_json,
+                collected_at,
             )
         if payload["row"] is None:
             return 0
@@ -1644,8 +1937,12 @@ class CollectionService:
         """港美 IPO + exdiv 统一落库（共用 ipo_exdiv_calendar 表）。"""
         for source, raw_json, collected_at in payload["raw_packets"]:
             CollectionService._save_raw_data(
-                conn, payload.get("symbol"), source,
-                "ipo_exdiv", raw_json, collected_at,
+                conn,
+                payload.get("symbol"),
+                source,
+                "ipo_exdiv",
+                raw_json,
+                collected_at,
             )
         if not payload["rows"]:
             return 0
@@ -1818,7 +2115,6 @@ class CollectionService:
 
         return {"summary": results, "errors": errors}
 
-
     @_with_run_log("intraday_refresh")
     async def collect_intraday(self, symbol: str, days: int = 1) -> list[dict] | None:
         """实时采集分时数据并落库。
@@ -1829,20 +2125,26 @@ class CollectionService:
         def _build_payload(items, source, collected_at):
             rows: list[tuple] = []
             for item in items:
-                rows.append((
-                    symbol,
-                    item.get("time", ""),
-                    item.get("price"),
-                    item.get("volume"),
-                    item.get("avg_price"),
-                    item.get("source", source),
-                    item.get("collected_at", collected_at),
-                ))
+                rows.append(
+                    (
+                        symbol,
+                        item.get("time", ""),
+                        item.get("price"),
+                        item.get("volume"),
+                        item.get("avg_price"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -1861,39 +2163,45 @@ class CollectionService:
 
         def _build_payload(result, source, collected_at):
             report_period_fallback = (
-                result.get("report_period")
-                or result.get("end_date")
-                or collected_at
+                result.get("report_period") or result.get("end_date") or collected_at
             )
             top_rows: list[tuple] = []
             for sh in result["top_shareholders"]:
-                top_rows.append((
-                    symbol,
-                    report_period_fallback,
-                    sh.get("rank"),
-                    sh.get("name"),
-                    sh.get("shares"),
-                    sh.get("ratio"),
-                    sh.get("change"),
-                    result.get("source", source),
-                    result.get("collected_at", collected_at),
-                ))
+                top_rows.append(
+                    (
+                        symbol,
+                        report_period_fallback,
+                        sh.get("rank"),
+                        sh.get("name"),
+                        sh.get("shares"),
+                        sh.get("ratio"),
+                        sh.get("change"),
+                        result.get("source", source),
+                        result.get("collected_at", collected_at),
+                    )
+                )
             count_rows: list[tuple] = []
             for hc in result.get("holder_count_history", []):
-                count_rows.append((
-                    symbol,
-                    hc.get("date", ""),
-                    hc.get("total_holders"),
-                    hc.get("avg_shares"),
-                    result.get("source", source),
-                    result.get("collected_at", collected_at),
-                ))
+                count_rows.append(
+                    (
+                        symbol,
+                        hc.get("date", ""),
+                        hc.get("total_holders"),
+                        hc.get("avg_shares"),
+                        result.get("source", source),
+                        result.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": symbol,
                 "top_rows": top_rows,
                 "count_rows": count_rows,
                 "raw_packets": [
-                    (source, json.dumps(result, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(result, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -1931,7 +2239,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(result, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(result, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -1964,22 +2276,28 @@ class CollectionService:
                         )
                     except (ValueError, TypeError):
                         year_val = None
-                rows.append((
-                    symbol,
-                    item.get("ex_date", ""),
-                    item.get("cash_dividend"),
-                    item.get("share_bonus"),
-                    item.get("record_date"),
-                    item.get("announce_date"),
-                    year_val,
-                    item.get("source", source),
-                    item.get("collected_at", collected_at),
-                ))
+                rows.append(
+                    (
+                        symbol,
+                        item.get("ex_date", ""),
+                        item.get("cash_dividend"),
+                        item.get("share_bonus"),
+                        item.get("record_date"),
+                        item.get("announce_date"),
+                        year_val,
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2063,7 +2381,9 @@ class CollectionService:
             ).fetchall()
         items = [dict(row) for row in rows]
         summary = build_fund_flow_summary(items) or {
-            "net_flow_5d": 0, "trend": "无数据", "avg_net_inflow_ratio": 0.0
+            "net_flow_5d": 0,
+            "trend": "无数据",
+            "avg_net_inflow_ratio": 0.0,
         }
         return {"items": items, "summary": summary}
 
@@ -2120,7 +2440,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2144,20 +2468,26 @@ class CollectionService:
         def _build_payload(items, source, collected_at):
             rows: list[tuple] = []
             for item in items:
-                rows.append((
-                    symbol,
-                    item.get("constituent_code", ""),
-                    item.get("constituent_name"),
-                    item.get("ratio"),
-                    item.get("date", ""),
-                    item.get("source", source),
-                    item.get("collected_at", collected_at),
-                ))
+                rows.append(
+                    (
+                        symbol,
+                        item.get("constituent_code", ""),
+                        item.get("constituent_name"),
+                        item.get("ratio"),
+                        item.get("date", ""),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2179,21 +2509,27 @@ class CollectionService:
         def _build_payload(items, source, collected_at):
             rows: list[tuple] = []
             for item in items:
-                rows.append((
-                    symbol,
-                    item.get("date", ""),
-                    item.get("nav"),
-                    item.get("nav_change"),
-                    item.get("nav_change_pct"),
-                    item.get("acc_nav"),
-                    item.get("source", source),
-                    item.get("collected_at", collected_at),
-                ))
+                rows.append(
+                    (
+                        symbol,
+                        item.get("date", ""),
+                        item.get("nav"),
+                        item.get("nav_change"),
+                        item.get("nav_change_pct"),
+                        item.get("acc_nav"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2229,7 +2565,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2266,7 +2606,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2308,7 +2652,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2347,7 +2695,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2383,7 +2735,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2409,7 +2765,11 @@ class CollectionService:
                 "symbol": None,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2434,7 +2794,11 @@ class CollectionService:
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2448,9 +2812,7 @@ class CollectionService:
         )
 
     @_with_run_log("us_finance_refresh")
-    async def collect_us_finance(
-        self, symbol: str, num: int = 4
-    ) -> list[dict] | None:
+    async def collect_us_finance(self, symbol: str, num: int = 4) -> list[dict] | None:
         """采集美股财务（3 个 type × num 期 = 12 行）并落库。
 
         3 个报表类型（income / balance / cashflow）改为 asyncio.gather 并发采集，
@@ -2465,7 +2827,11 @@ class CollectionService:
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(all_items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2481,9 +2847,7 @@ class CollectionService:
         )
 
     @_with_run_log("hk_finance_refresh")
-    async def collect_hk_finance(
-        self, symbol: str, num: int = 4
-    ) -> list[dict] | None:
+    async def collect_hk_finance(self, symbol: str, num: int = 4) -> list[dict] | None:
         """采集港股财务（3 个 type × num 期 = 12 行）并落库。
 
         3 个报表类型（zhsy 利润表 / zcfz 资产负债表 / xjll 现金流量表）改为 asyncio.gather 并发采集。
@@ -2497,7 +2861,11 @@ class CollectionService:
                 "symbol": symbol,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(all_items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(all_items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2519,29 +2887,35 @@ class CollectionService:
         def _build_payload(items, source, collected_at):
             rows: list[tuple] = []
             for item in items:
-                rows.append((
-                    item.get("name", ""),
-                    item.get("date", ""),
-                    item.get("sector_type", "industry"),
-                    item.get("symbol"),
-                    item.get("change_pct"),
-                    item.get("turnover_rate"),
-                    item.get("change_pct_5d"),
-                    item.get("change_pct_20d"),
-                    item.get("lead_stock"),
-                    item.get("main_net_inflow"),
-                    item.get("main_net_inflow_5d"),
-                    item.get("up_down_ratio"),
-                    item.get("rank"),
-                    item.get("zxj"),
-                    item.get("source", source),
-                    item.get("collected_at", collected_at),
-                ))
+                rows.append(
+                    (
+                        item.get("name", ""),
+                        item.get("date", ""),
+                        item.get("sector_type", "industry"),
+                        item.get("symbol"),
+                        item.get("change_pct"),
+                        item.get("turnover_rate"),
+                        item.get("change_pct_5d"),
+                        item.get("change_pct_20d"),
+                        item.get("lead_stock"),
+                        item.get("main_net_inflow"),
+                        item.get("main_net_inflow_5d"),
+                        item.get("up_down_ratio"),
+                        item.get("rank"),
+                        item.get("zxj"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": None,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2561,29 +2935,35 @@ class CollectionService:
         def _build_payload(items, source, collected_at):
             rows: list[tuple] = []
             for item in items:
-                rows.append((
-                    item.get("name", ""),
-                    item.get("date", ""),
-                    item.get("sector_type", "industry"),
-                    item.get("symbol"),
-                    item.get("change_pct"),
-                    item.get("turnover_rate"),
-                    item.get("change_pct_5d"),
-                    item.get("change_pct_20d"),
-                    item.get("lead_stock"),
-                    item.get("main_net_inflow"),
-                    item.get("main_net_inflow_5d"),
-                    item.get("up_down_ratio"),
-                    item.get("rank"),
-                    item.get("zxj"),
-                    item.get("source", source),
-                    item.get("collected_at", collected_at),
-                ))
+                rows.append(
+                    (
+                        item.get("name", ""),
+                        item.get("date", ""),
+                        item.get("sector_type", "industry"),
+                        item.get("symbol"),
+                        item.get("change_pct"),
+                        item.get("turnover_rate"),
+                        item.get("change_pct_5d"),
+                        item.get("change_pct_20d"),
+                        item.get("lead_stock"),
+                        item.get("main_net_inflow"),
+                        item.get("main_net_inflow_5d"),
+                        item.get("up_down_ratio"),
+                        item.get("rank"),
+                        item.get("zxj"),
+                        item.get("source", source),
+                        item.get("collected_at", collected_at),
+                    )
+                )
             return {
                 "symbol": None,
                 "rows": rows,
                 "raw_packets": [
-                    (source, json.dumps(items, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(items, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2618,7 +2998,11 @@ class CollectionService:
                 "symbol": symbol,
                 "row": row,
                 "raw_packets": [
-                    (source, json.dumps(data, ensure_ascii=False, default=str), collected_at)
+                    (
+                        source,
+                        json.dumps(data, ensure_ascii=False, default=str),
+                        collected_at,
+                    )
                 ],
             }
 
@@ -2793,7 +3177,9 @@ class CollectionService:
             conditions.append("source = ?")
             params.append(source)
         where = " AND ".join(conditions)
-        sql = f"SELECT * FROM etf_holders WHERE {where} ORDER BY report_date DESC LIMIT 1"
+        sql = (
+            f"SELECT * FROM etf_holders WHERE {where} ORDER BY report_date DESC LIMIT 1"
+        )
         with get_db() as conn:
             row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
@@ -2812,7 +3198,9 @@ class CollectionService:
             params.append(source)
         where = " AND ".join(conditions)
         params.append(limit)
-        sql = f"SELECT * FROM chip_distribution WHERE {where} ORDER BY date DESC LIMIT ?"
+        sql = (
+            f"SELECT * FROM chip_distribution WHERE {where} ORDER BY date DESC LIMIT ?"
+        )
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
@@ -2932,7 +3320,9 @@ class CollectionService:
             params.append(source)
         where = " AND ".join(conditions)
         params.append(limit)
-        sql = f"SELECT * FROM us_financials WHERE {where} ORDER BY end_date DESC LIMIT ?"
+        sql = (
+            f"SELECT * FROM us_financials WHERE {where} ORDER BY end_date DESC LIMIT ?"
+        )
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]

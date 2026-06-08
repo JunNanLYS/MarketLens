@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
 
 import httpx
 from loguru import logger
@@ -34,7 +34,6 @@ class SinaNewsProvider(NewsProvider, _HttpClientMixin):
             "headers": self._client_headers,
         }
 
-
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         if not self.url:
             logger.warning("新浪新闻 URL 未配置: provider={}", self.name)
@@ -45,10 +44,16 @@ class SinaNewsProvider(NewsProvider, _HttpClientMixin):
             resp.raise_for_status()
             return self._parse_json(resp.json())
         except httpx.TimeoutException:
-            logger.warning("新浪新闻请求超时: url={}, timeout={}s", self.url, self.timeout)
+            logger.warning(
+                "新浪新闻请求超时: url={}, timeout={}s", self.url, self.timeout
+            )
             return []
         except httpx.HTTPStatusError as e:
-            logger.error("新浪新闻 HTTP 错误: url={}, status={}", self.url, e.response.status_code)
+            logger.error(
+                "新浪新闻 HTTP 错误: url={}, status={}",
+                self.url,
+                e.response.status_code,
+            )
             return []
         except Exception as e:
             logger.error("新浪新闻请求异常: url={}, error={}", self.url, e)
@@ -63,10 +68,14 @@ class SinaNewsProvider(NewsProvider, _HttpClientMixin):
             return []
 
         if not isinstance(news_list, list):
-            logger.warning("新浪新闻 data 字段非列表: provider={}, type={}", self.name, type(news_list))
+            logger.warning(
+                "新浪新闻 data 字段非列表: provider={}, type={}",
+                self.name,
+                type(news_list),
+            )
             return []
 
-        for item in news_list[:self.max_items]:
+        for item in news_list[: self.max_items]:
             try:
                 title = item.get("title", "").strip()
                 if not title:
@@ -77,23 +86,29 @@ class SinaNewsProvider(NewsProvider, _HttpClientMixin):
                 published_at = None
                 if ctime:
                     try:
-                        published_at = datetime.fromtimestamp(int(ctime), tz=timezone.utc).isoformat()
+                        published_at = datetime.fromtimestamp(
+                            int(ctime), tz=timezone.utc
+                        ).isoformat()
                     except (ValueError, OSError):
                         published_at = ctime
 
-                results.append({
-                    "title": title,
-                    "source": item.get("media_name", "") or "新浪财经",
-                    "url": url or None,
-                    "content": intro,
-                    "summary": intro,
-                    "published_at": published_at,
-                    "sentiment": "neutral",
-                    "importance": "normal",
-                    "collected_at": self._now(),
-                })
+                results.append(
+                    {
+                        "title": title,
+                        "source": item.get("media_name", "") or "新浪财经",
+                        "url": url or None,
+                        "content": intro,
+                        "summary": intro,
+                        "published_at": published_at,
+                        "sentiment": "neutral",
+                        "importance": "normal",
+                        "collected_at": self._now(),
+                    }
+                )
             except Exception as e:
-                logger.warning("新浪新闻条目解析失败: provider={}, error={}", self.name, e)
+                logger.warning(
+                    "新浪新闻条目解析失败: provider={}, error={}", self.name, e
+                )
                 continue
 
         logger.info("新浪新闻获取 {} 条: provider={}", len(results), self.name)

@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import json
 import time
 from pathlib import Path
@@ -244,7 +244,7 @@ async def test_token_manager_malformed_jwt_falls_back_to_ttl(
     token_manager: TokenManager, cache_file: Path
 ) -> None:
     """三段式但 payload 非有效 JSON 时回退到 TTL 判断。"""
-    jwt = f"header.{'='*4}.sig"  # payload 不是合法 Base64 JSON
+    jwt = f"header.{'=' * 4}.sig"  # payload 不是合法 Base64 JSON
     _write_cache(cache_file, jwt, int(time.time()))
     token, _ = token_manager.get_token()
     assert token == jwt

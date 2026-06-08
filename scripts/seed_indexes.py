@@ -5,6 +5,7 @@ kline(symbol) 通道采集，零新方法/表/端点。
 
 幂等：使用 INSERT OR IGNORE，重复跑不会报错。
 """
+
 from __future__ import annotations
 
 from backend.storage.database import get_db
@@ -51,7 +52,9 @@ def main() -> None:
         ).fetchone()["n"]
 
         added = after - before
-        print(f"指数跟踪 seed 完成: 新增 {added} 个，跳过 {len(INDEXES) - added} 个已存在")
+        print(
+            f"指数跟踪 seed 完成: 新增 {added} 个，跳过 {len(INDEXES) - added} 个已存在"
+        )
         print(f"当前 tracked_assets 中 asset_type='index' 共 {after} 个")
 
         # 列出最终落库的所有指数（供校对）

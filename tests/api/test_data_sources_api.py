@@ -6,6 +6,7 @@ Mock strategy:
   get_token_status() controlled by each test.
 - `shutil.which` is patched for westock's command_resolved path.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -55,7 +56,9 @@ def test_status_returns_three_top_level_keys() -> None:
 def test_neodata_with_token_reports_has_token_true() -> None:
     with patch(
         "backend.api.data_sources.NeoDataClient",
-        side_effect=_neo_client_factory(True, source="cache", expires_at="2027-01-01T00:00:00"),
+        side_effect=_neo_client_factory(
+            True, source="cache", expires_at="2027-01-01T00:00:00"
+        ),
     ):
         client = TestClient(app)
         resp = client.get("/api/v1/data-sources/status")
@@ -86,7 +89,9 @@ def test_westock_command_resolved_true_when_executable_exists() -> None:
         "backend.api.data_sources.NeoDataClient",
         side_effect=_neo_client_factory(True),
     ):
-        with patch("backend.api.data_sources.shutil.which", return_value="/usr/local/bin/npx"):
+        with patch(
+            "backend.api.data_sources.shutil.which", return_value="/usr/local/bin/npx"
+        ):
             client = TestClient(app)
             resp = client.get("/api/v1/data-sources/status")
     body = resp.json()

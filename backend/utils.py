@@ -8,7 +8,12 @@ def escape_like(value: str, escape_char: str = "\\") -> str:
     Returns:
         转义后的字符串。
     """
-    return value.replace(escape_char, escape_char * 2).replace("%", f"{escape_char}%").replace("_", f"{escape_char}_")
+    return (
+        value.replace(escape_char, escape_char * 2)
+        .replace("%", f"{escape_char}%")
+        .replace("_", f"{escape_char}_")
+    )
+
 
 def build_fund_flow_summary(fund_rows: list[dict]) -> dict | None:
     """构建资金流向摘要。
@@ -23,9 +28,7 @@ def build_fund_flow_summary(fund_rows: list[dict]) -> dict | None:
     if not fund_rows:
         return None
 
-    net_flow_5d = sum(
-        row["main_net_inflow"] or 0 for row in fund_rows
-    )
+    net_flow_5d = sum(row["main_net_inflow"] or 0 for row in fund_rows)
 
     # 统计连续净流入/流出（从最早到最新，按日检测连续天数）
     inflows = 0

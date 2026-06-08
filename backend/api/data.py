@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,10 +14,23 @@ def _format_technical(row: dict) -> dict:
     return {
         "symbol": row.get("symbol"),
         "date": row.get("date"),
-        "ma": {"ma5": row.get("ma5"), "ma10": row.get("ma10"), "ma20": row.get("ma20"), "ma60": row.get("ma60")},
-        "macd": {"dif": row.get("macd_dif"), "dea": row.get("macd_dea"), "histogram": row.get("macd_histogram")},
+        "ma": {
+            "ma5": row.get("ma5"),
+            "ma10": row.get("ma10"),
+            "ma20": row.get("ma20"),
+            "ma60": row.get("ma60"),
+        },
+        "macd": {
+            "dif": row.get("macd_dif"),
+            "dea": row.get("macd_dea"),
+            "histogram": row.get("macd_histogram"),
+        },
         "rsi": {"rsi6": row.get("rsi6"), "rsi14": row.get("rsi14")},
-        "boll": {"upper": row.get("boll_upper"), "middle": row.get("boll_middle"), "lower": row.get("boll_lower")},
+        "boll": {
+            "upper": row.get("boll_upper"),
+            "middle": row.get("boll_middle"),
+            "lower": row.get("boll_lower"),
+        },
         "volume_ma": {"ma5": row.get("volume_ma5"), "ma20": row.get("volume_ma20")},
         "source": row.get("source"),
         "collected_at": row.get("collected_at"),
@@ -28,7 +41,13 @@ def _format_technical(row: dict) -> dict:
 def get_quote(symbol: str) -> dict:
     quote = _service.get_quote(symbol)
     if quote is None:
-        raise HTTPException(status_code=404, detail={"error": "SYMBOL_NOT_FOUND", "detail": f"标的 '{symbol}' 无行情数据"})
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "SYMBOL_NOT_FOUND",
+                "detail": f"标的 '{symbol}' 无行情数据",
+            },
+        )
     return quote
 
 
@@ -39,7 +58,13 @@ async def refresh_quote(
 ) -> dict:
     result = await _service.collect_quote_single(symbol)
     if result is None:
-        raise HTTPException(status_code=502, detail={"error": "REFRESH_FAILED", "detail": f"标的 '{symbol}' 数据刷新失败"})
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "REFRESH_FAILED",
+                "detail": f"标的 '{symbol}' 数据刷新失败",
+            },
+        )
     return result
 
 
@@ -52,7 +77,9 @@ def get_quote_history(
 ) -> dict:
     from_dt = from_.isoformat() if from_ else None
     to_dt = to.isoformat() if to else None
-    items = _service.get_quote_history(symbol, limit=limit, from_dt=from_dt, to_dt=to_dt)
+    items = _service.get_quote_history(
+        symbol, limit=limit, from_dt=from_dt, to_dt=to_dt
+    )
     return {"symbol": symbol, "items": items, "total": len(items)}
 
 
@@ -65,7 +92,9 @@ def get_kline(
 ) -> dict:
     from_date = from_.isoformat() if from_ else None
     to_date = to.isoformat() if to else None
-    items = _service.get_kline(symbol, limit=limit, from_date=from_date, to_date=to_date)
+    items = _service.get_kline(
+        symbol, limit=limit, from_date=from_date, to_date=to_date
+    )
     return {"symbol": symbol, "items": items, "total": len(items)}
 
 
@@ -85,7 +114,13 @@ def get_fund_flow(symbol: str, days: int = Query(5, ge=1, le=30)) -> dict:
 def get_technical(symbol: str) -> dict:
     row = _service.get_technical(symbol)
     if row is None:
-        raise HTTPException(status_code=404, detail={"error": "SYMBOL_NOT_FOUND", "detail": f"标的 '{symbol}' 无技术指标数据"})
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "SYMBOL_NOT_FOUND",
+                "detail": f"标的 '{symbol}' 无技术指标数据",
+            },
+        )
     return _format_technical(row)
 
 
@@ -97,7 +132,13 @@ async def get_intraday(
 ) -> dict:
     result = await _service.collect_intraday(symbol, days=days)
     if result is None:
-        raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 分时数据采集失败"})
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 '{symbol}' 分时数据采集失败",
+            },
+        )
     return {"symbol": symbol, "items": result}
 
 
@@ -108,7 +149,13 @@ async def get_shareholder(
 ) -> dict:
     result = await _service.collect_shareholder(symbol)
     if result is None:
-        raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 股东结构数据采集失败"})
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 '{symbol}' 股东结构数据采集失败",
+            },
+        )
     return result
 
 
@@ -119,7 +166,13 @@ async def get_dividend(
 ) -> dict:
     items = await _service.collect_dividend(symbol)
     if items is None:
-        raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 分红数据采集失败"})
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 '{symbol}' 分红数据采集失败",
+            },
+        )
     return {"symbol": symbol, "items": items}
 
 
@@ -130,7 +183,13 @@ async def get_reserve(
 ) -> dict:
     result = await _service.collect_reserve(symbol)
     if result is None:
-        raise HTTPException(status_code=502, detail={"error": "COLLECT_FAILED", "detail": f"标的 '{symbol}' 业绩预告采集失败"})
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 '{symbol}' 业绩预告采集失败",
+            },
+        )
     return result
 
 
@@ -229,7 +288,10 @@ async def refresh_dividend(
     if items is None:
         raise HTTPException(
             status_code=502,
-            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 分红数据采集失败"},
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 {symbol} 分红数据采集失败",
+            },
         )
     return {"symbol": symbol, "items": items, "total": len(items)}
 
@@ -244,7 +306,10 @@ async def refresh_shareholder(
     if result is None:
         raise HTTPException(
             status_code=502,
-            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 股东结构数据采集失败"},
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 {symbol} 股东结构数据采集失败",
+            },
         )
     return result
 
@@ -259,7 +324,10 @@ async def refresh_reserve(
     if result is None:
         raise HTTPException(
             status_code=502,
-            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 业绩预告采集失败"},
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 {symbol} 业绩预告采集失败",
+            },
         )
     return result
 
@@ -275,7 +343,10 @@ async def refresh_minute(
     if items is None:
         raise HTTPException(
             status_code=502,
-            detail={"error": "COLLECT_FAILED", "detail": f"标的 {symbol} 分时数据采集失败"},
+            detail={
+                "error": "COLLECT_FAILED",
+                "detail": f"标的 {symbol} 分时数据采集失败",
+            },
         )
     return {"symbol": symbol, "items": items, "total": len(items)}
 
@@ -412,7 +483,12 @@ def get_sector_board(
             status_code=404,
             detail={"error": "NO_DATA", "detail": "无板块首页数据"},
         )
-    return {"items": items, "total": len(items), "sector_type": sector_type, "date": date_str}
+    return {
+        "items": items,
+        "total": len(items),
+        "sector_type": sector_type,
+        "date": date_str,
+    }
 
 
 @router.get("/sectors/hot")
@@ -429,7 +505,10 @@ def get_sector_hot(
     if not hot_items:
         raise HTTPException(
             status_code=404,
-            detail={"error": "NO_DATA", "detail": "无热门板块数据，请先调用 POST /sectors/refresh"},
+            detail={
+                "error": "NO_DATA",
+                "detail": "无热门板块数据，请先调用 POST /sectors/refresh",
+            },
         )
     return {"items": hot_items, "total": len(hot_items)}
 
@@ -518,14 +597,20 @@ async def refresh_finance(
     if collect_fn is None:
         raise HTTPException(
             status_code=400,
-            detail={"error": "INVALID_SYMBOL", "detail": f"symbol 必须以 us/hk 开头，实际 {symbol}"},
+            detail={
+                "error": "INVALID_SYMBOL",
+                "detail": f"symbol 必须以 us/hk 开头，实际 {symbol}",
+            },
         )
     result = await collect_fn(symbol, num=num)
     summary: dict[str, dict] = {}
     if isinstance(result, Exception):
         summary["finance"] = {"success": False, "error": str(result)}
     else:
-        summary["finance"] = {"success": result is not None, "items": len(result) if isinstance(result, list) else 0}
+        summary["finance"] = {
+            "success": result is not None,
+            "items": len(result) if isinstance(result, list) else 0,
+        }
     return {"symbol": symbol, "summary": summary, "num": num}
 
 
@@ -564,7 +649,10 @@ def get_ipo_calendar(
     if not items:
         raise HTTPException(
             status_code=404,
-            detail={"error": "NO_DATA", "detail": f"{market} 市场无新股日历数据，请先 POST /calendar-refresh"},
+            detail={
+                "error": "NO_DATA",
+                "detail": f"{market} 市场无新股日历数据，请先 POST /calendar-refresh",
+            },
         )
     return {"items": items, "total": len(items), "market": market}
 
@@ -572,13 +660,14 @@ def get_ipo_calendar(
 @router.get("/calendar/exdiv/{symbol}")
 def get_exdiv_calendar(symbol: str) -> dict:
     """查询单只股票的除权日历（港美）。"""
-    items = _service.get_ipo_exdiv_calendar(
-        event_type="exdiv", symbol=symbol, limit=50
-    )
+    items = _service.get_ipo_exdiv_calendar(event_type="exdiv", symbol=symbol, limit=50)
     if not items:
         raise HTTPException(
             status_code=404,
-            detail={"error": "NO_DATA", "detail": f"{symbol} 无除权数据，请先 POST /calendar-refresh"},
+            detail={
+                "error": "NO_DATA",
+                "detail": f"{symbol} 无除权数据，请先 POST /calendar-refresh",
+            },
         )
     return {"symbol": symbol, "items": items, "total": len(items)}
 
@@ -724,4 +813,3 @@ async def refresh_lhb(
             detail={"error": "COLLECT_FAILED", "detail": f"{symbol} 龙虎榜采集失败"},
         )
     return {"symbol": symbol, "date": date, "data": result}
-

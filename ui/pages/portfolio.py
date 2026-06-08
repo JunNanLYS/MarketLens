@@ -124,7 +124,9 @@ def _render_positions_tab() -> None:
         st.info("暂无持仓")
         return
 
-    account_map: dict[int, str] = {a["id"]: a.get("name", "") for a in _fetch_accounts()}
+    account_map: dict[int, str] = {
+        a["id"]: a.get("name", "") for a in _fetch_accounts()
+    }
 
     total_market_value: float = 0.0
     total_unrealized_pnl: float = 0.0
@@ -142,7 +144,9 @@ def _render_positions_tab() -> None:
         st.metric("总浮动盈亏", _format_pnl(total_unrealized_pnl))
     with m3:
         if total_market_value > 0:
-            pct: float = total_unrealized_pnl / (total_market_value - total_unrealized_pnl) * 100
+            pct: float = (
+                total_unrealized_pnl / (total_market_value - total_unrealized_pnl) * 100
+            )
             st.metric("总浮动盈亏率", f"{pct:+.2f}%")
         else:
             st.metric("总浮动盈亏率", "-")
@@ -172,7 +176,9 @@ def _render_positions_tab() -> None:
         with cols[5]:
             upnl_val: float | None = pos.get("unrealized_pnl")
             if upnl_val is not None:
-                pnl_color: str = "green" if upnl_val > 0 else "red" if upnl_val < 0 else "inherit"
+                pnl_color: str = (
+                    "green" if upnl_val > 0 else "red" if upnl_val < 0 else "inherit"
+                )
                 arrow: str = _pnl_arrow(upnl_val)
                 pnl_str: str = _format_pnl(upnl_val)
                 st.markdown(f":{pnl_color}[{arrow} {pnl_str}]".strip())
@@ -181,7 +187,9 @@ def _render_positions_tab() -> None:
         with cols[6]:
             upnl_pct: float | None = pos.get("unrealized_pnl_pct")
             if upnl_pct is not None:
-                pct_color: str = "green" if upnl_pct > 0 else "red" if upnl_pct < 0 else "inherit"
+                pct_color: str = (
+                    "green" if upnl_pct > 0 else "red" if upnl_pct < 0 else "inherit"
+                )
                 pct_arrow: str = _pnl_arrow(upnl_pct)
                 st.markdown(f":{pct_color}[{pct_arrow} {upnl_pct:+.2f}%]".strip())
             else:
@@ -210,20 +218,32 @@ def _render_positions_tab() -> None:
                 rp_arrow: str = _pnl_arrow(pnl)
                 st.markdown(f":{rp_color}[{rp_arrow} {_format_pnl(pnl)}]".strip())
         st.divider()
-        tr_color: str = "green" if total_realized > 0 else "red" if total_realized < 0 else "inherit"
+        tr_color: str = (
+            "green"
+            if total_realized > 0
+            else "red"
+            if total_realized < 0
+            else "inherit"
+        )
         tr_arrow: str = _pnl_arrow(total_realized)
-        st.markdown(f"**总已实现盈亏:** :{tr_color}[{tr_arrow} {_format_pnl(total_realized)}]".strip())
+        st.markdown(
+            f"**总已实现盈亏:** :{tr_color}[{tr_arrow} {_format_pnl(total_realized)}]".strip()
+        )
 
 
 def _render_transactions_tab() -> None:
     accounts: list[dict[str, Any]] = _fetch_accounts()
     account_options: dict[str, int | None] = {"全部": None}
     for acc in accounts:
-        account_options[f"{acc.get('name', '')} (ID: {acc.get('id', '')})"] = acc.get("id")
+        account_options[f"{acc.get('name', '')} (ID: {acc.get('id', '')})"] = acc.get(
+            "id"
+        )
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        selected_account: str = st.selectbox("账户", list(account_options.keys()), key="tx_filter_account")
+        selected_account: str = st.selectbox(
+            "账户", list(account_options.keys()), key="tx_filter_account"
+        )
     with col2:
         tx_type: str = st.selectbox(
             "交易类型",
@@ -257,8 +277,16 @@ def _render_transactions_tab() -> None:
                     st.markdown(f"**{tx.get('symbol', '')}**")
                 with tc2:
                     tx_type_val: str = tx.get("type", "")
-                    type_label: str = TRANSACTION_TYPE_LABELS.get(tx_type_val, tx_type_val)
-                    type_color: str = "green" if tx_type_val == "buy" else "red" if tx_type_val == "sell" else "orange"
+                    type_label: str = TRANSACTION_TYPE_LABELS.get(
+                        tx_type_val, tx_type_val
+                    )
+                    type_color: str = (
+                        "green"
+                        if tx_type_val == "buy"
+                        else "red"
+                        if tx_type_val == "sell"
+                        else "orange"
+                    )
                     st.markdown(f":{type_color}[{type_label}]")
                 with tc3:
                     qty_val: float | None = tx.get("quantity")
@@ -278,23 +306,56 @@ def _render_transactions_tab() -> None:
 
                 if st.session_state.get(f"edit_tx_{tx_key}"):
                     with st.form(f"edit_transaction_form_{tx_key}"):
-                        st.markdown(f"**编辑交易 #{tx.get('id', '')} — {tx.get('symbol', '')}**")
+                        st.markdown(
+                            f"**编辑交易 #{tx.get('id', '')} — {tx.get('symbol', '')}**"
+                        )
                         ex1, ex2, ex3 = st.columns(3)
                         with ex1:
-                            new_qty: float = st.number_input("数量 *", min_value=0.01, value=float(tx.get("quantity", 0) or 0), step=1.0, key=f"etx_qty_{tx_key}")
+                            new_qty: float = st.number_input(
+                                "数量 *",
+                                min_value=0.01,
+                                value=float(tx.get("quantity", 0) or 0),
+                                step=1.0,
+                                key=f"etx_qty_{tx_key}",
+                            )
                         with ex2:
-                            new_price: float = st.number_input("价格 *", min_value=0.01, value=float(tx.get("price", 0) or 0), step=0.01, key=f"etx_price_{tx_key}")
+                            new_price: float = st.number_input(
+                                "价格 *",
+                                min_value=0.01,
+                                value=float(tx.get("price", 0) or 0),
+                                step=0.01,
+                                key=f"etx_price_{tx_key}",
+                            )
                         with ex3:
-                            new_fee: float = st.number_input("手续费", min_value=0.0, value=float(tx.get("fee", 0) or 0), step=0.01, key=f"etx_fee_{tx_key}")
-                        new_notes: str = st.text_input("备注", value=tx.get("notes", "") or "", key=f"etx_notes_{tx_key}")
+                            new_fee: float = st.number_input(
+                                "手续费",
+                                min_value=0.0,
+                                value=float(tx.get("fee", 0) or 0),
+                                step=0.01,
+                                key=f"etx_fee_{tx_key}",
+                            )
+                        new_notes: str = st.text_input(
+                            "备注",
+                            value=tx.get("notes", "") or "",
+                            key=f"etx_notes_{tx_key}",
+                        )
                         es1, es2 = st.columns(2)
                         with es1:
                             if st.form_submit_button("保存"):
-                                upd: dict[str, Any] = {"quantity": new_qty, "price": new_price, "fee": new_fee}
+                                upd: dict[str, Any] = {
+                                    "quantity": new_qty,
+                                    "price": new_price,
+                                    "fee": new_fee,
+                                }
                                 if new_notes.strip():
                                     upd["notes"] = new_notes.strip()
-                                result_upd_tx: dict[str, Any] = update_transaction(int(tx["id"]), upd)
-                                if "error" in result_upd_tx or "id" not in result_upd_tx:
+                                result_upd_tx: dict[str, Any] = update_transaction(
+                                    int(tx["id"]), upd
+                                )
+                                if (
+                                    "error" in result_upd_tx
+                                    or "id" not in result_upd_tx
+                                ):
                                     st.error(result_upd_tx.get("detail", "更新失败"))
                                     return
                                 # 细粒度失效：编辑单笔交易只清本页面 accounts cache，
@@ -339,7 +400,9 @@ def _render_transactions_tab() -> None:
             }
             selected_tx_account: str = st.selectbox(
                 "账户 *",
-                list(tx_account_options.keys()) if tx_account_options else ["无可用账户"],
+                list(tx_account_options.keys())
+                if tx_account_options
+                else ["无可用账户"],
                 key="tx_account",
             )
         with fc2:
@@ -354,11 +417,17 @@ def _render_transactions_tab() -> None:
 
         fc4, fc5, fc6, fc7 = st.columns(4)
         with fc4:
-            tx_quantity: float = st.number_input("数量 *", min_value=0.01, value=100.0, step=1.0, key="tx_quantity")
+            tx_quantity: float = st.number_input(
+                "数量 *", min_value=0.01, value=100.0, step=1.0, key="tx_quantity"
+            )
         with fc5:
-            tx_price: float = st.number_input("价格 *", min_value=0.01, value=1.0, step=0.01, key="tx_price")
+            tx_price: float = st.number_input(
+                "价格 *", min_value=0.01, value=1.0, step=0.01, key="tx_price"
+            )
         with fc6:
-            tx_fee: float = st.number_input("手续费", min_value=0.0, value=0.0, step=0.01, key="tx_fee")
+            tx_fee: float = st.number_input(
+                "手续费", min_value=0.0, value=0.0, step=0.01, key="tx_fee"
+            )
         with fc7:
             tx_date: str = st.date_input("交易日期 *", key="tx_date").isoformat()
 
@@ -422,27 +491,56 @@ def _render_accounts_tab() -> None:
                         st.markdown(f"**编辑账户「{acc.get('name', '')}」**")
                         ec1, ec2, ec3, ec4 = st.columns(4)
                         with ec1:
-                            new_name: str = st.text_input("名称 *", value=acc.get("name", ""), key=f"eacc_name_{acc_id}")
+                            new_name: str = st.text_input(
+                                "名称 *",
+                                value=acc.get("name", ""),
+                                key=f"eacc_name_{acc_id}",
+                            )
                         with ec2:
-                            new_broker: str = st.text_input("券商", value=acc.get("broker", "") or "", key=f"eacc_broker_{acc_id}")
+                            new_broker: str = st.text_input(
+                                "券商",
+                                value=acc.get("broker", "") or "",
+                                key=f"eacc_broker_{acc_id}",
+                            )
                         with ec3:
-                            new_currency: str = st.selectbox("币种", CURRENCY_OPTIONS, index=CURRENCY_OPTIONS.index(acc.get("currency", "CNY")) if acc.get("currency") in CURRENCY_OPTIONS else 0, key=f"eacc_currency_{acc_id}")
+                            new_currency: str = st.selectbox(
+                                "币种",
+                                CURRENCY_OPTIONS,
+                                index=CURRENCY_OPTIONS.index(acc.get("currency", "CNY"))
+                                if acc.get("currency") in CURRENCY_OPTIONS
+                                else 0,
+                                key=f"eacc_currency_{acc_id}",
+                            )
                         with ec4:
-                            new_notes: str = st.text_input("备注", value=acc.get("notes", "") or "", key=f"eacc_notes_{acc_id}")
+                            new_notes: str = st.text_input(
+                                "备注",
+                                value=acc.get("notes", "") or "",
+                                key=f"eacc_notes_{acc_id}",
+                            )
                         es1, es2 = st.columns(2)
                         with es1:
                             if st.form_submit_button("保存"):
                                 if not new_name.strip():
                                     st.error("请输入账户名称")
                                 else:
-                                    upd: dict[str, Any] = {"name": new_name.strip(), "currency": new_currency}
+                                    upd: dict[str, Any] = {
+                                        "name": new_name.strip(),
+                                        "currency": new_currency,
+                                    }
                                     if new_broker.strip():
                                         upd["broker"] = new_broker.strip()
                                     if new_notes.strip():
                                         upd["notes"] = new_notes.strip()
-                                    result_upd_acc: dict[str, Any] = update_account(acc_id, upd)
-                                    if "error" in result_upd_acc or "id" not in result_upd_acc:
-                                        st.error(result_upd_acc.get("detail", "更新失败"))
+                                    result_upd_acc: dict[str, Any] = update_account(
+                                        acc_id, upd
+                                    )
+                                    if (
+                                        "error" in result_upd_acc
+                                        or "id" not in result_upd_acc
+                                    ):
+                                        st.error(
+                                            result_upd_acc.get("detail", "更新失败")
+                                        )
                                         return
                                     # 细粒度失效：编辑账户只清本页面 accounts cache。
                                     _invalidate_cache("accounts")
@@ -455,7 +553,9 @@ def _render_accounts_tab() -> None:
                                 st.rerun()
 
                 if st.session_state.get(f"confirm_del_acc_{acc_id}"):
-                    st.warning(f"确认删除账户「{acc.get('name', '')}」？关联交易记录将保留。")
+                    st.warning(
+                        f"确认删除账户「{acc.get('name', '')}」？关联交易记录将保留。"
+                    )
                     dc1, dc2 = st.columns(2)
                     with dc1:
                         if st.button("确认", key=f"confirm_del_acc_btn_{acc_id}"):
@@ -484,7 +584,9 @@ def _render_accounts_tab() -> None:
         with nc2:
             acc_broker: str = st.text_input("券商", key="acc_broker")
         with nc3:
-            acc_currency: str = st.selectbox("币种", CURRENCY_OPTIONS, key="acc_currency")
+            acc_currency: str = st.selectbox(
+                "币种", CURRENCY_OPTIONS, key="acc_currency"
+            )
         with nc4:
             acc_notes: str = st.text_input("备注", key="acc_notes")
 

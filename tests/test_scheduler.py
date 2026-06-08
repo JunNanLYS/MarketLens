@@ -47,7 +47,6 @@ def _insert_run_log(
 
 
 class TestSchedulerManagerInit:
-
     def test_init_creates_scheduler(self) -> None:
         mgr = SchedulerManager()
         assert mgr._scheduler is not None
@@ -58,7 +57,6 @@ class TestSchedulerManagerInit:
 
 
 class TestRegisterJobs:
-
     def test_register_jobs_adds_four_tasks(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
@@ -92,7 +90,6 @@ class TestRegisterJobs:
 
 
 class TestTriggerTask:
-
     def test_trigger_valid_task(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
@@ -131,7 +128,6 @@ class TestTriggerTask:
 
 
 class TestGetTaskStatus:
-
     def test_get_task_status_no_logs(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
@@ -203,7 +199,6 @@ class TestGetTaskStatus:
 
 
 class TestTaskLogsAPI:
-
     @pytest.fixture
     def client(self) -> TestClient:
         from backend.api.tasks import set_scheduler
@@ -258,7 +253,6 @@ class TestTaskLogsAPI:
 
 
 class TestTaskStatusAPI:
-
     @pytest.fixture
     def client(self) -> None:
         from backend.api.tasks import set_scheduler
@@ -293,7 +287,6 @@ class TestTaskStatusAPI:
 
 
 class TestTriggerAPI:
-
     @pytest.fixture
     def client(self) -> None:
         from backend.api.tasks import set_scheduler
@@ -348,7 +341,12 @@ def test_run_cleanup_acquires_write_lock() -> None:
         conn.execute(
             "INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at) "
             "VALUES (?, ?, ?, ?, datetime('now', '-40 days'))",
-            ("stale", "test", "quote", "{}",),
+            (
+                "stale",
+                "test",
+                "quote",
+                "{}",
+            ),
         )
 
     original = collection_service._WRITE_LOCK
@@ -371,8 +369,11 @@ def test_run_cleanup_acquires_write_lock() -> None:
     # 同时把 collection_service._WRITE_LOCK 也用同一个可观察锁替换，
     # 保证 _run_quote / _run_news 等其他路径若内部 dereference 也保持一致。
     from backend.scheduler import jobs
-    with patch.object(jobs, "_WRITE_LOCK", new=_ObservableLock(original)), \
-         patch.object(collection_service, "_WRITE_LOCK", new=_ObservableLock(original)):
+
+    with (
+        patch.object(jobs, "_WRITE_LOCK", new=_ObservableLock(original)),
+        patch.object(collection_service, "_WRITE_LOCK", new=_ObservableLock(original)),
+    ):
         _run_cleanup()
 
     assert observed_held, "_run_cleanup 未进入 _WRITE_LOCK 上下文"
@@ -398,7 +399,12 @@ def test_cleanup_naive_run_logs_removes_unmarked_rows() -> None:
         conn.execute(
             "INSERT INTO run_logs (task_name, status, started_at, finished_at) "
             "VALUES (?, ?, ?, ?)",
-            ("quote", "success", "2026-05-01T10:00:00+00:00", "2026-05-01T10:00:05+00:00"),
+            (
+                "quote",
+                "success",
+                "2026-05-01T10:00:00+00:00",
+                "2026-05-01T10:00:05+00:00",
+            ),
         )
         conn.execute(
             "INSERT INTO run_logs (task_name, status, started_at, finished_at) "
@@ -409,9 +415,7 @@ def test_cleanup_naive_run_logs_removes_unmarked_rows() -> None:
     _cleanup_naive_run_logs_once()
 
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT started_at FROM run_logs ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT started_at FROM run_logs ORDER BY id").fetchall()
     # 仅保留带 + 或 Z 的行
     assert len(rows) == 2
     for r in rows:
