@@ -35,15 +35,27 @@ def test_scheduler_manager_start_is_async() -> None:
     )
 
 
-def test_neodata_health_log_writer_holds_write_lock() -> None:
+def test_neodata_health_log_writer_holds_write_lock(tmp_path, monkeypatch) -> None:
     """`_write_neo_health_log_sync` 写 run_logs 必须持 `_WRITE_LOCK`。
 
     修复:第 12 轮 bug #10 —— 原实现裸 `get_db()` 无锁,启动期单线程
     不会出错,但若未来扩展为周期任务,会与其他写路径竞争。
     防御性写法:现在就持锁。
+
+    CI 复盘 (2026-06-08): 本测试曾因 dev venv 残留 db 状态而本地能跑、
+    CI 干净 venv 跑挂 (`no such table: run_logs`)。已加 `tmp_path` 隔离
+    + `set_db_path` 注入 + `init_db_sync` 显式建表,确保两端一致。
     """
     from backend.services import collection_service
     import backend.scheduler.jobs as jobs_mod
+    from backend.storage.database import set_db_path
+    from backend.storage.schema import init_db_sync
+
+    # 隔离 db 路径 + 显式建表,避免依赖 dev venv 残留的 db 状态
+    db_path = tmp_path / "test_jobs.db"
+    monkeypatch.setattr("backend.storage.database._db_path_override", None)
+    set_db_path(str(db_path))
+    init_db_sync(str(db_path))
 
     observed_held: list[bool] = []
 
