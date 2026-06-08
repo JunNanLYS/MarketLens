@@ -1001,8 +1001,10 @@ async def test_update_transaction_uses_write_lock(
             self._inner.__exit__(*args)
 
     observable = _ObservableLock(original)
-    with patch.object(collection_service, "_WRITE_LOCK", new=observable), \
-         patch.object(ps_mod, "_WRITE_LOCK", new=observable):
+    with (
+        patch.object(collection_service, "_WRITE_LOCK", new=observable),
+        patch.object(ps_mod, "_WRITE_LOCK", new=observable),
+    ):
         svc.update_transaction(buy["id"], {"price": 400.0})
 
     assert observed_held, "update_transaction 未进入 _WRITE_LOCK 上下文"
@@ -1045,8 +1047,10 @@ async def test_delete_transaction_uses_write_lock(
             self._inner.__exit__(*args)
 
     observable = _ObservableLock(original)
-    with patch.object(collection_service, "_WRITE_LOCK", new=observable), \
-         patch.object(ps_mod, "_WRITE_LOCK", new=observable):
+    with (
+        patch.object(collection_service, "_WRITE_LOCK", new=observable),
+        patch.object(ps_mod, "_WRITE_LOCK", new=observable),
+    ):
         svc.delete_transaction(buy["id"])
 
     assert observed_held, "delete_transaction 未进入 _WRITE_LOCK 上下文"
@@ -1154,3 +1158,151 @@ class TestCreateTransactionRequestValidators:
                 price=10.0,
                 trade_date="2026-06-05",
             )
+
+
+# ---------------------------------------------------------------------------
+# 第 12 批：边界条件 + 错误路径补充测试
+# ---------------------------------------------------------------------------
+
+
+async def test_positions_zero_price_no_division_by_zero(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """价格为 0 时 unrealized_pnl_pct 不应触发除零,unrealized_pnl 应为 0。
+
+    CLAUDE.md 优先级 1 资金主线: 价格边界。
+    旧实现 avg_cost > 0 条件分支缺失时,0/avg_cost 算术正确但价格=0 时
+    unrealized_pnl 应为 (0 - avg_cost) * qty,且 pct 应为 None 或 0。
+    """
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+
+    async with aget_db() as conn:
+        await conn.execute(
+            "INSERT INTO market_quotes (symbol, price, collected_at) VALUES (?, ?, ?)",
+            ("hk00700", 0.0, "2026-05-31T15:30:00"),
+        )
+
+    positions: list[dict] = svc.get_positions()
+    assert len(positions) == 1
+    pos: dict = positions[0]
+    assert pos["current_price"] == 0.0
+    # 0 - 380 = -380 乘以 100 = -38000
+    assert pos["unrealized_pnl"] == -38000.0
+    # 价格=0 但 avg_cost>0 时,不应触发除零异常,pct 可为 -100% 或 None
+    # 业务上 pct = (0 - 380) / 380 * 100 = -100.0
+    assert pos["unrealized_pnl_pct"] is not None
+    assert pos["market_value"] == 0.0
+
+
+async def test_realized_pnl_empty_account_returns_zero_total(
+    svc: PortfolioService, sample_account: dict
+) -> None:
+    """账户存在但无任何交易时,realized_pnl 返回 items=[] total=0。
+
+    验证在空数据场景下,DB COUNT 查询不应出错,返回结构完整。
+    """
+    results: dict = svc.get_realized_pnl(account_id=sample_account["id"])
+    assert results["items"] == []
+    assert results["total"] == 0
+    assert results["page"] == 1
+    assert results["page_size"] == 50
+
+
+async def test_update_transaction_trade_date_not_validated_at_service_layer(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """service 层 update_transaction 不校验 trade_date ISO 格式（Pydantic 之外）。
+
+    资金主线 边界: trade_date 直接传入 service 时, 不应被 service 改写,
+    应原样写入数据库, 由 API 层 Pydantic 负责格式校验。
+    本测试记录当前行为作为边界参照 —— 若未来 service 引入独立校验,
+    本测试需调整为 pytest.raises(ValueError)。
+    """
+    tx: dict = svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "trade_date": "2026-05-15",
+        }
+    )
+    # service 层目前不校验 ISO 格式, 仅 API 层 Pydantic 校验
+    updated: dict | None = svc.update_transaction(tx["id"], {"trade_date": "2026-05-20"})
+    assert updated is not None
+    assert updated["trade_date"] == "2026-05-20"
+
+
+async def test_create_transaction_dividend_no_holding_change(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """dividend 交易不应影响 total_qty 与 avg_cost（派息 vs 送股的关键区别）。
+
+    业务上 dividend type 应在 _compute_position_detail 中被忽略（已通过
+    test_dividend_transaction 验证基本行为）。本测试额外验证:
+    1) 多笔 dividend 后总持仓不变
+    2) avg_cost 不被 dividend 的 price 字段污染（避免被误读为送股）
+    """
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 380.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+    # 派息 price 字段填写大额"派息金额",应被忽略,不能影响 avg_cost
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "dividend",
+            "quantity": 100,
+            "price": 50.0,  # 50 元/股派息,不应被混入 WAC
+            "trade_date": "2026-05-15",
+        }
+    )
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "dividend",
+            "quantity": 100,
+            "price": 60.0,  # 第二笔派息
+            "trade_date": "2026-05-20",
+        }
+    )
+    positions: list[dict] = svc.get_positions()
+    assert len(positions) == 1
+    pos: dict = positions[0]
+    # dividend 不应改变 total_qty
+    assert pos["total_qty"] == 100
+    # dividend 的 price 字段不能进入 WAC,avg_cost 应仍为初始买入价
+    assert pos["avg_cost"] == 380.0
+
+
+async def test_get_realized_pnl_page_zero_rejected(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """page=0 / page_size=0 应被 service 层防御性拒绝。
+
+    CLAUDE.md 优先级 1: page=0, page_size=0 边界。
+    service 层对调用方负责,即使 Pydantic 校验通过,直接调用 service 时也
+    应有兜底,避免 (page-1) * page_size 算出负 offset 引发全表扫。
+    """
+    with pytest.raises(ValueError, match=r"page"):
+        svc.get_realized_pnl(account_id=sample_account["id"], page=0)
+    with pytest.raises(ValueError, match=r"page_size"):
+        svc.get_realized_pnl(account_id=sample_account["id"], page_size=0)

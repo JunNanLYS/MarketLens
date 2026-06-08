@@ -24,7 +24,15 @@ async def _insert_quote(conn, symbol: str = "hk00700", price: float = 380.0) -> 
     await conn.execute(
         """INSERT INTO market_quotes (symbol, price, change, change_pct, volume, source, collected_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (symbol, price, 5.0, 1.33, 1000000, "westock", datetime.now(timezone.utc).isoformat()),
+        (
+            symbol,
+            price,
+            5.0,
+            1.33,
+            1000000,
+            "westock",
+            datetime.now(timezone.utc).isoformat(),
+        ),
     )
 
 
@@ -36,7 +44,17 @@ async def _insert_kline(conn, symbol: str = "hk00700", days: int = 60) -> None:
         await conn.execute(
             """INSERT INTO kline_daily (symbol, date, open, high, low, close, volume, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (symbol, date, close - 1, close + 2, close - 2, close, 500000 + i * 1000, "westock", datetime.now(timezone.utc).isoformat()),
+            (
+                symbol,
+                date,
+                close - 1,
+                close + 2,
+                close - 2,
+                close,
+                500000 + i * 1000,
+                "westock",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
 
@@ -47,7 +65,14 @@ async def _insert_fund_flows(conn, symbol: str = "hk00700", days: int = 5) -> No
         await conn.execute(
             """INSERT INTO fund_flows (symbol, date, main_net_inflow, net_inflow_ratio, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (symbol, date, 1000000.0 + i * 100000, 2.5, "westock", datetime.now(timezone.utc).isoformat()),
+            (
+                symbol,
+                date,
+                1000000.0 + i * 100000,
+                2.5,
+                "westock",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
 
@@ -57,13 +82,29 @@ async def _insert_finance(conn, symbol: str = "hk00700") -> None:
            (symbol, report_period, revenue, revenue_yoy, net_profit, net_profit_yoy,
             eps, roe, debt_ratio, gross_margin, net_margin, source, collected_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (symbol, "2026Q1", 150000000000, 8.5, 40000000000, 5.2, 4.2, 18.5, 45.0, 52.0, 26.7, "westock", datetime.now(timezone.utc).isoformat()),
+        (
+            symbol,
+            "2026Q1",
+            150000000000,
+            8.5,
+            40000000000,
+            5.2,
+            4.2,
+            18.5,
+            45.0,
+            52.0,
+            26.7,
+            "westock",
+            datetime.now(timezone.utc).isoformat(),
+        ),
     )
 
 
 async def _insert_news(conn, symbol: str = "hk00700") -> None:
     now = datetime.now(timezone.utc)
-    for i, sentiment in enumerate(["positive", "positive", "positive", "negative", "neutral"]):
+    for i, sentiment in enumerate(
+        ["positive", "positive", "positive", "negative", "neutral"]
+    ):
         await conn.execute(
             """INSERT INTO news_items (title, source, url, sentiment, importance, related_symbols, published_at, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -87,14 +128,48 @@ async def _insert_technical(conn, symbol: str = "hk00700") -> None:
            (symbol, date, ma5, ma10, ma20, ma60, macd_dif, macd_dea, macd_histogram,
             rsi6, rsi14, boll_upper, boll_middle, boll_lower, source, collected_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (symbol, "2026-05-30", 375.0, 372.0, 368.0, 360.0, 2.5, 1.8, 0.7, 55.0, 52.0, 390.0, 375.0, 360.0, "westock", now.isoformat()),
+        (
+            symbol,
+            "2026-05-30",
+            375.0,
+            372.0,
+            368.0,
+            360.0,
+            2.5,
+            1.8,
+            0.7,
+            55.0,
+            52.0,
+            390.0,
+            375.0,
+            360.0,
+            "westock",
+            now.isoformat(),
+        ),
     )
     await conn.execute(
         """INSERT INTO technical_indicators
            (symbol, date, ma5, ma10, ma20, ma60, macd_dif, macd_dea, macd_histogram,
             rsi6, rsi14, boll_upper, boll_middle, boll_lower, source, collected_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (symbol, "2026-05-29", 374.0, 371.0, 367.0, 359.0, 1.5, 1.6, -0.1, 54.0, 51.0, 389.0, 374.0, 359.0, "westock", now.isoformat()),
+        (
+            symbol,
+            "2026-05-29",
+            374.0,
+            371.0,
+            367.0,
+            359.0,
+            1.5,
+            1.6,
+            -0.1,
+            54.0,
+            51.0,
+            389.0,
+            374.0,
+            359.0,
+            "westock",
+            now.isoformat(),
+        ),
     )
 
 
@@ -227,7 +302,16 @@ class TestEvidenceBuilderNewsStats:
             await conn.execute(
                 """INSERT INTO news_items (title, source, url, sentiment, importance, related_symbols, published_at, collected_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                ("无关新闻", "sina_rss", "https://example.com/other", "neutral", "normal", json.dumps(["sh600519"]), datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+                (
+                    "无关新闻",
+                    "sina_rss",
+                    "https://example.com/other",
+                    "neutral",
+                    "normal",
+                    json.dumps(["sh600519"]),
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
             )
 
         evidence = await EvidenceBuilder.build("hk00700")
@@ -250,14 +334,22 @@ async def _insert_dividends(conn, symbol: str = "hk00700", count: int = 4) -> No
                 dividend_year, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                symbol, base_dates[i], cash_values[i], 0.0,
-                base_dates[i], base_dates[i], 2026 - i,
-                "westock", datetime.now(timezone.utc).isoformat(),
+                symbol,
+                base_dates[i],
+                cash_values[i],
+                0.0,
+                base_dates[i],
+                base_dates[i],
+                2026 - i,
+                "westock",
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
 
 
-async def _insert_profit_forecasts(conn, symbol: str = "hk00700", count: int = 4) -> None:
+async def _insert_profit_forecasts(
+    conn, symbol: str = "hk00700", count: int = 4
+) -> None:
     """插入 N 条业绩预告。"""
     periods = ["2026Q1", "2025Q4", "2025Q3", "2025Q2"]
     for i in range(count):
@@ -267,8 +359,15 @@ async def _insert_profit_forecasts(conn, symbol: str = "hk00700", count: int = 4
                 change_lower, change_upper, summary, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                symbol, periods[i], "pre_increase", 38000000000, 42000000000,
-                8.0, 12.0, "预计净利润同比增长", "westock",
+                symbol,
+                periods[i],
+                "pre_increase",
+                38000000000,
+                42000000000,
+                8.0,
+                12.0,
+                "预计净利润同比增长",
+                "westock",
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
@@ -285,15 +384,27 @@ async def _insert_shareholders(conn, symbol: str = "hk00700") -> None:
                 source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                symbol, "2026Q1", rank, f"股东{rank}",
-                10000000 - rank * 100000, 0.5 - rank * 0.01,
-                -rank * 1000.0, "westock", now,
+                symbol,
+                "2026Q1",
+                rank,
+                f"股东{rank}",
+                10000000 - rank * 100000,
+                0.5 - rank * 0.01,
+                -rank * 1000.0,
+                "westock",
+                now,
             ),
         )
     # 股东人数历史：8 个报告期
     base_dates = [
-        "2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30",
-        "2025-03-31", "2024-12-31", "2024-09-30", "2024-06-30",
+        "2026-03-31",
+        "2025-12-31",
+        "2025-09-30",
+        "2025-06-30",
+        "2025-03-31",
+        "2024-12-31",
+        "2024-09-30",
+        "2024-06-30",
     ]
     holders = [25000, 24000, 23500, 23000, 22500, 22000, 21500, 21000]
     for i, d in enumerate(base_dates):
@@ -305,14 +416,16 @@ async def _insert_shareholders(conn, symbol: str = "hk00700") -> None:
         )
 
 
-async def _insert_finance_multi(conn, symbol: str = "hk00700", periods: int = 2) -> None:
+async def _insert_finance_multi(
+    conn, symbol: str = "hk00700", periods: int = 2
+) -> None:
     """插入 N 期财务（默认 2 期：curr=200, prev=100 → yoy=100）。"""
     now = datetime.now(timezone.utc).isoformat()
     base_data = [
         (200, 50, 2.0, 18.0),  # 最新期
         (100, 25, 1.0, 15.0),  # 前一期
-        (80, 20, 0.8, 14.0),   # 更早
-        (60, 15, 0.6, 13.0),   # 最旧
+        (80, 20, 0.8, 14.0),  # 更早
+        (60, 15, 0.6, 13.0),  # 最旧
     ]
     for i in range(periods):
         revenue, net_profit, eps, roe = base_data[i]
@@ -321,8 +434,21 @@ async def _insert_finance_multi(conn, symbol: str = "hk00700", periods: int = 2)
                (symbol, report_period, revenue, revenue_yoy, net_profit, net_profit_yoy,
                 eps, roe, debt_ratio, gross_margin, net_margin, source, collected_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (symbol, f"2026Q{i+1}", revenue, 0.0, net_profit, 0.0,
-             eps, roe, 45.0, 52.0, 26.7, "westock", now),
+            (
+                symbol,
+                f"2026Q{i + 1}",
+                revenue,
+                0.0,
+                net_profit,
+                0.0,
+                eps,
+                roe,
+                45.0,
+                52.0,
+                26.7,
+                "westock",
+                now,
+            ),
         )
 
 
@@ -476,3 +602,143 @@ class TestEvidenceBuilderIntegration:
         # finance 仍有 YoY 派生
         assert evidence["finance"]["revenue_yoy"] == 100.0
 
+
+# ---------------------------------------------------------------------------
+# 第 12 批: 边界条件 + 错误路径补充测试
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceBuilderSectorContextOnly:
+    """仅 sector_context 时也能正确装配, 不应触发 key 缺失。"""
+
+    async def test_sector_context_only_assembles_correctly(
+        self, tmp_db: Path
+    ) -> None:
+        """仅有板块数据时, evidence 包结构完整, 其他字段为 None / 空。"""
+        now = datetime.now(timezone.utc).isoformat()
+        async with aget_db() as conn:
+            # 插入最新日期的板块涨幅榜（领涨 + 领跌 至少各 1 条）
+            await conn.execute(
+                """INSERT INTO sector_daily_quote
+                   (name, date, sector_type, symbol, change_pct, main_net_inflow,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("半导体", "2026-05-31", "industry", None, 5.2, 1e9, "westock", now),
+            )
+            await conn.execute(
+                """INSERT INTO sector_daily_quote
+                   (name, date, sector_type, symbol, change_pct, main_net_inflow,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("房地产", "2026-05-31", "industry", None, -3.8, -5e8, "westock", now),
+            )
+
+        evidence = await EvidenceBuilder.build("hk00700")
+
+        # sector_context 应非 None, 包含 top_gainers 和 top_losers
+        assert evidence["sector_context"] is not None
+        assert len(evidence["sector_context"]["top_gainers"]) >= 1
+        assert len(evidence["sector_context"]["top_losers"]) >= 1
+        assert evidence["sector_context"]["top_gainers"][0]["name"] == "半导体"
+        assert evidence["sector_context"]["top_losers"][0]["name"] == "房地产"
+
+        # 其他维度均为空/None, 但 key 齐全
+        assert evidence["quote"] is None
+        assert evidence["kline"] == []
+        assert evidence["fund_flows"] == []
+        assert evidence["finance"] is None
+        assert evidence["news"] is None
+        assert evidence["technical"] is None
+        assert evidence["dividends"] is None
+        assert evidence["shareholders"] is None
+        assert evidence["forecasts"] is None
+
+        # data_sources 应包含 sector_context 条目
+        types = {item["type"] for item in evidence["data_sources"]}
+        assert "sector_context" in types
+
+
+class TestEvidenceBuilderFinanceSignHintRoundtrip:
+    """sign_hint 标签在 evidence 包与 _derive_finance_yoy 之间的正确传递。"""
+
+    async def test_loss_narrowing_sign_propagated_to_evidence(
+        self, tmp_db: Path
+    ) -> None:
+        """prev<0 curr<0 且 |curr| < |prev| → loss_narrowing 标签传递到 evidence。
+
+        CLAUDE.md 优先级 1: 资金主线 + AI 价值 —— AI 应把"亏损收窄"识别为
+        看多信号,所以 evidence 包内 sign_hint 必须可被 AIAnalyzer 正确读取。
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        async with aget_db() as conn:
+            # 最新期：净利润 -50 (亏损 50)
+            await conn.execute(
+                """INSERT INTO financial_reports
+                   (symbol, report_period, revenue, net_profit, eps, roe,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("hk00700", "2026Q1", 1000, -50, -0.5, -2.0, "westock", now),
+            )
+            # 前一期：净利润 -200 (亏损 200, 收窄)
+            await conn.execute(
+                """INSERT INTO financial_reports
+                   (symbol, report_period, revenue, net_profit, eps, roe,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("hk00700", "2025Q4", 800, -200, -2.0, -8.0, "westock", now),
+            )
+
+        evidence = await EvidenceBuilder.build("hk00700")
+
+        assert evidence["finance"] is not None
+        # 符号语义标签应传递为 loss_narrowing
+        assert evidence["finance"]["net_profit_yoy_sign"] == "loss_narrowing"
+        # 营收 yoy 派生 (1000-800)/abs(800)*100 = 25.0
+        assert evidence["finance"]["revenue_yoy"] == 25.0
+        # 净利润 yoy (-50 - -200) / 200 * 100 = 75.0
+        assert evidence["finance"]["net_profit_yoy"] == 75.0
+
+        # 把 evidence 喂给 AIAnalyzer,验证 sign hint 触发看多。
+        # 注入最小 quote 以绕过 has_any_evidence 判定（finance 不在其中）。
+        from backend.services.ai_analyzer import AIAnalyzer
+
+        evidence_for_ai = dict(evidence)
+        evidence_for_ai["quote"] = {"price": 10.0, "source": "test", "collected_at": now}
+        result = AIAnalyzer.analyze(evidence_for_ai)
+        assert any("亏损收窄" in r for r in result["bullish_reasons"]), (
+            f"sign=loss_narrowing 未触发看多, 实际 reasons={result['bullish_reasons']}"
+        )
+
+    async def test_turnaround_sign_propagated_to_evidence(
+        self, tmp_db: Path
+    ) -> None:
+        """prev<0 curr>0 → turnaround 标签。"""
+        now = datetime.now(timezone.utc).isoformat()
+        async with aget_db() as conn:
+            # 最新期：扭亏为盈 +100
+            await conn.execute(
+                """INSERT INTO financial_reports
+                   (symbol, report_period, revenue, net_profit, eps, roe,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("hk00700", "2026Q1", 1000, 100, 1.0, 5.0, "westock", now),
+            )
+            # 前一期：亏损 -50
+            await conn.execute(
+                """INSERT INTO financial_reports
+                   (symbol, report_period, revenue, net_profit, eps, roe,
+                    source, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("hk00700", "2025Q4", 800, -50, -0.5, -2.0, "westock", now),
+            )
+
+        evidence = await EvidenceBuilder.build("hk00700")
+
+        assert evidence["finance"]["net_profit_yoy_sign"] == "turnaround"
+
+        from backend.services.ai_analyzer import AIAnalyzer
+
+        evidence_for_ai = dict(evidence)
+        evidence_for_ai["quote"] = {"price": 10.0, "source": "test", "collected_at": now}
+        result = AIAnalyzer.analyze(evidence_for_ai)
+        assert any("扭亏为盈" in r for r in result["bullish_reasons"])

@@ -1,11 +1,29 @@
-﻿
 from backend.services.ai_analyzer import AIAnalyzer
 
 
-def _make_kline(ma5_last: float, ma20_last: float, ma60_last: float | None = None,
-                ma5_prev: float | None = None, ma20_prev: float | None = None) -> list[dict]:
-    prev: dict = {"date": "2026-05-30", "open": 370, "high": 375, "low": 369, "close": 373, "volume": 500000}
-    curr: dict = {"date": "2026-05-31", "open": 373, "high": 378, "low": 372, "close": 376, "volume": 600000}
+def _make_kline(
+    ma5_last: float,
+    ma20_last: float,
+    ma60_last: float | None = None,
+    ma5_prev: float | None = None,
+    ma20_prev: float | None = None,
+) -> list[dict]:
+    prev: dict = {
+        "date": "2026-05-30",
+        "open": 370,
+        "high": 375,
+        "low": 369,
+        "close": 373,
+        "volume": 500000,
+    }
+    curr: dict = {
+        "date": "2026-05-31",
+        "open": 373,
+        "high": 378,
+        "low": 372,
+        "close": 376,
+        "volume": 600000,
+    }
     if ma5_prev is not None:
         prev["ma5"] = ma5_prev
     if ma20_prev is not None:
@@ -23,12 +41,32 @@ class TestAIAnalyzerBullish:
     async def test_bullish_alignment_with_inflow_and_golden_cross(self) -> None:
         evidence = {
             "symbol": "hk00700",
-            "quote": {"price": 380.0, "change": 5.0, "change_pct": 1.33, "volume": 1000000, "collected_at": "..."},
-            "kline": _make_kline(ma5_last=375, ma20_last=370, ma60_last=365, ma5_prev=368, ma20_prev=370),
+            "quote": {
+                "price": 380.0,
+                "change": 5.0,
+                "change_pct": 1.33,
+                "volume": 1000000,
+                "collected_at": "...",
+            },
+            "kline": _make_kline(
+                ma5_last=375, ma20_last=370, ma60_last=365, ma5_prev=368, ma20_prev=370
+            ),
             "fund_flows": [
-                {"date": "2026-05-29", "main_net_inflow": 1000000, "net_inflow_ratio": 2.0},
-                {"date": "2026-05-30", "main_net_inflow": 1200000, "net_inflow_ratio": 2.5},
-                {"date": "2026-05-31", "main_net_inflow": 800000, "net_inflow_ratio": 1.8},
+                {
+                    "date": "2026-05-29",
+                    "main_net_inflow": 1000000,
+                    "net_inflow_ratio": 2.0,
+                },
+                {
+                    "date": "2026-05-30",
+                    "main_net_inflow": 1200000,
+                    "net_inflow_ratio": 2.5,
+                },
+                {
+                    "date": "2026-05-31",
+                    "main_net_inflow": 800000,
+                    "net_inflow_ratio": 1.8,
+                },
             ],
             "finance": None,
             "news": None,
@@ -37,7 +75,9 @@ class TestAIAnalyzerBullish:
                 "prev_macd_histogram": -0.3,
                 "rsi14": 55.0,
             },
-            "data_sources": [{"source": "westock", "type": "kline_daily", "collected_at": "..."}],
+            "data_sources": [
+                {"source": "westock", "type": "kline_daily", "collected_at": "..."}
+            ],
         }
         result = AIAnalyzer.analyze(evidence)
 
@@ -57,12 +97,32 @@ class TestAIAnalyzerBearish:
     async def test_bearish_alignment_with_outflow_and_death_cross(self) -> None:
         evidence = {
             "symbol": "hk00700",
-            "quote": {"price": 350.0, "change": -5.0, "change_pct": -1.4, "volume": 1000000, "collected_at": "..."},
-            "kline": _make_kline(ma5_last=355, ma20_last=360, ma60_last=365, ma5_prev=362, ma20_prev=360),
+            "quote": {
+                "price": 350.0,
+                "change": -5.0,
+                "change_pct": -1.4,
+                "volume": 1000000,
+                "collected_at": "...",
+            },
+            "kline": _make_kline(
+                ma5_last=355, ma20_last=360, ma60_last=365, ma5_prev=362, ma20_prev=360
+            ),
             "fund_flows": [
-                {"date": "2026-05-29", "main_net_inflow": -1000000, "net_inflow_ratio": -2.0},
-                {"date": "2026-05-30", "main_net_inflow": -1200000, "net_inflow_ratio": -2.5},
-                {"date": "2026-05-31", "main_net_inflow": -800000, "net_inflow_ratio": -1.8},
+                {
+                    "date": "2026-05-29",
+                    "main_net_inflow": -1000000,
+                    "net_inflow_ratio": -2.0,
+                },
+                {
+                    "date": "2026-05-30",
+                    "main_net_inflow": -1200000,
+                    "net_inflow_ratio": -2.5,
+                },
+                {
+                    "date": "2026-05-31",
+                    "main_net_inflow": -800000,
+                    "net_inflow_ratio": -1.8,
+                },
             ],
             "finance": None,
             "news": None,
@@ -131,7 +191,11 @@ class TestAIAnalyzerRSI:
             "fund_flows": [],
             "finance": None,
             "news": None,
-            "technical": {"rsi14": 25.0, "macd_histogram": 0.0, "prev_macd_histogram": None},
+            "technical": {
+                "rsi14": 25.0,
+                "macd_histogram": 0.0,
+                "prev_macd_histogram": None,
+            },
             "data_sources": [],
         }
         result = AIAnalyzer.analyze(evidence)
@@ -145,7 +209,11 @@ class TestAIAnalyzerRSI:
             "fund_flows": [],
             "finance": None,
             "news": None,
-            "technical": {"rsi14": 75.0, "macd_histogram": 0.0, "prev_macd_histogram": None},
+            "technical": {
+                "rsi14": 75.0,
+                "macd_histogram": 0.0,
+                "prev_macd_histogram": None,
+            },
             "data_sources": [],
         }
         result = AIAnalyzer.analyze(evidence)
@@ -205,7 +273,12 @@ class TestAIAnalyzerFinance:
             "quote": {"price": 380.0},
             "kline": _make_kline(ma5_last=375, ma20_last=370),
             "fund_flows": [],
-            "finance": {"report_period": "2026Q1", "roe": 18.5, "revenue_yoy": 8.5, "net_profit_yoy": 5.0},
+            "finance": {
+                "report_period": "2026Q1",
+                "roe": 18.5,
+                "revenue_yoy": 8.5,
+                "net_profit_yoy": 5.0,
+            },
             "news": None,
             "technical": None,
             "data_sources": [],
@@ -219,7 +292,12 @@ class TestAIAnalyzerFinance:
             "quote": {"price": 380.0},
             "kline": _make_kline(ma5_last=375, ma20_last=370),
             "fund_flows": [],
-            "finance": {"report_period": "2026Q1", "roe": 10.0, "revenue_yoy": -5.0, "net_profit_yoy": -25.0},
+            "finance": {
+                "report_period": "2026Q1",
+                "roe": 10.0,
+                "revenue_yoy": -5.0,
+                "net_profit_yoy": -25.0,
+            },
             "news": None,
             "technical": None,
             "data_sources": [],
@@ -240,13 +318,23 @@ class TestAIAnalyzerSchema:
             "finance": None,
             "news": None,
             "technical": None,
-            "data_sources": [{"source": "westock", "type": "kline_daily", "collected_at": "..."}],
+            "data_sources": [
+                {"source": "westock", "type": "kline_daily", "collected_at": "..."}
+            ],
         }
         result = AIAnalyzer.analyze(evidence)
 
         required_keys = [
-            "symbol", "action", "confidence", "risk_level", "summary",
-            "bullish_reasons", "bearish_reasons", "key_risks", "data_used", "generated_at",
+            "symbol",
+            "action",
+            "confidence",
+            "risk_level",
+            "summary",
+            "bullish_reasons",
+            "bearish_reasons",
+            "key_risks",
+            "data_used",
+            "generated_at",
         ]
         for key in required_keys:
             assert key in result, f"缺少字段: {key}"
@@ -267,8 +355,16 @@ class TestAIAnalyzerDataUsed:
 
     async def test_data_used_from_evidence(self) -> None:
         data_sources = [
-            {"source": "westock", "type": "kline_daily", "collected_at": "2026-05-31T16:05:00+08:00"},
-            {"source": "sina_rss", "type": "news", "collected_at": "2026-05-31T17:00:00+08:00"},
+            {
+                "source": "westock",
+                "type": "kline_daily",
+                "collected_at": "2026-05-31T16:05:00+08:00",
+            },
+            {
+                "source": "sina_rss",
+                "type": "news",
+                "collected_at": "2026-05-31T17:00:00+08:00",
+            },
         ]
         evidence = {
             "symbol": "hk00700",
@@ -311,11 +407,25 @@ class TestAIAnalyzerConfidenceBoundary:
         evidence = {
             "symbol": "TEST",
             "quote": {"price": 380.0, "change_pct": 5.0},
-            "kline": _make_kline(ma5_last=385, ma20_last=380, ma60_last=375, ma5_prev=378, ma20_prev=380),
+            "kline": _make_kline(
+                ma5_last=385, ma20_last=380, ma60_last=375, ma5_prev=378, ma20_prev=380
+            ),
             "fund_flows": [
-                {"date": "2026-05-29", "main_net_inflow": 1000000, "net_inflow_ratio": 2.0},
-                {"date": "2026-05-30", "main_net_inflow": 1200000, "net_inflow_ratio": 2.5},
-                {"date": "2026-05-31", "main_net_inflow": 800000, "net_inflow_ratio": 1.8},
+                {
+                    "date": "2026-05-29",
+                    "main_net_inflow": 1000000,
+                    "net_inflow_ratio": 2.0,
+                },
+                {
+                    "date": "2026-05-30",
+                    "main_net_inflow": 1200000,
+                    "net_inflow_ratio": 2.5,
+                },
+                {
+                    "date": "2026-05-31",
+                    "main_net_inflow": 800000,
+                    "net_inflow_ratio": 1.8,
+                },
             ],
             "finance": None,
             "news": None,
@@ -340,3 +450,114 @@ class TestAIAnalyzerConfidenceBoundary:
         result = AIAnalyzer.analyze(evidence)
         # 弱信号下置信度应被压制 (< 0.5)
         assert 0.0 <= result["confidence"] <= 1.0
+
+
+class TestAIAnalyzerDividendOnly:
+    """仅分红数据,无 quote/kline 也能分析（验证 has_any_evidence 放宽后逻辑）。"""
+
+    async def test_dividend_only_triggers_analysis(self) -> None:
+        """仅有 dividends 维度时, 不应落入 _insufficient_evidence。"""
+        evidence = {
+            "symbol": "hk00700",
+            "quote": None,
+            "kline": [],
+            "fund_flows": [],
+            "finance": None,
+            "news": None,
+            "technical": None,
+            "dividends": {
+                "latest_cash_dividend": 5.5,
+                "history": [
+                    {"cash_dividend": 5.5, "ex_date": "2026-04-15"},
+                    {"cash_dividend": 4.8, "ex_date": "2025-04-20"},
+                    {"cash_dividend": 4.5, "ex_date": "2024-04-18"},
+                    {"cash_dividend": 4.0, "ex_date": "2023-04-22"},
+                ],
+            },
+            "shareholders": None,
+            "forecasts": None,
+            "sector_context": None,
+            "us_finance": None,
+            "data_sources": [],
+        }
+        result = AIAnalyzer.analyze(evidence)
+
+        # 应触发分析, 而非 _insufficient_evidence
+        assert result["action"] != "watch" or result["summary"] != "证据不足，无法分析"
+        # 4 期连续现金分红应触发看多信号
+        assert any("连续现金分红" in r for r in result["bullish_reasons"])
+        # latest 派息应触发看多信号
+        assert any("最新一期派息" in r for r in result["bullish_reasons"])
+
+
+class TestAIAnalyzerForecast:
+    """业绩预告关键词触发 ±0.10 评分。"""
+
+    async def test_forecast_预增_bullish(self) -> None:
+        """业绩预告类型含 '预增' 关键词 → +0.10 看多。"""
+        evidence = {
+            "symbol": "hk00700",
+            "quote": {"price": 380.0},
+            "kline": _make_kline(ma5_last=375, ma20_last=370),
+            "fund_flows": [],
+            "finance": None,
+            "news": None,
+            "technical": None,
+            "dividends": None,
+            "shareholders": None,
+            "forecasts": {
+                "history": [{"forecast_type": "预增", "report_period": "2026Q1"}],
+            },
+            "sector_context": None,
+            "us_finance": None,
+            "data_sources": [],
+        }
+        result = AIAnalyzer.analyze(evidence)
+        assert any("预增" in r for r in result["bullish_reasons"])
+
+    async def test_forecast_预减_bearish(self) -> None:
+        """业绩预告类型含 '预减' 关键词 → +0.10 看空。"""
+        evidence = {
+            "symbol": "hk00700",
+            "quote": {"price": 380.0},
+            "kline": _make_kline(ma5_last=375, ma20_last=370),
+            "fund_flows": [],
+            "finance": None,
+            "news": None,
+            "technical": None,
+            "dividends": None,
+            "shareholders": None,
+            "forecasts": {
+                "history": [{"forecast_type": "预减", "report_period": "2026Q1"}],
+            },
+            "sector_context": None,
+            "us_finance": None,
+            "data_sources": [],
+        }
+        result = AIAnalyzer.analyze(evidence)
+        assert any("预减" in r for r in result["bearish_reasons"])
+
+    async def test_forecast_首亏_bearish(self) -> None:
+        """'首亏' / '续亏' / '略减' / '预亏' 均应触发看空信号。"""
+        for kw in ("首亏", "续亏", "略减", "预亏"):
+            evidence = {
+                "symbol": "hk00700",
+                "quote": {"price": 380.0},
+                "kline": _make_kline(ma5_last=375, ma20_last=370),
+                "fund_flows": [],
+                "finance": None,
+                "news": None,
+                "technical": None,
+                "dividends": None,
+                "shareholders": None,
+                "forecasts": {
+                    "history": [{"forecast_type": kw, "report_period": "2026Q1"}],
+                },
+                "sector_context": None,
+                "us_finance": None,
+                "data_sources": [],
+            }
+            result = AIAnalyzer.analyze(evidence)
+            assert any(kw in r for r in result["bearish_reasons"]), (
+                f"关键词 '{kw}' 未触发看空信号"
+            )
