@@ -402,3 +402,29 @@ CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 *
 - 不要新建 `CODE_REVIEW.md` 文件（git history 已保留）
 - 不要在 git commit message 中用 `CODE_REVIEW.md`（用 `ISSUES.md`）
 - 不要在 `docs/dev/issues_*.md` 文件**追加**新内容（归档文件只读，新内容去根 `ISSUES.md`）
+
+## 经验速查（lessons_learned.md）
+
+> **新会话接手第 1 件事**：扫读 [`docs/dev/lessons_learned.md`](docs/dev/lessons_learned.md)（5 分钟速查版）
+>
+> 该文件集中归档了 4-12 轮审查/修复中所有"踩过的坑"与"实操最佳实践"，
+> 避免散落在 CLAUDE.md / ISSUES.md / 归档文件各处反复探索。
+>
+> **覆盖主题**：
+> 1. `_WRITE_LOCK` 写锁包裹所有 SQLite 写路径（含 4 轮历史教训）
+> 2. `ui/` 严禁 import `backend/storage/`
+> 3. 改后端必动 `docs/api/*.md`
+> 4. evidence-driven AI：`_check_*` 必须与 symbol 强相关
+> 5. `Provider.close()` MRO 陷阱（含 `_HttpClientMixin` 叶子节点说明）
+> 6. 锁测试 `_ObservableLock` 范式 + 双向 patch
+> 7. loguru `caplog` 桥接缺失 → 用 `logger.add(lambda)`
+> 8. sync 改 async 时旧测试 `RuntimeWarning`
+> 9. 多 Agent 文件零交叉可完全并行
+> 10. 静默 `LIMIT` 必须截断探测
+
+**与本文件关系**：
+- **CLAUDE.md** —— 项目硬约束、架构、命令（必读）
+- **lessons_learned.md** —— 历次踩坑 + 实操经验（必读）
+- **ISSUES.md** —— 当前活跃 issue tracker（修完即删）
+- **docs/dev/issues_*.md** —— 历史归档（只读）
+
