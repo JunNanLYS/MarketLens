@@ -506,7 +506,19 @@ print(sorted(externals))
 - 装了 `pyyaml` 但 import 名是 `yaml`（声明名 = `pyyaml`）
 - 装了 `feedparser` 但漏声明（**真实案例**）
 
+### 同类陷阱：测试 db 隔离
 
+不只是依赖：**测试运行时需要的 db 状态（schema / fixture 数据）也必须在测试自身
+中显式建好**，不能依赖"前面跑过的测试碰巧建过表"或"dev venv 残留 db 文件"。
+
+**真实案例**：`tests/scheduler/test_jobs.py::test_neodata_health_log_writer_holds_write_lock`
+曾因 dev venv 残留 `data/marketlens.db`（含 `run_logs` 表）而本地能跑，CI 干净 venv
+报 `sqlite3.OperationalError: no such table: run_logs`。
+
+**规则**：
+- 直接调 db 写路径的测试，**必须**用 `tmp_path` 隔离 + `init_db_sync` 显式建表
+- 不要复用前一个测试的副作用（即使 conftest 有 fixture，也要走自己的 db 路径）
+- 模拟 CI 干净环境验证：`rm data/*.db && uv run pytest tests/ -q` 应全过
 
 ### 原则
 
