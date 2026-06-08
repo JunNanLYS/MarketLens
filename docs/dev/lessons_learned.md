@@ -22,6 +22,7 @@
 | 8 | sync→async 改 | **旧测试必须同步改 `async def` + `await`** | 🟡 P1 |
 | 9 | 多 Agent 拆分 | **文件零交叉时可完全并行** | 🟢 P2 |
 | 10 | 截断探测 | **静默 `LIMIT` 必须多取 1 行做截断探测 + warning** | 🟡 P1 |
+| 11 | 依赖声明 | **`pyproject.toml` 必须列出所有 import 的第三方包**(否则 CI 跑挂) | 🔴 P0 |
 
 ---
 
@@ -447,6 +448,113 @@ for row in cursor.fetchall():
 
 ---
 
+## 11. 依赖声明（pyproject.toml 完整性）
+
+### 教训来源
+
+第 12 轮推送后 CI 失败：`backend/collectors/rss.py:2 import feedparser`
+抛 `ModuleNotFoundError`，21 个测试模块 collect 阶段中断，pytest 退出码 2。
+根因：`pyproject.toml::dependencies` 漏声明 `feedparser`。
+
+### 为什么会发生
+
+- 本地 `.venv` 曾经手动 `pip install` 过 `feedparser`，所以本地 `pytest` 能跑通
+- 但 CI 跑 `uv sync --frozen` 严格按 `pyproject.toml` 解析，不装本地"额外"的包
+- 出现**本地能跑 / CI 跑挂**的诡异现象
+
+### 规则
+
+> **任何 `backend/` / `ui/` / `tests/` 下 `import` 的第三方包都必须显式声明在
+> `pyproject.toml::dependencies` 或 `[dependency-groups].dev` 中。**
+> 依赖既不能"我本地装过就行"，也不能"CI 装一下试试"。
+
+### 自检方法
+
+在干净环境复现（模拟 CI）：
+```bash
+# 删除本地 venv
+rm -rf .venv
+
+# 重新同步（应只装 pyproject.toml 列出的）
+uv sync --frozen
+
+# 跑测试
+uv run pytest tests/ -q
+```
+
+如果本地能跑通而 CI 失败，**100% 是 pyproject.toml 漏声明**。
+
+### 扫描工具（一次扫净未声明的依赖）
+
+```python
+import sys, re, pathlib
+
+declared = {...}  # 填入 pyproject.toml 已声明的包名
+externals = set()
+for d in ['backend', 'tests', 'ui']:
+    for p in pathlib.Path(d).rglob('*.py'):
+        for m in re.finditer(r'^\s*(?:from|import)\s+([a-zA-Z_][\w.]*)', p.read_text(encoding='utf-8', errors='ignore'), re.M):
+            mod = m.group(1).split('.')[0]
+            if mod not in sys.stdlib_module_names and mod not in declared and mod not in {'backend', 'tests', 'ui'}:
+                externals.add(mod)
+print(sorted(externals))
+```
+
+### 常见易漏的"传递依赖"陷阱
+
+- 装了 `fastapi` 但忘了 `starlette`（实际 fastapi 传递安装，不影响）
+- 装了 `pyyaml` 但 import 名是 `yaml`（声明名 = `pyyaml`）
+- 装了 `feedparser` 但漏声明（**真实案例**）
+
+
+
+### 原则
+
+任何 SQL/Python 端的 `LIMIT N` / `[:N]` 截断都可能掩盖数据丢失。
+
+### 检查清单
+
+- [ ] `LIMIT N` 后面有截断探测吗？`LIMIT N+1` + `if len(rows) > N: warning`？
+- [ ] Python 端累加 dict/list 后只取前 N 条，前面是"无截断累加"还是"提前 continue"？
+  - "先 append 再 `if len >= N: continue`" 是**错误**模式（`continue` 不阻止下一行）
+  - 正确：`if len >= N: continue` 然后 `append`，或 `setdefault` + 提前 `continue`
+
+### 第 12 轮教训
+
+**`continue` 不截断** bug（`EvidenceBuilder.build_multi`）：
+
+```python
+# 错误
+for row in cursor.fetchall():
+    sym = row["symbol"]
+    if sym not in klines_by_symbol:
+        klines_by_symbol[sym] = []
+    klines_by_symbol[sym].append(r)        # 先 append
+    if len(klines_by_symbol[sym]) >= 60:
+        continue                            # 只跳过本轮，下一轮又 append
+
+# 正确
+for row in cursor.fetchall():
+    sym = row["symbol"]
+    bucket = klines_by_symbol.setdefault(sym, [])
+    if len(bucket) >= 60:
+        continue
+    bucket.append(r)
+```
+
+实验验证：错误版本 `len = 200`，正确版本 `len = 60`。
+
+### `[:N]` 切片兜底不可靠
+
+`[:60]` 在下游"兜底"看似正确，但：
+- 浪费内存 20 倍（1200 行保留但只用 60）
+- 维护者读代码会误解为"该 dict 有上限"
+- 批量场景（100 标的 × 1200 行）Python list 内存爆炸
+
+**修源头**比**依赖下游切片**更可取。
+
+---
+
 ## 附录 A：经验索引（按发现轮次）
 
 | 轮次 | 经验 | 归档位置 |
@@ -465,6 +573,7 @@ for row in cursor.fetchall():
 | 第 12 轮 | sync 改 async 时旧测试 `RuntimeWarning` | 本文件 §8 |
 | 第 12 轮 | 锁测试需 patch 双向 | 本文件 §6 |
 | 第 12 轮 | 多 Agent 文件零交叉可完全并行 | 本文件 §9 |
+| 第 12 轮 | `pyproject.toml` 漏声明 `feedparser` → CI 跑挂(本地能跑过是假象) | 本文件 §11 |
 
 ---
 
