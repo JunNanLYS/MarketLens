@@ -373,3 +373,30 @@ CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 *
 4. **evidence-driven AI：每条采集数据必须被 `_check_*` 消费**（Architecture 第 149-161 行）
    - `EvidenceBuilder.build(symbol)` 只组装**真实采集**的证据；AI 输出必须含 `data_used` 字段列出每个引用源 + 采集时间
    - 不允许 hallucinate 分析；这条是项目"证据驱动"价值主张的底线
+
+## Issue tracker 迁移（CODE_REVIEW.md → ISSUES.md）
+
+> **新会话接手时务必知道的"文件重命名"事实**，避免误以为仓库里没有 issue tracker。
+
+**事实**：
+- **2026-06-08（第 11 轮）**：`git mv CODE_REVIEW.md ISSUES.md`
+- 决策依据：10 轮审查+修复后，`CODE_REVIEW.md` 主体已无活跃问题登记（仅保留决策历史/复验记录），文件名"Code Review"暗示"审查动作"已与实际角色（issue tracker + 决策归档）不匹配
+- `git mv` 保留完整 history 审计追踪链（rename 79% 匹配）
+
+**当前 `ISSUES.md` 角色**：
+- 决策历史/复验记录（保留全部 9 轮演进）
+- 资金/写锁类 P0 阻断性 bug 全部已修并复验确认（详见第 8 轮复验记录）
+- **主体已无活跃问题登记**（`grep '^### \[' ISSUES.md` = 0 命中）
+- 新发现的真 bug 仍需登记（保持"全清零"语义一致性）
+
+**所有引用迁移完成**（11 轮一次性同步）：
+- `CLAUDE.md` line 261（"Known issues" 章节曾引导到 `See ISSUES.md`——第 10 轮删除 Known issues 章节时此引导句仍保留；第 11 轮 git mv 时已同步引用）
+- `docs/architecture.md` 4 处
+- `ui/app.py` 1 处注释
+- `ui/pages/portfolio.py` 1 处 docstring
+- `tests/collectors/test_sina.py` 1 处测试注释
+
+**禁止行为**：
+- 不要 `git rm CODE_REVIEW.md` + `git add ISSUES.md`（会断 history）
+- 不要新建 `CODE_REVIEW.md` 文件（git history 已保留）
+- 不要在 git commit message 中用 `CODE_REVIEW.md`（用 `ISSUES.md`）
