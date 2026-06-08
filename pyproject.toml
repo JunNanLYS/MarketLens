@@ -16,6 +16,7 @@ dependencies = [
     "streamlit",
     "pydantic",
     "aiosqlite>=0.22.1",
+    "feedparser",
 ]
 
 [dependency-groups]
