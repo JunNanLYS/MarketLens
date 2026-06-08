@@ -42,7 +42,9 @@ class NewsService:
         """
         started_at = datetime.now(timezone.utc).isoformat()
         result: dict[str, int] = {"collected": 0, "skipped": 0}
-        status: str = "success"
+        # 用 "unknown" 作为"还没写到 run_logs"的哨兵,finally 块用它判断
+        # 成功路径是否已写过日志。异常路径会重置为 "failure" / "success"。
+        status: str = "unknown"
         error_message: str | None = None
         try:
             collected = 0
@@ -172,10 +174,28 @@ class NewsService:
                             skipped += 1
 
                     finished_at = datetime.now(timezone.utc).isoformat()
-                    status = "success" if collected > 0 or skipped == 0 else "failure"
-                    error_message = None
-                    if collected == 0 and skipped > 0:
-                        error_message = "所有新闻均被跳过，无新增"
+
+                    # 4 状态机映射:
+                    # - all_items 空 + tracked_symbols 空 → success (无标的,无错)
+                    # - all_items 空 + tracked_symbols 有 → failure (provider 全失败/返回空)
+                    # - collected > 0 → success (正常采集)
+                    # - collected == 0 + skipped > 0 → success (稳态: 全部 URL 重复)
+                    if not all_items and not tracked_symbols:
+                        status = "success"
+                        error_message = None
+                    elif not all_items:
+                        status = "failure"
+                        error_message = "所有 news provider 均无返回或全部失败"
+                    elif collected > 0:
+                        status = "success"
+                        error_message = None
+                    elif collected == 0 and skipped > 0:
+                        status = "success"  # 全 skip 是稳态
+                        error_message = None
+                    else:
+                        # 防御: 不应到达,fallback 失败
+                        status = "failure"
+                        error_message = "news 状态机未匹配任何分支"
 
                     # 单次 run_logs 写入：原 collect_news 在此处 INSERT run_logs，
                     # 但若 INSERT 本身或之后 commit 失败，外层 except 会跳过审计。
@@ -206,46 +226,43 @@ class NewsService:
         except Exception as e:
             # 异常路径：覆盖 `_get_active_symbols` 等价的 tracked_assets 查询、
             # provider 循环未捕获异常、落库段 conn.rollback() 后 re-raise 等所有
-            # 提前退出路径。记录 failure run_logs 后再向上抛出，确保上层
-            # `_run_news` 的 try/except 不会因为我们写日志而吞掉原异常。
-            status = "failure"
+            # 提前退出路径。仅记录 error_message 让 finally 兜底写一条 failure 行;
+            # 不在此处修改 status —— 保留 "unknown" 哨兵,让 finally 块判断
+            # "主流程未写过 run_logs" → 兜底补写一条。
             error_message = str(e)[:500]
             raise
         finally:
             # 不论成功还是异常，最终都写一条 run_logs 行。成功路径时本方法末尾
-            # 已写过一条（status=success），此处仅在异常路径上兜底补写一条
-            # status=failure 行 —— 用 INSERT OR IGNORE 配合 task_name + 时间
-            # 去重无法精确判定，故采用：成功路径不再写第二次（用局部标志区分）。
-            try:
-                # 注意：成功路径上 conn 已 commit 并 close；这里用新的 sync 连接
-                # 写兜底行不会冲突（_WRITE_LOCK 释放后新连接安全）。但若成功路径
-                # 已写过 run_logs 行，再次插入会产生重复行 —— 所以先 SELECT 判断
-                # 同一 started_at 是否已有 news 行。
-                with get_db() as conn_check:
-                    existing_row = conn_check.execute(
-                        """SELECT 1 FROM run_logs
-                           WHERE task_name = 'news' AND started_at = ?
-                           LIMIT 1""",
-                        (started_at,),
-                    ).fetchone()
-                if existing_row is None:
+            # （内层 try 块 line ~184-195）已写过一条（status=success/failure），
+            # 此处仅在异常路径上兜底补写一条 status=failure 行。
+            #
+            # 哨兵: status == "unknown" 表示"主流程未走到 status 赋值"。
+            # 成功路径上 status 会被覆盖为 "success" / "failure"；
+            # 异常路径（外层 except 块）只设 error_message,不动 status,
+            # raise 后进入 finally,此时 status 仍为 "unknown" → 触发兜底写。
+            if status == "unknown":
+                try:
                     finished_at_final = datetime.now(timezone.utc).isoformat()
-                    with get_db() as conn_finish:
-                        conn_finish.execute(
-                            """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
-                               VALUES (?, ?, ?, ?, ?, ?)""",
-                            (
-                                "news",
-                                status,
-                                started_at,
-                                finished_at_final,
-                                error_message,
-                                0,
-                            ),
-                        )
-            except Exception:
-                # 兜底写入 run_logs 失败：仅记日志，不影响原异常向上传播。
-                logger.exception("collect_news 兜底写入 run_logs 失败")
+                    # 兜底写同样持 _WRITE_LOCK,与成功路径保持一致,
+                    # 避免未来 collect_news 被并发触发时漏锁
+                    with _WRITE_LOCK:
+                        with get_db() as conn_finish:
+                            conn_finish.execute(
+                                """INSERT INTO run_logs (task_name, status, started_at, finished_at, error_message, affected_assets)
+                                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                (
+                                    "news",
+                                    "failure",
+                                    started_at,
+                                    finished_at_final,
+                                    error_message
+                                    or "collect_news 异常路径兜底(主流程未到 status 赋值)",
+                                    0,
+                                ),
+                            )
+                except Exception:
+                    # 兜底写入 run_logs 失败：仅记日志，不影响原异常向上传播。
+                    logger.exception("collect_news 兜底写入 run_logs 失败")
 
     def _match_symbols_with_conn(
         self,

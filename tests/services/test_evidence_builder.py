@@ -742,3 +742,167 @@ class TestEvidenceBuilderFinanceSignHintRoundtrip:
         evidence_for_ai["quote"] = {"price": 10.0, "source": "test", "collected_at": now}
         result = AIAnalyzer.analyze(evidence_for_ai)
         assert any("扭亏为盈" in r for r in result["bullish_reasons"])
+
+
+# ---------------------------------------------------------------------------
+# 第 12 批子任务 C: build_multi 累加截断 + news LIMIT 5000 告警
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMultiTruncation:
+    """build_multi 累加阶段应在达到上限时立即停止,不留 history 行到内存。
+
+    第 12 轮 ISSUES 复审:
+    - bug #3 (MAJOR): ``klines_by_symbol`` / ``flows_by_symbol`` ``continue``
+      语句无截断效果, 单标的实际累计全部历史行, 浪费内存 20x。
+    - bug #8 (MINOR): ``news_items LIMIT 5000`` 是静默截断,
+      违反 CLAUDE.md "No silent caps" 原则。
+    """
+
+    async def test_build_multi_klines_truncate_at_60(
+        self, tmp_db: Path
+    ) -> None:
+        """某 symbol 有 120 行 kline, build_multi 应只取 60 行（截断在累加阶段生效）。"""
+        now = datetime.now(timezone.utc).isoformat()
+        base_date = datetime(2026, 5, 31)
+        async with aget_db() as conn:
+            for i in range(120):
+                date = (base_date - timedelta(days=120 - 1 - i)).strftime("%Y-%m-%d")
+                close = 350.0 + i * 0.5
+                await conn.execute(
+                    """INSERT INTO kline_daily
+                       (symbol, date, open, high, low, close, volume, source, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        "hk00700",
+                        date,
+                        close - 1,
+                        close + 2,
+                        close - 2,
+                        close,
+                        500000 + i * 1000,
+                        "westock",
+                        now,
+                    ),
+                )
+
+        result = await EvidenceBuilder.build_multi(["hk00700"])
+        # 累加阶段截断: 60 行上限生效, 不再累计剩余 60 行
+        assert len(result["hk00700"]["kline"]) == 60
+        # 反转后第 1 行是 date 最早的一行, 第 60 行是 date 最近的一行
+        first_date = result["hk00700"]["kline"][0]["date"]
+        last_date = result["hk00700"]["kline"][-1]["date"]
+        assert first_date < last_date
+
+    async def test_build_multi_flows_truncate_at_5(
+        self, tmp_db: Path
+    ) -> None:
+        """某 symbol 有 20 行 fund_flows, build_multi 应只取 5 行。"""
+        now = datetime.now(timezone.utc).isoformat()
+        base_date = datetime(2026, 5, 31)
+        async with aget_db() as conn:
+            for i in range(20):
+                date = (base_date - timedelta(days=20 - 1 - i)).strftime("%Y-%m-%d")
+                await conn.execute(
+                    """INSERT INTO fund_flows
+                       (symbol, date, main_net_inflow, net_inflow_ratio,
+                        source, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        "hk00700",
+                        date,
+                        1_000_000.0 + i * 100_000,
+                        2.5,
+                        "westock",
+                        now,
+                    ),
+                )
+
+        result = await EvidenceBuilder.build_multi(["hk00700"])
+        # 累加阶段截断: 5 行上限生效
+        assert len(result["hk00700"]["fund_flows"]) == 5
+
+    async def test_build_multi_news_warning_on_truncate(
+        self, tmp_db: Path
+    ) -> None:
+        """5001 条 news 触发 logger.warning（loguru 截断探测）。"""
+        from loguru import logger
+
+        now = datetime.now(timezone.utc)
+        async with aget_db() as conn:
+            for i in range(5001):
+                await conn.execute(
+                    """INSERT INTO news_items
+                       (title, source, url, sentiment, importance,
+                        related_symbols, published_at, collected_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"news-{i}",
+                        "sina_rss",
+                        f"https://example.com/news/{i}",
+                        "neutral",
+                        "normal",
+                        json.dumps(["hk00700"]),
+                        (now - timedelta(seconds=i)).isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+
+        # loguru 测试: 临时挂一个 sink 收集 records
+        captured: list[dict] = []
+        handler_id = logger.add(
+            lambda message: captured.append(
+                {
+                    "level": message.record["level"].name,
+                    "message": message.record["message"],
+                }
+            ),
+            level="WARNING",
+        )
+        try:
+            await EvidenceBuilder.build_multi(["hk00700"])
+        finally:
+            logger.remove(handler_id)
+
+        # 验证 warning 被记录
+        warnings = [c for c in captured if c["level"] == "WARNING"]
+        assert any("5000" in c["message"] and "news" in c["message"] for c in warnings), (
+            f"news LIMIT 5000 截断 warning 未触发, 实际 captured={captured}"
+        )
+
+    async def test_build_multi_mixed_symbols_independent_buckets(
+        self, tmp_db: Path
+    ) -> None:
+        """3 个 symbol 各自 bucket 独立, 互不影响截断计数。"""
+        now = datetime.now(timezone.utc).isoformat()
+        base_date = datetime(2026, 5, 31)
+        symbols = ["hk00700", "sh600000", "usAAPL"]
+        async with aget_db() as conn:
+            for sym in symbols:
+                for i in range(70):  # 每个 > 60, 验证截断
+                    date = (base_date - timedelta(days=70 - 1 - i)).strftime("%Y-%m-%d")
+                    close = 100.0 + i * 0.3
+                    await conn.execute(
+                        """INSERT INTO kline_daily
+                           (symbol, date, open, high, low, close, volume,
+                            source, collected_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            sym,
+                            date,
+                            close - 1,
+                            close + 1,
+                            close - 1,
+                            close,
+                            1000 + i,
+                            "westock",
+                            now,
+                        ),
+                    )
+
+        result = await EvidenceBuilder.build_multi(symbols)
+        # 每个 symbol 的 kline 都应恰好 60 行
+        for sym in symbols:
+            assert len(result[sym]["kline"]) == 60, (
+                f"{sym} kline 长度异常: {len(result[sym]['kline'])}"
+            )

@@ -423,7 +423,7 @@ def test_cleanup_naive_run_logs_removes_unmarked_rows() -> None:
         assert "+" in s or "Z" in s
 
 
-def test_check_writes_utc_timestamps() -> None:
+async def test_check_writes_utc_timestamps() -> None:
     """_check_neo_data_token_on_startup 应写入带 UTC tz 的时间戳。"""
     from unittest.mock import MagicMock, patch
     from backend.scheduler.jobs import _check_neo_data_token_on_startup
@@ -436,7 +436,7 @@ def test_check_writes_utc_timestamps() -> None:
 
         # 该函数读取 config 触发异常,但仍写 run_logs
         try:
-            _check_neo_data_token_on_startup()
+            await _check_neo_data_token_on_startup()
         except Exception:
             pass  # 容忍配置缺失
 

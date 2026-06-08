@@ -84,11 +84,12 @@ class StructuredProvider(ABC):
     async def close(self) -> None:
         """关闭底层连接（默认空操作，子类可按需覆盖）。
 
-        调用 super().close() 沿 MRO 链将关闭动作传递给后续基类
-        （如 _HttpClientMixin 会关闭 httpx 客户端），保证 MRO 上所有
-        基类的资源释放逻辑都被执行。
+        默认实现 no-op；子类有需要可 override。注：``_HttpClientMixin`` 已
+        自身实现 close()（叶子节点，不调 super），MRO 含 mixin 的子类
+        （如 ``SinaProvider``）调用 close() 时 Python 直接解析到 mixin
+        版本，无需本方法沿 MRO 链转发。
         """
-        await super().close()
+        return None
 
     async def search(self, keyword: str) -> list[dict]:
         """默认空实现：子类按需覆盖。"""
@@ -140,11 +141,12 @@ class NewsProvider(ABC):
     async def close(self) -> None:
         """关闭底层连接（默认空操作，子类可按需覆盖）。
 
-        调用 super().close() 沿 MRO 链将关闭动作传递给后续基类
-        （如 _HttpClientMixin 会关闭 httpx 客户端），保证 MRO 上所有
-        基类的资源释放逻辑都被执行。
+        默认实现 no-op；子类有需要可 override。注：``_HttpClientMixin`` 已
+        自身实现 close()（叶子节点，不调 super），MRO 含 mixin 的子类
+        （如 ``SinaProvider``）调用 close() 时 Python 直接解析到 mixin
+        版本，无需本方法沿 MRO 链转发。
         """
-        await super().close()
+        return None
 
     async def fetch_news(self, symbols: list[str] | None = None) -> list[dict]:
         """默认空实现：子类按需覆盖。"""

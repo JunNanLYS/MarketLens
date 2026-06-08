@@ -45,8 +45,37 @@ def _cleanup_naive_run_logs_once() -> None:
 _NEODATA_HEALTH_TASK_NAME = "neodata_health"
 
 
-def _check_neo_data_token_on_startup() -> None:
-    """应用启动时检查 NeoData token 状态，写入 run_logs。
+def _write_neo_health_log_sync(
+    task_name: str,
+    status: str,
+    started_at: str,
+    finished_at: str,
+    error_message: str | None,
+    affected_assets: int,
+) -> None:
+    """同步写 NeoData 健康检查 run_logs，持 _WRITE_LOCK 串行化。
+
+    启动期单线程目前不会并发，但若未来扩展为周期任务（jobs.py 注释里
+    已有 "neodata_health" TODO 留口），与其他写路径竞争时会要求 _WRITE_LOCK。
+    现在就加上锁是防御性写法。
+    """
+    with _WRITE_LOCK:
+        with get_db() as conn:
+            conn.execute(
+                """INSERT INTO run_logs
+                   (task_name, status, started_at, finished_at, error_message, affected_assets)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (task_name, status, started_at, finished_at, error_message, affected_assets),
+            )
+
+
+async def _check_neo_data_token_on_startup() -> None:
+    """应用启动时检查 NeoData token 状态，写入 run_logs（异步版）。
+
+    与原同步版本的差异:
+    - 改为 async def，在 async lifespan 中可被 await
+    - 文件 IO 通过 asyncio.to_thread 卸载,避免阻塞 event loop
+      (TokenManager._read_cache 读 ~/.workbuddy/.neodata_token)
 
     - 有 token  → 记 success，UI 历史显示"OK"
     - 无 token  → 记 skipped，error_message 提示去 workbuddy 刷新
@@ -80,7 +109,8 @@ def _check_neo_data_token_on_startup() -> None:
                 config_token=params.get("token") or None,
                 timeout=neodata_cfg.get("timeout", 30),
             )
-            token_status = client.get_token_status()
+            # 关键: 文件 IO 卸载线程池
+            token_status = await asyncio.to_thread(client.get_token_status)
             if token_status.get("has_token"):
                 status = "success"
                 logger.info(
@@ -101,23 +131,16 @@ def _check_neo_data_token_on_startup() -> None:
         logger.exception("NeoData 启动健康检查失败")
 
     finished_at = datetime.now(timezone.utc).isoformat()
-    try:
-        with get_db() as conn:
-            conn.execute(
-                """INSERT INTO run_logs
-                   (task_name, status, started_at, finished_at, error_message, affected_assets)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    _NEODATA_HEALTH_TASK_NAME,
-                    status,
-                    started_at,
-                    finished_at,
-                    error_message,
-                    affected_assets,
-                ),
-            )
-    except Exception:
-        logger.exception("写入 NeoData 健康检查 run_logs 失败")
+    # 写 run_logs 改用 to_thread + WRITE_LOCK
+    await asyncio.to_thread(
+        _write_neo_health_log_sync,
+        _NEODATA_HEALTH_TASK_NAME,
+        status,
+        started_at,
+        finished_at,
+        error_message,
+        affected_assets,
+    )
 
 
 TASK_DESCRIPTIONS: dict[str, str] = {
@@ -358,15 +381,25 @@ class SchedulerManager:
             return f"CRON: {cfg['cron']}"
         return TASK_SCHEDULE_DESCRIPTIONS.get(task_name, "")
 
-    def start(self) -> None:
-        """注册所有任务后启动调度器。"""
+    async def start(self) -> None:
+        """注册所有任务后启动调度器（异步版）。
+
+        启动期做 3 件事:
+        1. register_jobs() - 注册 5 个 cron/interval 任务
+        2. 一次性清理 run_logs 中无 tz 标记的旧数据
+        3. 一次性 NeoData token 健康检查
+
+        步骤 2/3 都涉及文件 IO,通过 asyncio.to_thread 卸载,避免
+        阻塞 FastAPI 主事件循环（CLAUDE.md 硬约束）。
+        """
         self.register_jobs()
         # 启动时清理: run_logs 表中无 tz 标记的旧数据(一次性)。
-        _cleanup_naive_run_logs_once()
+        # 文件 IO 卸载线程池,避免阻塞 event loop
+        await asyncio.to_thread(_cleanup_naive_run_logs_once)
         # 启动时一次性健康检查：NeoData token 由外部 workbuddy 工具管理,
         # 应用启动核对一次,结果写 run_logs 供 UI 历史查询。
         # 运行期 token 失效由业务侧 NeoDataProvider 静默降级兜底。
-        _check_neo_data_token_on_startup()
+        await _check_neo_data_token_on_startup()
         self._scheduler.start()
         logger.info("调度器已启动")
 

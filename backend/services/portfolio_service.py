@@ -22,26 +22,27 @@ class PortfolioService:
         name: str = data.get("name", "").strip()
         if not name:
             raise ValueError("账户名称不能为空")
-        with get_db() as conn:
-            existing = conn.execute(
-                "SELECT id FROM accounts WHERE name = ? AND deleted_at IS NULL",
-                (name,),
-            ).fetchone()
-            if existing:
-                raise ValueError(f"账户名称 '{name}' 已存在")
-            broker: str | None = data.get("broker")
-            currency: str = data.get("currency", "CNY")
-            notes: str | None = data.get("notes")
-            cursor = conn.execute(
-                "INSERT INTO accounts (name, broker, currency, notes) VALUES (?, ?, ?, ?)",
-                (name, broker, currency, notes),
-            )
-            account_id: int = cursor.lastrowid
-            row = conn.execute(
-                "SELECT * FROM accounts WHERE id = ?", (account_id,)
-            ).fetchone()
-            logger.info("创建账户: id={}, name={}", account_id, name)
-            return dict(row)
+        with _WRITE_LOCK:
+            with get_db() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM accounts WHERE name = ? AND deleted_at IS NULL",
+                    (name,),
+                ).fetchone()
+                if existing:
+                    raise ValueError(f"账户名称 '{name}' 已存在")
+                broker: str | None = data.get("broker")
+                currency: str = data.get("currency", "CNY")
+                notes: str | None = data.get("notes")
+                cursor = conn.execute(
+                    "INSERT INTO accounts (name, broker, currency, notes) VALUES (?, ?, ?, ?)",
+                    (name, broker, currency, notes),
+                )
+                account_id: int = cursor.lastrowid
+                row = conn.execute(
+                    "SELECT * FROM accounts WHERE id = ?", (account_id,)
+                ).fetchone()
+                logger.info("创建账户: id={}, name={}", account_id, name)
+                return dict(row)
 
     def get_accounts(self, include_deleted: bool = False) -> list[dict]:
         """获取账户列表。
@@ -93,38 +94,39 @@ class PortfolioService:
         Raises:
             ValueError: 名称为空或重复时抛出。
         """
-        with get_db() as conn:
-            existing = conn.execute(
-                "SELECT * FROM accounts WHERE id = ?", (account_id,)
-            ).fetchone()
-            if existing is None:
-                return None
-            name: str | None = data.get("name")
-            if name is not None:
-                name = name.strip()
-                if not name:
-                    raise ValueError("账户名称不能为空")
-                dup = conn.execute(
-                    "SELECT id FROM accounts WHERE name = ? AND id != ? AND deleted_at IS NULL",
-                    (name, account_id),
+        with _WRITE_LOCK:
+            with get_db() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM accounts WHERE id = ?", (account_id,)
                 ).fetchone()
-                if dup:
-                    raise ValueError(f"账户名称 '{name}' 已存在")
-            sets: list[str] = []
-            params: list = []
-            for field in ("name", "broker", "currency", "notes"):
-                if field in data:
-                    sets.append(f"{field} = ?")
-                    params.append(data[field])
-            if not sets:
-                return dict(existing)
-            params.append(account_id)
-            conn.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE id = ?", params)
-            row = conn.execute(
-                "SELECT * FROM accounts WHERE id = ?", (account_id,)
-            ).fetchone()
-            logger.info("更新账户: id={}", account_id)
-            return dict(row)
+                if existing is None:
+                    return None
+                name: str | None = data.get("name")
+                if name is not None:
+                    name = name.strip()
+                    if not name:
+                        raise ValueError("账户名称不能为空")
+                    dup = conn.execute(
+                        "SELECT id FROM accounts WHERE name = ? AND id != ? AND deleted_at IS NULL",
+                        (name, account_id),
+                    ).fetchone()
+                    if dup:
+                        raise ValueError(f"账户名称 '{name}' 已存在")
+                sets: list[str] = []
+                params: list = []
+                for field in ("name", "broker", "currency", "notes"):
+                    if field in data:
+                        sets.append(f"{field} = ?")
+                        params.append(data[field])
+                if not sets:
+                    return dict(existing)
+                params.append(account_id)
+                conn.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE id = ?", params)
+                row = conn.execute(
+                    "SELECT * FROM accounts WHERE id = ?", (account_id,)
+                ).fetchone()
+                logger.info("更新账户: id={}", account_id)
+                return dict(row)
 
     def delete_account(self, account_id: int) -> bool:
         """软删除账户（设置 deleted_at）。
@@ -135,19 +137,20 @@ class PortfolioService:
         Returns:
             软删除成功返回 True；账户不存在或已删除返回 False。
         """
-        with get_db() as conn:
-            existing = conn.execute(
-                "SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL",
-                (account_id,),
-            ).fetchone()
-            if existing is None:
-                return False
-            conn.execute(
-                "UPDATE accounts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (account_id,),
-            )
-            logger.info("软删除账户: id={}", account_id)
-            return True
+        with _WRITE_LOCK:
+            with get_db() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL",
+                    (account_id,),
+                ).fetchone()
+                if existing is None:
+                    return False
+                conn.execute(
+                    "UPDATE accounts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (account_id,),
+                )
+                logger.info("软删除账户: id={}", account_id)
+                return True
 
     def create_transaction(self, data: dict) -> dict:
         """创建一条交易记录。
@@ -234,7 +237,10 @@ class PortfolioService:
         self, conn, account_id: int, symbol: str
     ) -> float:
         rows = conn.execute(
-            "SELECT type, quantity FROM transactions WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL ORDER BY trade_date, created_at",
+            "SELECT type, quantity FROM transactions "
+            "WHERE account_id = ? AND symbol = ? AND deleted_at IS NULL "
+            "AND type IN ('buy', 'sell', 'split') "
+            "ORDER BY trade_date, created_at",
             (account_id, symbol),
         ).fetchall()
         total: float = 0.0
@@ -578,11 +584,16 @@ class PortfolioService:
                 if current_price is not None
                 else None
             )
-            unrealized_pnl_pct: float | None = (
-                (current_price - avg_cost) / avg_cost * 100
-                if current_price is not None and avg_cost > 0
-                else None
-            )
+            unrealized_pnl_pct: float | None
+            if current_price is not None and avg_cost > 0:
+                unrealized_pnl_pct = (current_price - avg_cost) / avg_cost * 100
+            else:
+                unrealized_pnl_pct = None
+                if current_price is not None and avg_cost == 0:
+                    # 边界: avg_cost=0 (如全部 buy 被 free 拆分进来) 时无法计算百分比
+                    logger.debug(
+                        "unrealized_pnl_pct 无法计算: avg_cost=0, symbol={}", sym
+                    )
 
             positions.append(
                 {

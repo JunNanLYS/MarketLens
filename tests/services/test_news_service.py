@@ -604,3 +604,135 @@ async def test_tag_patterns_cache_key_stable() -> None:
     p3 = service._get_tag_patterns(row, "新能源")
     assert p3 is not p1
     assert ("hk00700", "新能源") in service._tag_patterns_cache
+
+
+# ============================================================
+# bug #5 (第 12 轮): collect_news 状态机 4 分支映射
+# ============================================================
+
+
+async def test_collect_news_all_skipped_returns_success() -> None:
+    """collected=0, skipped>0 稳态(全部 URL 重复)应判定为 success。
+
+    旧实现 `status = "success" if collected > 0 or skipped == 0 else "failure"`
+    会把这种情况错标为 failure,触发 UI 假阳性告警。
+    """
+    # 先采集一次,让 URL 落入 news_items
+    first_items = [
+        _make_news_item(title="首次采集", url="https://example.com/skipped-1"),
+        _make_news_item(title="首次采集2", url="https://example.com/skipped-2"),
+    ]
+    provider1 = FakeRSSProvider(name="fake_rss_v1", news_items=first_items)
+    service = NewsService(news_providers=[provider1])
+    r1 = await service.collect_news()
+    assert r1["collected"] == 2
+    assert r1["skipped"] == 0
+
+    # 第二次:同一批 URL,全部命中 dedup,collected=0, skipped=2
+    second_items = [
+        _make_news_item(title="首次采集", url="https://example.com/skipped-1"),
+        _make_news_item(title="首次采集2", url="https://example.com/skipped-2"),
+    ]
+    provider2 = FakeRSSProvider(name="fake_rss_v2", news_items=second_items)
+    service2 = NewsService(news_providers=[provider2])
+    r2 = await service2.collect_news()
+    assert r2["collected"] == 0
+    assert r2["skipped"] == 2
+
+    # 验证 run_logs 写的是 success 而非 failure
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, error_message FROM run_logs "
+            "WHERE task_name = 'news' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "success", (
+        f"全 skip 稳态应判定为 success,实际为 {row['status']}"
+    )
+    assert row["error_message"] is None
+
+
+async def test_collect_news_all_empty_returns_failure() -> None:
+    """all_items=空 + tracked_symbols 有 provider → failure。
+
+    旧实现 `status = "success" if collected > 0 or skipped == 0 else "failure"`
+    会把这种情况错标为 success,掩盖 provider 全失败的真相。
+    """
+    # 插入一个 tracked asset 让 tracked_symbols 非空
+    _insert_asset("hk00700", "腾讯控股")
+
+    # 用一个返回空列表的 provider
+    empty_provider = FakeRSSProvider(name="empty_rss", news_items=[])
+    service = NewsService(news_providers=[empty_provider])
+    r = await service.collect_news()
+    assert r["collected"] == 0
+    assert r["skipped"] == 0
+
+    # 验证 run_logs 写的是 failure
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, error_message FROM run_logs "
+            "WHERE task_name = 'news' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "failure", (
+        f"provider 全空 + 有 tracked assets 应判定为 failure,实际为 {row['status']}"
+    )
+    assert row["error_message"] is not None
+    assert "无返回" in row["error_message"] or "失败" in row["error_message"]
+
+
+async def test_collect_news_mixed_returns_success() -> None:
+    """正常路径 collected>0 → success。回归测试,确保 4 状态机不破坏成功路径。
+
+    旧实现在 collected>0 时已经判定为 success,新实现应保持一致。
+    """
+    _insert_asset("sh600519", "贵州茅台")
+    news_items = [
+        _make_news_item(
+            title="贵州茅台发布年报",
+            url="https://example.com/mixed-1",
+        ),
+        _make_news_item(
+            title="市场普遍上涨",
+            url="https://example.com/mixed-2",
+        ),
+    ]
+    provider = FakeRSSProvider(name="mixed_rss", news_items=news_items)
+    service = NewsService(news_providers=[provider])
+    r = await service.collect_news()
+    assert r["collected"] == 2
+    assert r["skipped"] == 0
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, affected_assets, error_message FROM run_logs "
+            "WHERE task_name = 'news' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "success"
+    # 贵州茅台被匹配上,affected_assets=1
+    assert row["affected_assets"] == 1
+    assert row["error_message"] is None
+
+
+async def test_collect_news_no_tracked_assets_returns_success() -> None:
+    """all_items=空 + tracked_symbols=空 → success(无标的,无错)。"""
+    # 不插入任何 tracked asset
+    empty_provider = FakeRSSProvider(name="empty_rss", news_items=[])
+    service = NewsService(news_providers=[empty_provider])
+    r = await service.collect_news()
+    assert r["collected"] == 0
+    assert r["skipped"] == 0
+
+    # 验证 run_logs 写的是 success(无标的,无错)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, error_message FROM run_logs "
+            "WHERE task_name = 'news' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "success", (
+        f"无 tracked assets 时空采集应判定为 success,实际为 {row['status']}"
+    )
+    assert row["error_message"] is None

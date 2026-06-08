@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.exception("数据库初始化失败")
     try:
         _scheduler_manager = SchedulerManager()
-        _scheduler_manager.start()
+        await _scheduler_manager.start()
         _scheduler_ready = True
         _set_scheduler(_scheduler_manager)
         logger.info("MarketLens 应用已启动")
@@ -117,6 +117,10 @@ _default_cors_headers = ["Content-Type", "Authorization", "X-API-Key"]
 cors_origins = config.get("security", {}).get("cors_origins", _default_cors_origins)
 cors_methods = config.get("security", {}).get("cors_methods", _default_cors_methods)
 cors_headers = config.get("security", {}).get("cors_headers", _default_cors_headers)
+
+# 启动日志：打印生效的 CORS 配置,便于运维核对（CLAUDE.md 项目特性允许 *，
+# 但生产部署若误带配置上线可快速发现。CORS 日志只打 origins，不打 methods/headers）
+logger.info("CORS allowed origins: {}", cors_origins)
 
 # 安全头中间件必须在 CORS 之前注册，
 # 以保证 preflight 401/4xx 响应也携带安全头。

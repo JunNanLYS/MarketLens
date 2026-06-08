@@ -3,6 +3,8 @@
 import json
 from contextlib import suppress
 
+from loguru import logger
+
 from backend.config import get_config
 
 
@@ -306,11 +308,10 @@ class EvidenceBuilder:
             for row in await cursor.fetchall():
                 r = dict(row)
                 sym = r["symbol"]
-                if sym not in klines_by_symbol:
-                    klines_by_symbol[sym] = []
-                klines_by_symbol[sym].append(r)
-                if len(klines_by_symbol[sym]) >= 60:
-                    continue  # already have enough for this symbol
+                bucket = klines_by_symbol.setdefault(sym, [])
+                if len(bucket) >= 60:
+                    continue
+                bucket.append(r)
 
             # fund_flows
             cursor = await conn.execute(
@@ -323,11 +324,10 @@ class EvidenceBuilder:
             for row in await cursor.fetchall():
                 r = dict(row)
                 sym = r["symbol"]
-                if sym not in flows_by_symbol:
-                    flows_by_symbol[sym] = []
-                flows_by_symbol[sym].append(r)
-                if len(flows_by_symbol[sym]) >= 5:
+                bucket = flows_by_symbol.setdefault(sym, [])
+                if len(bucket) >= 5:
                     continue
+                bucket.append(r)
 
             # finance
             cursor = await conn.execute(
@@ -424,13 +424,21 @@ class EvidenceBuilder:
             # news：批量拉取 7 天窗口内新闻，Python 端按 related_symbols 聚合。
             # 替代原来的 N 次单标的 json_each 查询，性能提升 N 倍。
             # LIMIT 5000 防止全表扫：单标的 evidence 包不需要 7 天内所有新闻。
+            # 多取 1 行（LIMIT 5001）用作截断探测——若实际命中 5000 截断则
+            # 记 warning，避免冷门标的相关新闻被静默丢弃。
             cursor = await conn.execute(
                 """SELECT * FROM news_items
                    WHERE published_at >= datetime("now", "-7 days")
                    ORDER BY published_at DESC
-                   LIMIT 5000""",
+                   LIMIT 5001""",
             )
             all_news_rows: list[dict] = [dict(r) for r in await cursor.fetchall()]
+            if len(all_news_rows) > 5000:
+                logger.warning(
+                    "build_multi: news_items 命中 LIMIT 5000 截断,共 {} 行可能未参与评分",
+                    len(all_news_rows) - 5000,
+                )
+                all_news_rows = all_news_rows[:5000]
             news_by_symbol: dict[str, list[dict]] = {sym: [] for sym in symbols}
             for row in all_news_rows:
                 related_raw = row.get("related_symbols")

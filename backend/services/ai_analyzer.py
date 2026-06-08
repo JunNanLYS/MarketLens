@@ -472,30 +472,19 @@ class AIAnalyzer:
     def _check_sector_context(
         sector_ctx: dict | None,
     ) -> tuple[float, float, list[str], list[str]]:
-        """板块背景：所处行业 / 概念在 Top 涨幅榜为加分，Top 跌幅榜为减分。"""
-        bullish = 0.0
-        bearish = 0.0
-        bull_reasons: list[str] = []
-        bear_reasons: list[str] = []
-        if sector_ctx is None:
-            return bullish, bearish, bull_reasons, bear_reasons
+        """板块背景（纯展示,不计分）。
 
-        top_gainers = sector_ctx.get("top_gainers", [])
-        top_losers = sector_ctx.get("top_losers", [])
+        修复:原实现对每只标的同分 (+0.05 bull / +0.05 bear),
+        违反"评分必须标的相关"原则,且理由列表中出现"行业板块 XX 领涨大盘"
+        会让用户误以为该理由与自己的标的有关。EvidenceBuilder 文档明确
+        "sector_ctx 是市场级数据,不依赖具体 symbol"。
 
-        if top_gainers:
-            top_sector = top_gainers[0].get("sector_name", "")
-            if top_sector:
-                bullish += 0.05
-                bull_reasons.append(f"行业板块 {top_sector} 领涨大盘")
-
-        if top_losers:
-            bottom_sector = top_losers[0].get("sector_name", "")
-            if bottom_sector:
-                bearish += 0.05
-                bear_reasons.append(f"行业板块 {bottom_sector} 领跌大盘")
-
-        return bullish, bearish, bull_reasons, bear_reasons
+        改为 no-op:板块数据仍写入 data_sources (evidence-driven AI 约束,
+        每条数据必须被消费),但不参与 bullish/bearish 评分。
+        需 symbol→sector 映射时另议(可能方案:tracked_assets.tags 关联
+        sector_name,或新建 sector_membership 表)。
+        """
+        return 0.0, 0.0, [], []
 
     @staticmethod
     def _check_us_finance(

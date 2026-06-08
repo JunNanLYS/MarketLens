@@ -1306,3 +1306,175 @@ async def test_get_realized_pnl_page_zero_rejected(
         svc.get_realized_pnl(account_id=sample_account["id"], page=0)
     with pytest.raises(ValueError, match=r"page_size"):
         svc.get_realized_pnl(account_id=sample_account["id"], page_size=0)
+
+
+# ---------------------------------------------------------------------------
+# 第 12 轮 bug #2 (MAJOR) + #7 (MINOR) + #11 (NIT) 回归测试
+# ---------------------------------------------------------------------------
+
+
+async def test_create_account_uses_write_lock(svc: PortfolioService) -> None:
+    """create_account 持有 _WRITE_LOCK (PortfolioService 模块级引用)。
+
+    patch 需同时覆盖 collection_service (源头) 和 portfolio_service
+    (本地 from-import 绑定),否则模块级变量不会被替换。
+    """
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    import backend.services.portfolio_service as ps_mod
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    observable = _ObservableLock(original)
+    with (
+        patch.object(collection_service, "_WRITE_LOCK", new=observable),
+        patch.object(ps_mod, "_WRITE_LOCK", new=observable),
+    ):
+        svc.create_account({"name": "华泰"})
+
+    assert observed_held, "create_account 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True, "进入 _WRITE_LOCK 时锁未处于持有状态"
+
+
+async def test_update_account_uses_write_lock(svc: PortfolioService) -> None:
+    """update_account 持有 _WRITE_LOCK。"""
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    import backend.services.portfolio_service as ps_mod
+
+    created: dict = svc.create_account({"name": "招商"})
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    observable = _ObservableLock(original)
+    with (
+        patch.object(collection_service, "_WRITE_LOCK", new=observable),
+        patch.object(ps_mod, "_WRITE_LOCK", new=observable),
+    ):
+        svc.update_account(created["id"], {"broker": "招银国际"})
+
+    assert observed_held, "update_account 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True, "进入 _WRITE_LOCK 时锁未处于持有状态"
+
+
+async def test_delete_account_uses_write_lock(svc: PortfolioService) -> None:
+    """delete_account 持有 _WRITE_LOCK。"""
+    import threading
+    from unittest.mock import patch
+    from backend.services import collection_service
+    import backend.services.portfolio_service as ps_mod
+
+    created: dict = svc.create_account({"name": "国泰"})
+
+    original = collection_service._WRITE_LOCK
+    observed_held: list[bool] = []
+
+    class _ObservableLock:
+        def __init__(self, inner: threading.Lock) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> "_ObservableLock":
+            self._inner.__enter__()
+            observed_held.append(self._inner.locked())
+            return self
+
+        def __exit__(self, *args) -> None:
+            self._inner.__exit__(*args)
+
+    observable = _ObservableLock(original)
+    with (
+        patch.object(collection_service, "_WRITE_LOCK", new=observable),
+        patch.object(ps_mod, "_WRITE_LOCK", new=observable),
+    ):
+        svc.delete_account(created["id"])
+
+    assert observed_held, "delete_account 未进入 _WRITE_LOCK 上下文"
+    assert observed_held[0] is True, "进入 _WRITE_LOCK 时锁未处于持有状态"
+
+
+async def test_get_current_holding_excludes_dividend(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """dividend 类型交易不应计入 _get_current_holding_from_conn。
+
+    修复前: dividend 也被 SQL 查回,在 if-elif 链里走 dividend 分支被跳过,
+    但若未来加新类型 (如 fee) 时容易遗漏;防御性地在 SQL 层 IN 过滤掉。
+    回归测试: buy 100 + dividend 1 → 持仓应为 100 (dividend 忽略)。
+    """
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "buy",
+            "quantity": 100,
+            "price": 350.0,
+            "trade_date": "2026-05-01",
+        }
+    )
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "dividend",
+            "quantity": 1,
+            "price": 5.0,
+            "trade_date": "2026-05-15",
+        }
+    )
+    positions: list[dict] = svc.get_positions()
+    assert len(positions) == 1
+    # dividend 不影响持仓数量
+    assert positions[0]["total_qty"] == 100.0
+
+
+async def test_get_current_holding_excludes_dividend_negative_case(
+    svc: PortfolioService, sample_account: dict, sample_asset: None
+) -> None:
+    """边界: dividend 是唯一交易时, 持仓应为空 (不应被算入)。
+
+    修复前 bug 验证: 如果 SQL 不过滤 dividend, dividend 的 quantity=100
+    在旧逻辑里是 dividend 分支被跳过, 所以 _get_current_holding 返回 0;
+    本测试作为"dividend 单独存在"的负向用例, 验证未来若误把 dividend
+    纳入聚合时该测试仍能捕获。
+    """
+    svc.create_transaction(
+        {
+            "account_id": sample_account["id"],
+            "symbol": "hk00700",
+            "type": "dividend",
+            "quantity": 100,
+            "price": 0.5,
+            "trade_date": "2026-05-01",
+        }
+    )
+    positions: list[dict] = svc.get_positions()
+    # dividend 不算,没有 buy 持仓 → 不应出现在 positions 列表
+    assert len(positions) == 0
