@@ -383,11 +383,12 @@ CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 *
 - 决策依据：10 轮审查+修复后，`CODE_REVIEW.md` 主体已无活跃问题登记（仅保留决策历史/复验记录），文件名"Code Review"暗示"审查动作"已与实际角色（issue tracker + 决策归档）不匹配
 - `git mv` 保留完整 history 审计追踪链（rename 79% 匹配）
 
-**当前 `ISSUES.md` 角色**：
-- 决策历史/复验记录（保留全部 9 轮演进）
-- 资金/写锁类 P0 阻断性 bug 全部已修并复验确认（详见第 8 轮复验记录）
-- **主体已无活跃问题登记**（`grep '^### \[' ISSUES.md` = 0 命中）
-- 新发现的真 bug 仍需登记（保持"全清零"语义一致性）
+**当前 `ISSUES.md` 角色**（**根目录 active tracker**）：
+- 发现新 bug → 在根 `ISSUES.md` **"已知问题登记"**章节追加条目
+- 修复后从根 `ISSUES.md` 删除该条目
+- **项目状态稳定后（主体清零）** → `git mv` 整个 `ISSUES.md` 到 `docs/dev/issues_<归档日期>.md` → 在根创建新空 `ISSUES.md` 模板
+- 这样根 `ISSUES.md` 永远反映"当前活跃问题"，归档文件保留决策历史
+- `docs/dev/issues_2026-06-08.md` —— 第 4-11 轮审查 70+ 条 + 9 轮修复决策历史（首次归档）
 
 **所有引用迁移完成**（11 轮一次性同步）：
 - `CLAUDE.md` line 261（"Known issues" 章节曾引导到 `See ISSUES.md`——第 10 轮删除 Known issues 章节时此引导句仍保留；第 11 轮 git mv 时已同步引用）
@@ -397,6 +398,7 @@ CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 *
 - `tests/collectors/test_sina.py` 1 处测试注释
 
 **禁止行为**：
-- 不要 `git rm CODE_REVIEW.md` + `git add ISSUES.md`（会断 history）
+- 不要 `git rm ISSUES.md` + `git add docs/dev/issues_*.md`（会断 history，应 `git mv`）
 - 不要新建 `CODE_REVIEW.md` 文件（git history 已保留）
 - 不要在 git commit message 中用 `CODE_REVIEW.md`（用 `ISSUES.md`）
+- 不要在 `docs/dev/issues_*.md` 文件**追加**新内容（归档文件只读，新内容去根 `ISSUES.md`）
