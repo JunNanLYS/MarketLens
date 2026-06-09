@@ -844,14 +844,16 @@ def _render_calendar_tab(symbol: str) -> None:
     st.subheader("日历")
     st.caption("IPO 数据源仅 hk/us 可用（A 股源已停）；exdiv 按 symbol 查。")
 
+    IPO_MARKET_DISPLAY: dict[str, str] = {"港股": "hk", "美股": "us"}
     market_choice: str = st.radio(
         "IPO 市场",
-        options=["hk", "us"],
+        options=list(IPO_MARKET_DISPLAY.keys()),
         index=0,
         horizontal=True,
         help="选择 IPO 日历的市场（港股/美股）",
         key=f"ipo_market_{symbol}",
     )
+    market_choice = IPO_MARKET_DISPLAY.get(market_choice, "hk")
 
     try:
         with st.spinner("正在拉取 IPO 日历..."):

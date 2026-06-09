@@ -35,6 +35,30 @@ STATUS_OPTIONS: dict[str, str | None] = {
     "已停用": False,
 }
 
+# 下拉选项显示中文，映射回 API 英文值
+ASSET_TYPE_DISPLAY: dict[str, str] = {
+    "股票": "stock",
+    "ETF": "etf",
+    "指数": "index",
+    "期货": "future",
+}
+
+SEARCH_MARKET_DISPLAY: dict[str, str] = {
+    "全部": "",
+    "上证": "sh",
+    "深证": "sz",
+    "港股": "hk",
+    "美股": "us",
+}
+
+ADD_MARKET_DISPLAY: dict[str, str] = {
+    "自动识别": "",
+    "上证": "sh",
+    "深证": "sz",
+    "港股": "hk",
+    "美股": "us",
+}
+
 
 def _format_change_pct(value: float | None) -> str:
     if value is None:
@@ -151,14 +175,18 @@ def _render_add_form() -> None:
             with col2:
                 market: str = st.selectbox(
                     "市场",
-                    ["自动识别", "sh", "sz", "hk", "us"],
+                    list(ADD_MARKET_DISPLAY.keys()),
+                    format_func=lambda x: x,
                     key="add_market",
                 )
+                market = ADD_MARKET_DISPLAY.get(market, "")
                 asset_type: str = st.selectbox(
                     "资产类型",
-                    ["stock", "etf", "index", "future"],
+                    list(ASSET_TYPE_DISPLAY.keys()),
+                    format_func=lambda x: x,
                     key="add_asset_type",
                 )
+                asset_type = ASSET_TYPE_DISPLAY.get(asset_type, "stock")
             tags_input: str = st.text_input(
                 "标签（逗号分隔）", placeholder="如 互联网,港股通"
             )
@@ -185,7 +213,7 @@ def _render_add_form() -> None:
                     }
                     if name.strip():
                         data["name"] = name.strip()
-                    if market != "自动识别":
+                    if market:
                         data["market"] = market
                     if tags_split:
                         data["tags"] = tags_split
@@ -209,7 +237,7 @@ def _render_search() -> None:
         with col2:
             search_market: str = st.selectbox(
                 "市场",
-                ["全部", "sh", "sz", "hk", "us"],
+                list(SEARCH_MARKET_DISPLAY.keys()),
                 key="search_market",
             )
         if st.button("搜索", key="do_search"):
@@ -217,7 +245,7 @@ def _render_search() -> None:
                 st.warning("请输入搜索关键词")
             else:
                 market_param: str | None = (
-                    search_market if search_market != "全部" else None
+                    SEARCH_MARKET_DISPLAY.get(search_market, "") if search_market != "全部" else None
                 )
                 result: dict[str, Any] = search_assets(
                     keyword.strip(), market=market_param

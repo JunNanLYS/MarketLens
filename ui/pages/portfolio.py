@@ -24,6 +24,21 @@ TRANSACTION_TYPE_LABELS: dict[str, str] = {
     "split": "拆股",
 }
 
+TX_TYPE_DISPLAY: dict[str, str] = {
+    "全部": "",
+    "买入": "buy",
+    "卖出": "sell",
+    "分红": "dividend",
+    "拆股": "split",
+}
+
+TX_TYPE_FORM_DISPLAY: dict[str, str] = {
+    "买入": "buy",
+    "卖出": "sell",
+    "分红": "dividend",
+    "拆股": "split",
+}
+
 CURRENCY_OPTIONS: list[str] = ["CNY", "HKD", "USD"]
 
 
@@ -247,9 +262,11 @@ def _render_transactions_tab() -> None:
     with col2:
         tx_type: str = st.selectbox(
             "交易类型",
-            ["全部", "buy", "sell", "dividend", "split"],
+            list(TX_TYPE_DISPLAY.keys()),
+            format_func=lambda x: x,
             key="tx_filter_type",
         )
+        tx_type_param: str | None = TX_TYPE_DISPLAY.get(tx_type, "")
     with col3:
         symbol_filter: str = st.text_input("标的代码", key="tx_filter_symbol")
 
@@ -257,8 +274,8 @@ def _render_transactions_tab() -> None:
     account_id: int | None = account_options[selected_account]
     if account_id is not None:
         params["account_id"] = account_id
-    if tx_type != "全部":
-        params["type"] = tx_type
+    if tx_type_param:
+        params["type"] = tx_type_param
     if symbol_filter.strip():
         params["symbol"] = symbol_filter.strip()
 
@@ -410,10 +427,11 @@ def _render_transactions_tab() -> None:
         with fc3:
             tx_type_select: str = st.selectbox(
                 "交易类型 *",
-                ["buy", "sell", "dividend", "split"],
-                format_func=lambda x: TRANSACTION_TYPE_LABELS.get(x, x),
+                list(TX_TYPE_FORM_DISPLAY.keys()),
+                format_func=lambda x: x,
                 key="tx_type_select",
             )
+            tx_type_select = TX_TYPE_FORM_DISPLAY.get(tx_type_select, "buy")
 
         fc4, fc5, fc6, fc7 = st.columns(4)
         with fc4:
