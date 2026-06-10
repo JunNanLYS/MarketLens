@@ -27,3 +27,9 @@ Thumbs.db
 .env.*
 \.coverage
 htmlcov/
+
+# Frontend (React + Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/.eslintcache
+frontend/.vite/
