@@ -85,3 +85,89 @@ export interface HealthResponse {
   database: "ok" | "error";
   scheduler: "ok" | "error";
 }
+
+export interface AIReport {
+  id: number;
+  symbol: string;
+  name?: string | null;
+  action: "buy" | "sell" | "watch" | "avoid" | string;
+  confidence: number;
+  risk_level: "low" | "medium" | "high" | string;
+  summary?: string | null;
+  bullish_reasons?: string[] | null;
+  bearish_reasons?: string[] | null;
+  key_risks?: string[] | null;
+  data_used?: Array<{ source: string; data_type?: string; collected_at?: string }>;
+  generated_at: string;
+}
+
+export interface GenerateReportsResponse {
+  status: string;
+  generated: number;
+  skipped: number;
+}
+
+export interface Account {
+  id: number;
+  name: string;
+  broker?: string | null;
+  currency: string;
+  notes?: string | null;
+  created_at?: string;
+  deleted_at?: string | null;
+}
+
+export interface Transaction {
+  id: number;
+  account_id: number;
+  symbol: string;
+  type: "buy" | "sell" | "dividend" | "split" | string;
+  quantity: number;
+  price: number;
+  fee?: number;
+  currency?: string | null;
+  trade_date: string;
+  notes?: string | null;
+  created_at?: string;
+}
+
+export interface Position {
+  account_id: number;
+  symbol: string;
+  name?: string | null;
+  total_qty: number;
+  avg_cost: number;
+  current_price?: number | null;
+  market_value?: number | null;
+  unrealized_pnl?: number | null;
+  unrealized_pnl_pct?: number | null;
+}
+
+export interface RealizedPnlItem {
+  account_id: number;
+  symbol: string;
+  total_sell_qty: number;
+  realized_pnl: number;
+}
+
+export interface AssetDetail {
+  asset: TrackedAsset;
+  quote?: {
+    price?: number;
+    change?: number;
+    change_pct?: number;
+    open?: number;
+    high?: number;
+    low?: number;
+    prev_close?: number;
+    volume?: number;
+    amount?: number;
+  } | null;
+  kline_summary?: { ma5?: number; ma20?: number; ma60?: number; trend?: string } | null;
+  finance_summary?: { period?: string; revenue_yoy?: number; eps?: number; roe?: number } | null;
+  fund_flow_summary?: { net_flow_5d?: number; trend?: string } | null;
+  latest_report?: AIReport | null;
+}
+
+
+

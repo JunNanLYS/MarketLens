@@ -13,7 +13,6 @@ dependencies = [
     "loguru",
     "pyyaml",
     "httpx",
-    "streamlit",
     "pydantic",
     "aiosqlite>=0.22.1",
     "feedparser",

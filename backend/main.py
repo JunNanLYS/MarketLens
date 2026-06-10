@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -110,7 +111,14 @@ app = FastAPI(
 config = get_config()
 # CORS 配置：默认仅放行本地 Streamlit (8501)，如需放行其他来源请在 config.yaml 的
 # security.cors_origins 中显式声明，避免在生产环境中使用通配符。
-_default_cors_origins = ["http://localhost:8501", "http://127.0.0.1:8501"]
+_default_cors_origins = [
+    "http://localhost:8501",
+    "http://127.0.0.1:8501",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
 _default_cors_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 _default_cors_headers = ["Content-Type", "Authorization", "X-API-Key"]
 
@@ -181,3 +189,20 @@ def root() -> dict:
         "version": app.version,
         "docs_url": "/docs",
     }
+
+
+# 生产模式：挂载前端构建产物（frontend/dist）。SPA fallback 由 html=True
+# 自动处理（所有非 /api 路径都返回 index.html，由 React Router 接管路由）。
+# 仅在 dist 存在时挂载，避免开发期出现"找不到 dist"错误。
+_dist_dir = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "frontend",
+    "dist",
+)
+if os.path.isdir(_dist_dir):
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="spa")
+    logger.info("已挂载前端构建产物: {}", _dist_dir)
+else:
+    logger.info("frontend/dist 不存在，跳过挂载（开发模式请手动启动 Vite）")
