@@ -247,7 +247,8 @@ class AssetService:
                 """
                 WITH
                 latest_quote AS (
-                    SELECT symbol, price, change, change_pct, open, high, low, volume, collected_at,
+                    SELECT symbol, price, change, change_pct, open, high, low,
+                           prev_close, volume, amount, collected_at,
                            ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY collected_at DESC) AS rn
                     FROM market_quotes
                 ),
@@ -264,7 +265,8 @@ class AssetService:
                 SELECT ta.*,
                        lq.price AS q_price, lq.change AS q_change, lq.change_pct AS q_change_pct,
                        lq.open AS q_open, lq.high AS q_high, lq.low AS q_low,
-                       lq.volume AS q_volume, lq.collected_at AS q_collected_at,
+                       lq.prev_close AS q_prev_close, lq.volume AS q_volume,
+                       lq.amount AS q_amount, lq.collected_at AS q_collected_at,
                        lf.report_period AS f_report_period, lf.revenue_yoy AS f_revenue_yoy,
                        lf.eps AS f_eps, lf.roe AS f_roe,
                        lr.action AS r_action, lr.confidence AS r_confidence,
@@ -291,7 +293,9 @@ class AssetService:
                     "open": row["q_open"],
                     "high": row["q_high"],
                     "low": row["q_low"],
+                    "prev_close": row["q_prev_close"],
                     "volume": row["q_volume"],
+                    "amount": row["q_amount"],
                     "collected_at": row["q_collected_at"],
                 }
             else:

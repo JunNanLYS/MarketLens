@@ -61,15 +61,15 @@ export default function AssetDetailPage() {
       ) : !detail.data ? (
         <Empty />
       ) : (
-        <Card title={`${detail.data.asset.symbol} ${detail.data.asset.name ?? ""}`}>
+        <Card title={`${detail.data.symbol} ${detail.data.name ?? ""}`}>
           <Tabs
             items={[
               { key: "quote", label: "行情", children: <QuoteTab detail={detail.data} /> },
               { key: "kline", label: "K线", children: <KlineTab detail={detail.data} /> },
               { key: "finance", label: "财务", children: <FinanceTab detail={detail.data} /> },
               { key: "flow", label: "资金流向", children: <FundFlowTab detail={detail.data} /> },
-              { key: "intraday", label: "分时走势", children: <IntradayTab symbol={detail.data.asset.symbol} /> },
-              { key: "shareholder", label: "股东结构", children: <ShareholderTab symbol={detail.data.asset.symbol} /> },
+              { key: "intraday", label: "分时走势", children: <IntradayTab symbol={detail.data.symbol} /> },
+              { key: "shareholder", label: "股东结构", children: <ShareholderTab symbol={detail.data.symbol} /> },
               { key: "ai", label: "AI 报告", children: <AiReportTab detail={detail.data} /> },
               { key: "etc", label: "更多", children: <MoreTab /> },
             ]}
@@ -92,6 +92,7 @@ function QuoteTab({ detail }: { detail: AssetDetail }) {
       <Col span={6}><Statistic title="最高" value={q.high} precision={2} /></Col>
       <Col span={6}><Statistic title="最低" value={q.low} precision={2} /></Col>
       <Col span={6}><Statistic title="昨收" value={q.prev_close} precision={2} /></Col>
+      <Col span={6}><Statistic title="成交额" value={q.amount} /></Col>
     </Row>
   );
 }
@@ -112,7 +113,7 @@ function FinanceTab({ detail }: { detail: AssetDetail }) {
   const f = detail.finance_summary ?? {};
   return (
     <Row gutter={16}>
-      <Col span={6}><Statistic title="报告期" value={f.period ?? "-"} /></Col>
+      <Col span={6}><Statistic title="报告期" value={f.report_period ?? "-"} /></Col>
       <Col span={6}><Statistic title="营收同比" valueRender={() => <PnlDisplay value={f.revenue_yoy} />} /></Col>
       <Col span={6}><Statistic title="EPS" value={f.eps} precision={2} /></Col>
       <Col span={6}><Statistic title="ROE" valueRender={() => <PnlDisplay value={f.roe} />} /></Col>
@@ -130,16 +131,52 @@ function FundFlowTab({ detail }: { detail: AssetDetail }) {
   );
 }
 
+function isNoDataError(error: unknown): boolean {
+  return (error as { response?: { status?: number } } | undefined)?.response?.status === 404;
+}
+
+function QueryEmptyState({
+  description,
+  actionLabel,
+  onRefresh,
+  loading,
+}: {
+  description: string;
+  actionLabel: string;
+  onRefresh: () => void;
+  loading: boolean;
+}) {
+  return (
+    <Space direction="vertical" className="w-full" align="center">
+      <Empty
+        description={
+          <Space direction="vertical" size="small">
+            <Typography.Text>{description}</Typography.Text>
+            <Typography.Text type="secondary">可手动拉取一次并写入本地数据库。</Typography.Text>
+          </Space>
+        }
+      />
+      <Button onClick={onRefresh} loading={loading}>{actionLabel}</Button>
+    </Space>
+  );
+}
+
 function IntradayTab({ symbol }: { symbol: string }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["minute", symbol] as const;
   const m = useMutation({
-    mutationFn: async () => (await apiClient.post(`/data/intraday/${symbol}`)).data,
-    onSuccess: () => message.success("分时数据已更新"),
+    mutationFn: async () => (await apiClient.post(`/data/minute/${symbol}/refresh`)).data,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey });
+      message.success("分时数据已更新");
+    },
     onError: (err) => message.error(`拉取失败：${extractErrorMessage(err)}`),
   });
-  const data = useQuery<{ items: Array<{ time: string; price: number; volume: number; avg_price?: number }> }>({
-    queryKey: ["intraday", symbol],
-    queryFn: async () => (await apiClient.post(`/data/intraday/${symbol}`)).data,
+  const data = useQuery<{ items: Array<{ time: string; price: number; volume: number; avg_price?: number }>; total: number; symbol: string }>({
+    queryKey,
+    queryFn: async () => (await apiClient.get(`/data/minute/${symbol}`)).data,
     staleTime: 300_000,
+    retry: (failureCount, error) => !isNoDataError(error) && failureCount < 3,
   });
 
   const columns: ColumnsType<{ time: string; price: number; volume: number; avg_price?: number }> = [
@@ -149,58 +186,121 @@ function IntradayTab({ symbol }: { symbol: string }) {
     { title: "均价", dataIndex: "avg_price", render: (v?: number) => formatNumber(v) },
   ];
 
+  if (data.isLoading) {
+    return <Skeleton active />;
+  }
+
+  if (data.isError && isNoDataError(data.error)) {
+    return (
+      <QueryEmptyState
+        description="暂无已落库的分时数据"
+        actionLabel="立即拉取分时"
+        onRefresh={() => m.mutate()}
+        loading={m.isPending}
+      />
+    );
+  }
+
+  if (data.isError) {
+    return <Card size="small"><Typography.Text type="danger">加载失败：{extractErrorMessage(data.error)}</Typography.Text></Card>;
+  }
+
+  const items = data.data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <QueryEmptyState
+        description="暂无已落库的分时数据"
+        actionLabel="立即拉取分时"
+        onRefresh={() => m.mutate()}
+        loading={m.isPending}
+      />
+    );
+  }
+
   return (
     <Space direction="vertical" className="w-full">
-      <Button onClick={() => m.mutate()} loading={m.isPending}>重新拉取</Button>
-      {data.isLoading ? <Skeleton active /> : (
-        <Table size="small" rowKey="time" dataSource={(data.data?.items ?? []).slice(0, 50)} columns={columns} pagination={false} />
-      )}
+      <Button onClick={() => m.mutate()} loading={m.isPending}>手动刷新</Button>
+      <Table size="small" rowKey="time" dataSource={items.slice(0, 50)} columns={columns} pagination={false} />
     </Space>
   );
 }
 
 function ShareholderTab({ symbol }: { symbol: string }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["shareholder", symbol] as const;
   const m = useMutation({
-    mutationFn: async () => (await apiClient.post(`/data/shareholder/${symbol}`)).data,
-    onSuccess: () => message.success("股东数据已更新"),
+    mutationFn: async () => (await apiClient.post(`/data/shareholder/${symbol}/refresh`)).data,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey });
+      message.success("股东数据已更新");
+    },
     onError: (err) => message.error(`拉取失败：${extractErrorMessage(err)}`),
   });
-  const data = useQuery<{ top_shareholders?: Array<{ name: string; shares: number; ratio: number }>; holder_count_history?: Array<{ date: string; total_holders: number }> }>({
-    queryKey: ["shareholder", symbol],
-    queryFn: async () => (await apiClient.post(`/data/shareholder/${symbol}`)).data,
+  const data = useQuery<{ top_shareholders?: Array<{ name: string; shares: number; ratio: number }>; holder_count_history?: Array<{ date: string; total_holders: number }>; symbol: string }>({
+    queryKey,
+    queryFn: async () => (await apiClient.get(`/data/shareholder/${symbol}`)).data,
     staleTime: 300_000,
+    retry: (failureCount, error) => !isNoDataError(error) && failureCount < 3,
   });
+
+  if (data.isLoading) {
+    return <Skeleton active />;
+  }
+
+  if (data.isError && isNoDataError(data.error)) {
+    return (
+      <QueryEmptyState
+        description="暂无已落库的股东结构数据"
+        actionLabel="立即拉取股东数据"
+        onRefresh={() => m.mutate()}
+        loading={m.isPending}
+      />
+    );
+  }
+
+  if (data.isError) {
+    return <Card size="small"><Typography.Text type="danger">加载失败：{extractErrorMessage(data.error)}</Typography.Text></Card>;
+  }
+
+  const topShareholders = data.data?.top_shareholders ?? [];
+  const holderCountHistory = data.data?.holder_count_history ?? [];
+  if (topShareholders.length === 0 && holderCountHistory.length === 0) {
+    return (
+      <QueryEmptyState
+        description="暂无已落库的股东结构数据"
+        actionLabel="立即拉取股东数据"
+        onRefresh={() => m.mutate()}
+        loading={m.isPending}
+      />
+    );
+  }
 
   return (
     <Space direction="vertical" className="w-full">
-      <Button onClick={() => m.mutate()} loading={m.isPending}>重新拉取</Button>
-      {data.isLoading ? <Skeleton active /> : (
-        <>
-          <Table
-            size="small"
-            rowKey={(r) => r.name}
-            title={() => "前 10 大股东"}
-            dataSource={data.data?.top_shareholders ?? []}
-            pagination={false}
-            columns={[
-              { title: "股东", dataIndex: "name" },
-              { title: "持股数", dataIndex: "shares" },
-              { title: "持股比例", dataIndex: "ratio", render: (v: number) => formatPercent(v) },
-            ]}
-          />
-          <Table
-            size="small"
-            rowKey="date"
-            title={() => "股东户数历史"}
-            dataSource={data.data?.holder_count_history ?? []}
-            pagination={false}
-            columns={[
-              { title: "日期", dataIndex: "date" },
-              { title: "户数", dataIndex: "total_holders" },
-            ]}
-          />
-        </>
-      )}
+      <Button onClick={() => m.mutate()} loading={m.isPending}>手动刷新</Button>
+      <Table
+        size="small"
+        rowKey={(r) => r.name}
+        title={() => "前 10 大股东"}
+        dataSource={topShareholders}
+        pagination={false}
+        columns={[
+          { title: "股东", dataIndex: "name" },
+          { title: "持股数", dataIndex: "shares" },
+          { title: "持股比例", dataIndex: "ratio", render: (v: number) => formatPercent(v) },
+        ]}
+      />
+      <Table
+        size="small"
+        rowKey="date"
+        title={() => "股东户数历史"}
+        dataSource={holderCountHistory}
+        pagination={false}
+        columns={[
+          { title: "日期", dataIndex: "date" },
+          { title: "户数", dataIndex: "total_holders" },
+        ]}
+      />
     </Space>
   );
 }

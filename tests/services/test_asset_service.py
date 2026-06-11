@@ -203,15 +203,17 @@ async def test_get_asset_by_id_with_quote(service: AssetService) -> None:
 
     async with aget_db() as conn:
         await conn.execute(
-            """INSERT INTO market_quotes (symbol, price, change, change_pct, open, high, low, volume, collected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-            ("hk00700", 385.0, 4.6, 1.2, 382.0, 387.5, 381.0, 23456789),
+            """INSERT INTO market_quotes (symbol, price, change, change_pct, open, high, low, prev_close, volume, amount, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            ("hk00700", 385.0, 4.6, 1.2, 382.0, 387.5, 381.0, 380.4, 23456789, 9034567890.0),
         )
 
     result = service.get_asset_by_id(asset["id"])
     assert result is not None
     assert result["quote"] is not None
     assert result["quote"]["price"] == 385.0
+    assert result["quote"]["prev_close"] == 380.4
+    assert result["quote"]["amount"] == 9034567890.0
 
 
 async def test_get_asset_by_id_with_kline(service: AssetService) -> None:

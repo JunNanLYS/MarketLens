@@ -74,7 +74,7 @@ export interface NewsItem {
   content?: string | null;
   summary?: string | null;
   published_at?: string | null;
-  sentiment?: "positive" | "negative" | "neutral" | string | null;
+  sentiment?: "positive" | "negative" | "neutral" | null;
   importance?: number | null;
   related_symbols?: string[] | null;
   collected_at?: string;
@@ -90,9 +90,9 @@ export interface AIReport {
   id: number;
   symbol: string;
   name?: string | null;
-  action: "buy" | "sell" | "watch" | "avoid" | string;
+  action: "buy" | "sell" | "watch" | "avoid";
   confidence: number;
-  risk_level: "low" | "medium" | "high" | string;
+  risk_level: "low" | "medium" | "high";
   summary?: string | null;
   bullish_reasons?: string[] | null;
   bearish_reasons?: string[] | null;
@@ -121,7 +121,7 @@ export interface Transaction {
   id: number;
   account_id: number;
   symbol: string;
-  type: "buy" | "sell" | "dividend" | "split" | string;
+  type: "buy" | "sell" | "dividend" | "split";
   quantity: number;
   price: number;
   fee?: number;
@@ -150,8 +150,7 @@ export interface RealizedPnlItem {
   realized_pnl: number;
 }
 
-export interface AssetDetail {
-  asset: TrackedAsset;
+export interface AssetDetail extends TrackedAsset {
   quote?: {
     price?: number;
     change?: number;
@@ -162,9 +161,15 @@ export interface AssetDetail {
     prev_close?: number;
     volume?: number;
     amount?: number;
+    collected_at?: string;
   } | null;
   kline_summary?: { ma5?: number; ma20?: number; ma60?: number; trend?: string } | null;
-  finance_summary?: { period?: string; revenue_yoy?: number; eps?: number; roe?: number } | null;
+  finance_summary?: {
+    report_period?: string;
+    revenue_yoy?: number;
+    eps?: number;
+    roe?: number;
+  } | null;
   fund_flow_summary?: { net_flow_5d?: number; trend?: string } | null;
   latest_report?: AIReport | null;
 }

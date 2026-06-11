@@ -6,6 +6,7 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,3 +49,37 @@ def test_init_db_creates_tables(isolated_db: str) -> None:
         assert resp.status_code in (200, 503)
         body: dict = resp.json()
         assert "database" in body
+
+
+def test_lifespan_uses_public_service_close_hooks(
+    isolated_db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """生命周期清理应调用 Service 公开关闭入口，而非访问私有成员。"""
+
+    collection_service = type("_CollectionServiceStub", (), {})()
+    news_service = type("_NewsServiceStub", (), {})()
+    collection_service.close_providers = AsyncMock()
+    news_service.close_providers = AsyncMock()
+
+    monkeypatch.setattr(
+        "backend.main.SchedulerManager.start",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "backend.main.SchedulerManager.shutdown",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        "backend.scheduler.jobs._get_collection_service",
+        lambda: collection_service,
+    )
+    monkeypatch.setattr(
+        "backend.scheduler.jobs._get_news_service",
+        lambda: news_service,
+    )
+
+    with TestClient(app):
+        pass
+
+    collection_service.close_providers.assert_awaited_once()
+    news_service.close_providers.assert_awaited_once()

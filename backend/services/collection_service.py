@@ -35,6 +35,14 @@ class CollectionService:
     def _get_structured_providers(self) -> list[BaseProvider]:
         return self._providers.get("structured", [])
 
+    async def close_providers(self) -> None:
+        """关闭当前服务持有的结构化 Provider 资源。"""
+        for provider in self._get_structured_providers():
+            try:
+                await provider.close()
+            except Exception:
+                logger.exception("关闭 Provider 失败: {}", provider.name)
+
     @staticmethod
     def _is_westock_only(provider) -> bool:
         """判断 provider 是否为 WeStockProvider（用于按数据域白名单 westock 唯一来源）。

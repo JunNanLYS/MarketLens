@@ -28,6 +28,14 @@ class NewsService:
         # 作为 key,sqlite3.Row 的 id() 在 fetchall 后被 GC 回收,缓存实际从不命中。
         self._tag_patterns_cache: dict[tuple[str | None, str], list[re.Pattern]] = {}
 
+    async def close_providers(self) -> None:
+        """关闭当前服务持有的新闻 Provider 资源。"""
+        for provider in self._providers:
+            try:
+                await provider.close()
+            except Exception:
+                logger.exception("关闭 Provider 失败: {}", provider.name)
+
     async def collect_news(self) -> dict[str, int]:
         """采集新闻并写入 news_items / raw_data，同时记录 run_logs 审计行。
 

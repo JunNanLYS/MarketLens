@@ -1,12 +1,15 @@
-import { Layout, Typography, Space } from "antd";
+import { Layout, Space, Typography } from "antd";
 import { Outlet } from "react-router-dom";
+import { getApiBaseUrlLabel } from "@/api/client";
 import { Sidebar } from "./Sidebar";
 import { HealthIndicator } from "./HealthIndicator";
 
 const { Sider, Header, Content } = Layout;
 
-// 应用整体布局：左侧导航 + 顶部 API 状态 + 主内容区
+// 应用整体布局：左侧导航 + 顶部接口状态 + 主内容区。
 export function AppLayout() {
+  const apiBaseUrlLabel = getApiBaseUrlLabel();
+
   return (
     <Layout className="h-full">
       <Sider
@@ -18,7 +21,8 @@ export function AppLayout() {
       >
         <div className="px-4 py-4">
           <Typography.Title level={4} style={{ margin: 0 }}>
-            📊 MarketLens
+            <span aria-hidden="true">📊 </span>
+            <span>MarketLens</span>
           </Typography.Title>
         </div>
         <Sidebar />
@@ -35,8 +39,8 @@ export function AppLayout() {
           }}
         >
           <Space>
-            <Typography.Text type="secondary">后端</Typography.Text>
-            <Typography.Text code>http://localhost:8000</Typography.Text>
+            <Typography.Text type="secondary">接口地址</Typography.Text>
+            <Typography.Text code>{apiBaseUrlLabel}</Typography.Text>
           </Space>
           <HealthIndicator />
         </Header>

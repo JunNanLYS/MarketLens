@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -6,8 +6,14 @@ interface Props {
   delay?: number;
 }
 
-// 卡片/列表项进出场动画
+// 卡片/列表项进出场动画；用户偏好减少动态效果时直接回退为静态容器。
 export function MotionCard({ children, delay = 0 }: Props) {
+  const shouldReduceMotion = useReducedMotion();
+
+  if (shouldReduceMotion) {
+    return <div>{children}</div>;
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}

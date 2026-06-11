@@ -1,13 +1,13 @@
-import { Card, Col, Row, Select, Skeleton, Space, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Row, Select, Skeleton, Space, Table, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import dayjs from "dayjs";
 import { apiClient, extractErrorMessage } from "@/api/client";
 import type { TaskLog, TaskStatusItem } from "@/api/types";
-import { TASK_LABELS } from "@/utils/constants";
 import { MotionCard } from "@/components/shared/MotionCard";
-import { Button } from "antd";
+import { TASK_LABELS } from "@/utils/constants";
+import { getTaskStatusMeta } from "@/utils/format";
 
 interface TaskStatusResponse {
   items: TaskStatusItem[];
@@ -21,6 +21,20 @@ interface TaskLogsResponse {
 interface LogsFilter {
   task_name?: string;
   status?: string;
+}
+
+const LOG_STATUS_OPTIONS = [
+  { value: "success", label: "成功" },
+  { value: "failure", label: "失败" },
+  { value: "skipped", label: "已跳过" },
+];
+
+function renderTaskStatusTag(status?: string | null) {
+  const meta = getTaskStatusMeta(status);
+  if (!meta) {
+    return "-";
+  }
+  return <Tag color={meta.color}>{meta.label}</Tag>;
 }
 
 // 任务状态：手动触发 + 日志筛选
@@ -67,7 +81,7 @@ export default function TaskStatusPage() {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (s: string) => <Tag color={s === "success" ? "green" : "red"}>{s}</Tag>,
+      render: (statusValue: string) => renderTaskStatusTag(statusValue),
     },
     { title: "影响标的", dataIndex: "affected_assets", key: "affected_assets" },
     { title: "开始时间", dataIndex: "started_at", key: "started_at", render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm:ss") },
@@ -110,9 +124,7 @@ export default function TaskStatusPage() {
                     <Typography.Text className="text-xs">
                       上次：{t.last_run_at ? dayjs(t.last_run_at).format("MM-DD HH:mm") : "—"}
                     </Typography.Text>
-                    {t.last_status && (
-                      <Tag color={t.last_status === "success" ? "green" : "red"}>{t.last_status}</Tag>
-                    )}
+                    {t.last_status && renderTaskStatusTag(t.last_status)}
                   </Space>
                 </Card>
               </MotionCard>
@@ -137,11 +149,7 @@ export default function TaskStatusPage() {
             style={{ width: 120 }}
             value={logsFilter.status}
             onChange={(v) => setLogsFilter((f) => ({ ...f, status: v }))}
-            options={[
-              { value: "success", label: "成功" },
-              { value: "failed", label: "失败" },
-              { value: "running", label: "进行中" },
-            ]}
+            options={LOG_STATUS_OPTIONS}
           />
         </Space>
         <Table

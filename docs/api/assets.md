@@ -180,7 +180,8 @@ GET /api/v1/assets/1 HTTP/1.1
   "quote": {
     "price": 385.0, "change": 4.6, "change_pct": 1.2,
     "open": 382.0, "high": 387.5, "low": 381.0,
-    "volume": 23456789, "collected_at": "2026-05-31T15:30:00+08:00"
+    "prev_close": 380.4, "volume": 23456789, "amount": 9034567890,
+    "collected_at": "2026-05-31T15:30:00+08:00"
   },
   "kline_summary": {
     "latest_close": 385.0, "ma5": 382.5, "ma20": 378.0, "ma60": 370.0,

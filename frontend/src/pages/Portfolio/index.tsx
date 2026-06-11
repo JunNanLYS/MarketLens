@@ -81,12 +81,18 @@ function PositionsTab() {
         <Col span={8}><Statistic title="总已实现盈亏" value={totalRealized} precision={2} /></Col>
       </Row>
       {positions.isLoading ? <Skeleton active /> : (
-        <Table size="small" rowKey={(r) => `${r.account_id}-${r.symbol}`} dataSource={positions.data ?? []} columns={columns} pagination={false} />
+        <Table
+          size="small"
+          rowKey={(r) => `position-${r.account_id}-${r.symbol}`}
+          dataSource={positions.data ?? []}
+          columns={columns}
+          pagination={false}
+        />
       )}
       <Card size="small" title="已实现盈亏">
         <Table
           size="small"
-          rowKey={(r) => `${r.account_id}-${r.symbol}`}
+          rowKey={(r) => `realized-${r.account_id}-${r.symbol}`}
           dataSource={realized.data?.items ?? []}
           pagination={false}
           columns={[

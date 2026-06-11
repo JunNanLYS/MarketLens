@@ -29,6 +29,7 @@ import subprocess
 import sys
 import webbrowser
 from pathlib import Path
+from typing import TextIO
 
 # 0) 把 project_root 加进 sys.path，保证 ``from backend.*`` 在模块顶层就能 import
 if getattr(sys, "frozen", False):
@@ -44,6 +45,7 @@ import uvicorn  # noqa: E402
 from loguru import logger  # noqa: E402
 
 # 1) 初始化日志（必须在第一次 logger 使用前）
+from backend.config import get_data_dir  # noqa: E402
 from backend.logging_config import setup_logging  # noqa: E402
 
 setup_logging()
@@ -80,11 +82,16 @@ def _frontend_dist_exists(project_root: Path) -> bool:
     return (project_root / "frontend" / "dist" / "index.html").is_file()
 
 
-def _spawn_vite_child(project_root: Path, port: int) -> subprocess.Popen:
-    """派生 Vite dev server 子进程。"""
+def _spawn_vite_child(project_root: Path, port: int) -> tuple[subprocess.Popen, TextIO]:
+    """派生 Vite dev server 子进程，并把输出落到日志文件。"""
     npm = shutil.which("npm")
     if npm is None:
         raise RuntimeError("未找到 npm，请先安装 Node.js >= 18")
+
+    log_dir = get_data_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    vite_log_path = log_dir / "vite-dev.log"
+    vite_log = vite_log_path.open("a", encoding="utf-8")
 
     cmd: list[str] = [
         npm,
@@ -99,15 +106,24 @@ def _spawn_vite_child(project_root: Path, port: int) -> subprocess.Popen:
         "127.0.0.1",
         "--strictPort",
     ]
-    logger.info("派生 Vite dev server: {}", " ".join(cmd))
-    kwargs: dict = {
+    logger.info(
+        "派生 Vite dev server: {}，日志文件={}",
+        " ".join(cmd),
+        vite_log_path,
+    )
+    kwargs: dict[str, object] = {
         "cwd": str(project_root),
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
+        "stdout": vite_log,
+        "stderr": subprocess.STDOUT,
     }
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-    return subprocess.Popen(cmd, **kwargs)
+    try:
+        proc = subprocess.Popen(cmd, **kwargs)
+    except Exception:
+        vite_log.close()
+        raise
+    return proc, vite_log
 
 
 async def _wait_for_url(url: str, timeout: float = 20.0) -> bool:
@@ -170,6 +186,9 @@ async def _run(stop_event: asyncio.Event | None = None) -> None:
     # 改为纯环境变量驱动，避免开发期忘记清 dist 就弹到静态挂载。
     is_prod = os.environ.get("MARKETLENS_PROD") == "1"
     frontend_proc: subprocess.Popen | None = None
+    vite_log_handle: TextIO | None = None
+    browser_task: asyncio.Task[None] | None = None
+    watch_task: asyncio.Task[None] | None = None
     frontend_url: str
 
     if is_prod:
@@ -179,9 +198,8 @@ async def _run(stop_event: asyncio.Event | None = None) -> None:
     else:
         # 开发模式：派生 Vite dev server（5173）+ FastAPI（8000），Vite 代理 /api
         frontend_url = "http://127.0.0.1:5173"
-        frontend_proc = _spawn_vite_child(project_root, port=5173)
+        frontend_proc, vite_log_handle = _spawn_vite_child(project_root, port=5173)
         browser_task = asyncio.create_task(_open_browser_when_ready(frontend_url))
-        # browser_task 会在 finally 中 cancel
 
     # 1) 启动 uvicorn
     api_config = uvicorn.Config(
@@ -202,26 +220,22 @@ async def _run(stop_event: asyncio.Event | None = None) -> None:
         api_server.should_exit = True
 
     if stop_event is not None:
-        task = asyncio.create_task(_watch_stop())
-        task.set_name("_watch_stop")
+        watch_task = asyncio.create_task(_watch_stop())
 
     try:
         await api_server.serve()
     finally:
-        if stop_event is not None:
-            watch_task = next(
-                (t for t in asyncio.all_tasks() if t.get_name() == "_watch_stop"),
-                None,
-            )
-            if watch_task is not None and not watch_task.done():
-                watch_task.cancel()
-                try:
-                    await watch_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+        if watch_task is not None and not watch_task.done():
+            watch_task.cancel()
+            try:
+                await watch_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if frontend_proc is not None:
             _terminate_child(frontend_proc, "Vite dev server")
-        if not is_prod and "browser_task" in locals():
+        if vite_log_handle is not None:
+            vite_log_handle.close()
+        if browser_task is not None:
             browser_task.cancel()
             try:
                 await browser_task

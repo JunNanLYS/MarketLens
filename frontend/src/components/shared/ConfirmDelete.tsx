@@ -1,12 +1,13 @@
 import { Modal } from "antd";
+import { extractErrorMessage, showErrorMessage } from "@/api/client";
 
 interface Props {
   title?: string;
   content?: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
 }
 
-// 简化版确认弹窗：直接通过 Modal.confirm 触发
+// 简化版确认弹窗：保留 Promise 链，异步失败时显式提示而不是静默吞掉。
 export function confirmDelete({ title = "确认删除", content = "此操作不可撤销", onConfirm }: Props) {
   Modal.confirm({
     title,
@@ -14,6 +15,13 @@ export function confirmDelete({ title = "确认删除", content = "此操作不�
     okText: "确认",
     cancelText: "取消",
     okButtonProps: { danger: true },
-    onOk: onConfirm,
+    onOk: async () => {
+      try {
+        await onConfirm();
+      } catch (error) {
+        showErrorMessage(`操作失败：${extractErrorMessage(error)}`);
+        throw error;
+      }
+    },
   });
 }

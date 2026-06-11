@@ -1,9 +1,11 @@
-import { Card, Col, Descriptions, Divider, Row, Skeleton, Space, Table, Tag, Typography } from "antd";
+import { Alert, Card, Col, Descriptions, Divider, Row, Skeleton, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient, extractErrorMessage } from "@/api/client";
 import type { DataSourceItem, TaskStatusItem } from "@/api/types";
+import { useApiKeyStore } from "@/auth/apiKeyStore";
 import { TASK_LABELS } from "@/utils/constants";
+import { getTaskStatusMeta } from "@/utils/format";
 
 interface DataSourcesResponse {
   structured: DataSourceItem[];
@@ -14,8 +16,18 @@ interface TaskStatusResponse {
   items: TaskStatusItem[];
 }
 
+function renderTaskStatus(status?: string | null) {
+  const meta = getTaskStatusMeta(status);
+  if (!meta) {
+    return "-";
+  }
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
 // 系统配置页：数据源状态 + 调度任务 + 静态系统信息（对应原 Streamlit settings.py）
 export default function SettingsPage() {
+  const apiKey = useApiKeyStore((state) => state.key);
+
   const sources = useQuery<DataSourcesResponse>({
     queryKey: ["data-sources", "config"],
     queryFn: async () => {
@@ -43,7 +55,7 @@ export default function SettingsPage() {
       dataIndex: "enabled",
       key: "enabled",
       render: (enabled: boolean) => (
-        <Tag color={enabled ? "green" : "default"}>{enabled ? "是" : "否"}</Tag>
+        <Tag color={enabled ? "green" : undefined}>{enabled ? "是" : "否"}</Tag>
       ),
     },
     {
@@ -57,6 +69,15 @@ export default function SettingsPage() {
   return (
     <Space direction="vertical" size="large" className="w-full">
       <Typography.Title level={3}>系统配置</Typography.Title>
+
+      {!apiKey.trim() && (
+        <Alert
+          type="warning"
+          showIcon
+          message="当前未设置 API Key"
+          description="需要手动触发任务或修改投资组合时，请先补充 API Key；只读查询通常不受影响。"
+        />
+      )}
 
       <Card title="数据源状态" size="small">
         {sources.isLoading ? (
@@ -113,8 +134,7 @@ export default function SettingsPage() {
                 title: "上次状态",
                 dataIndex: "last_status",
                 key: "last_status",
-                render: (status?: string | null) =>
-                  status ? <Tag color={status === "success" ? "green" : "red"}>{status}</Tag> : "-",
+                render: renderTaskStatus,
               },
               { title: "下次执行", dataIndex: "next_run_at", key: "next_run_at" },
             ]}
