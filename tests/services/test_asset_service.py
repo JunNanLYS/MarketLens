@@ -437,3 +437,30 @@ async def test_add_asset_default_asset_type(service: AssetService) -> None:
 async def test_add_asset_custom_asset_type(service: AssetService) -> None:
     result = await service.add_asset({"symbol": "hk02800", "asset_type": "etf"})
     assert result["asset_type"] == "etf"
+
+
+async def test_add_asset_bare_code_with_market_sh(service: AssetService) -> None:
+    """裸代码 600519 + market=sh → 自动拼接为 sh600519。"""
+    result = await service.add_asset({"symbol": "600519", "market": "sh", "name": "贵州茅台"})
+    assert result["symbol"] == "sh600519"
+    assert result["market"] == "sh"
+
+
+async def test_add_asset_bare_code_with_market_sz(service: AssetService) -> None:
+    """裸代码 300750 + market=sz → 自动拼接为 sz300750。"""
+    result = await service.add_asset({"symbol": "300750", "market": "sz", "name": "宁德时代"})
+    assert result["symbol"] == "sz300750"
+    assert result["market"] == "sz"
+
+
+async def test_add_asset_bare_code_without_market_is_error(service: AssetService) -> None:
+    """裸代码 300750 且无 market → 报错并提示正确格式。"""
+    with pytest.raises(ValueError, match="无法识别代码.*请使用带市场前缀"):
+        await service.add_asset({"symbol": "300750"})
+
+
+async def test_add_asset_prefixed_symbol_ignores_market(service: AssetService) -> None:
+    """已带前缀的 sz300750 + market=sh → 保持 sz 前缀（已带前缀时不覆盖）。"""
+    result = await service.add_asset({"symbol": "sz300750", "market": "sh", "name": "宁德时代"})
+    assert result["symbol"] == "sz300750"
+    assert result["market"] == "sz"

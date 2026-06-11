@@ -75,14 +75,21 @@ class AssetService:
         if not raw_symbol:
             raise ValueError("symbol 不能为空")
 
+        # 如果 symbol 不带市场前缀但传入了 market，自动拼接前缀
+        # （前端表单 symbol 和 market 是分开填的，用户可能只填 `300750` + 选 `sz`）
+        supplied_market = data.get("market") or ""
+        if self._parse_symbol(raw_symbol) is None and supplied_market in ("sh", "sz", "hk", "us", "fut", "hf", "nf"):
+            raw_symbol = f"{supplied_market}{raw_symbol}"
+
         parsed = self._parse_symbol(raw_symbol)
         if parsed is None:
-            raise ValueError(f"无法识别代码 '{raw_symbol}'")
+            raise ValueError(f"无法识别代码 '{raw_symbol}'，请使用带市场前缀的格式（如 sz300750、sh600519）")
 
         prefix, code = parsed
         symbol = f"{prefix}{code}"
 
-        market = data.get("market") or self._infer_market(symbol)
+        # symbol 前缀是 market 的权威来源；前端传入的 market 仅在 symbol 不带前缀时用于拼接
+        market = self._infer_market(symbol) or data.get("market")
         if market is None:
             raise ValueError(f"无法识别代码 '{symbol}'")
 
