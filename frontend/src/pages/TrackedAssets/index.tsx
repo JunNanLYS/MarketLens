@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiClient, extractErrorMessage } from "@/api/client";
 import type { PageResult, TrackedAsset } from "@/api/types";
-import { MARKET_LABELS } from "@/utils/constants";
+import { MARKET_LABELS, ASSET_TYPE_LABELS } from "@/utils/constants";
 import { confirmDelete } from "@/components/shared/ConfirmDelete";
 import { PnlDisplay } from "@/components/shared/PnlDisplay";
 import { formatNumber } from "@/utils/format";
@@ -120,7 +120,7 @@ export default function TrackedAssetsPage() {
       key: "market",
       render: (m?: string) => (m ? <Tag>{MARKET_LABELS[m] ?? m}</Tag> : "-"),
     },
-    { title: "类型", dataIndex: "asset_type", key: "asset_type" },
+    { title: "类型", dataIndex: "asset_type", key: "asset_type", render: (t?: string) => (t ? ASSET_TYPE_LABELS[t] ?? t : "-") },
     {
       title: "最新价",
       dataIndex: "latest_price",
@@ -194,7 +194,7 @@ export default function TrackedAssetsPage() {
             columns={[
               { title: "代码", dataIndex: "symbol" },
               { title: "名称", dataIndex: "name" },
-              { title: "市场", dataIndex: "market" },
+              { title: "市场", dataIndex: "market", render: (m?: string) => (m ? MARKET_LABELS[m] ?? m : "-") },
               {
                 title: "操作",
                 render: (_, record) => (

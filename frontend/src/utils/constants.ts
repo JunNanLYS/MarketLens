@@ -9,6 +9,18 @@ export const MARKET_LABELS: Record<string, string> = {
   nf: "国内期货",
 };
 
+export const ASSET_TYPE_LABELS: Record<string, string> = {
+  stock: "股票",
+  etf: "ETF",
+  index: "指数",
+  future: "期货",
+  option: "期权",
+  fx: "外汇",
+  fund: "基金",
+  bond: "债券",
+  crypto: "加密货币",
+};
+
 export const SENTIMENT_LABELS: Record<string, string> = {
   positive: "看多",
   negative: "看空",
