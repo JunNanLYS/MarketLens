@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 When reviewing code or assessing risks, apply this **threat model**:
 
-- ✅ **Real risks worth flagging** — data corruption, race conditions in the UI/server (Streamlit reruns, concurrent API calls), timezone/locale bugs, misconfigured config, inconsistent docs, accessibility for the user, broken tests giving false confidence.
+- ✅ **Real risks worth flagging** — data corruption, race conditions between concurrent API calls or scheduler ticks, timezone/locale bugs, misconfigured config, inconsistent docs, accessibility for the user, broken tests giving false confidence.
 - ❌ **Not real risks — do NOT flag as "security vulnerabilities"**:
   - CSRF / cross-origin attacks — there's no remote attacker; the user's browser is the only client.
   - Phishing / XSS via ingested news or feed content — the user curates their own feeds; they are not attacking themselves.
@@ -30,7 +30,7 @@ Money math + time + concurrency bugs hit the user directly. Local tools have no 
 - **Money math precision** — WAC, realized P&L, unrealized P&L, cross-account aggregation, split handling, multi-currency
 - **Timezone & date handling** — every `datetime` must be `timezone.utc`; check trade_date type, range comparisons
 - **Edge cases** — empty holdings, zero price, negative quantities (especially split `quantity > 0` write-time validation), `page=0`, `page_size=0`
-- **Concurrency** — Streamlit rerun can race with API requests; scheduler tick can overlap with manual triggers; check-then-act in `update_transaction`/`delete_transaction`
+- **Concurrency** — concurrent API calls can race with scheduler ticks; check-then-act in `update_transaction`/`delete_transaction`
 - **Quote/position timing** — what happens if a tracked asset has no quote yet?
 
 ### 2. Data integrity & collection reliability
@@ -47,7 +47,7 @@ The project's core value is "evidence-driven AI." Every AI report depends on acc
 Already benchmarked: 100 assets < 2min, import 0.9s. Look for new regressions, don't relitigate solved ones.
 
 - **N+1 queries** — especially portfolio's per-(account, symbol) aggregation
-- **Streamlit `@st.cache_data`** — which of the 9 detail-page tabs are un-cached?
+- **React component re-renders** — useMemo/useCallback for expensive computations in detail pages
 - **Large fetch + Python-side aggregation** — `evidence_builder.build_multi` parses 5000 news rows in Python per batch
 - **CTE pitfalls** — `get_asset_by_id` kline×flow Cartesian product risk
 - **Write lock granularity** — currently locks the whole `_collect_*` method
@@ -63,14 +63,13 @@ Single-user tool = you maintain it yourself. Code must be readable by you 3 mont
 - **Type annotations + Chinese docstrings** — CLAUDE.md hard constraint
 
 ### 5. UI / accessibility / docs accuracy
-You stare at the Streamlit 9-tab detail page daily. Color blindness, doc/code drift, dead UI options affect you.
+You stare at the React 7-tab detail page daily. Color blindness, doc/code drift, dead UI options affect you.
 
-- **P&L red/green only** — ~8% of male users can't distinguish
-- **Cache TTL reasonableness** — quote 15min cycle, UI 30s reasonable
+- **P&L red/green only** — ~8% of male users can't distinguish; PnlDisplay uses ▲/▼ arrows as well
+- **Cache TTL reasonableness** — quote 15min cycle, TanStack Query staleTime 30s reasonable
 - **API doc/code sync** — `docs/api/*.md` vs `backend/api/*.py` field names, status codes
-- **Emoji-only buttons** — `st.button("✏️")` with no `help=` / `aria_label`
+- **Emoji-only buttons** — ensure all icon-only buttons have `title` or `aria-label`
 - **Dead UI options** — `running` filter that never matches
-- **Hidden labels** — `label_visibility="collapsed"` removes accessible name
 
 ### 6. Integration & module boundaries
 Strong module coupling is the local-tool tax. Cross-layer violations break deployment.
@@ -98,8 +97,11 @@ uv sync
 # Run FastAPI backend (with auto-reload)
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Run Streamlit UI
-uv run streamlit run ui/app.py
+# Run React frontend (dev mode, proxy /api → backend)
+cd frontend && npm run dev
+
+# One-command launcher (backend + frontend dev, auto-open browser)
+uv run python scripts/launcher.py
 
 # Run all tests
 uv run pytest tests/ -v
@@ -121,6 +123,14 @@ uv run python -m backend.storage.schema
 
 # Manual trigger collection via API
 curl -X POST http://localhost:8000/api/v1/tasks/trigger/quote
+
+# Frontend commands (run from frontend/ directory)
+cd frontend
+npm run dev          # Vite dev server (port 5173, proxy /api → 8000)
+npm run build        # Production build → frontend/dist/
+npm run type-check   # TypeScript type checking (tsc --noEmit)
+npm run lint         # ESLint check
+npm test             # Vitest unit/integration tests
 ```
 
 ## Architecture
@@ -130,7 +140,7 @@ MarketLens is a **local-first, evidence-driven AI financial research assistant**
 ### Layered design (top to bottom)
 
 ```
-Streamlit UI (ui/)         — display only; never touches DB directly
+React + Vite UI (frontend/)  — display only; never touches DB directly, communicates via FastAPI API
 FastAPI routes (api/)       — validate params, call services, return JSON
 Services (services/)        — business logic orchestration
 Collectors (collectors/)    — ONLY module that calls external data sources
@@ -201,7 +211,7 @@ backend/services/    → business logic orchestration (track assets, build evide
 backend/storage/     → database read/write + init schema
 backend/scheduler/   → ONLY module that registers APScheduler jobs
 backend/main.py      → FastAPI entry: route registration, middleware, exception handlers
-ui/                  → Streamlit pages; NEVER touches DB directly, must go through FastAPI
+frontend/            → React + Vite UI; NEVER touches DB directly, must go through FastAPI
 tests/               → must mirror backend/ directory structure
 docs/                → project documentation (PRD, architecture, API docs)
 ```
@@ -322,6 +332,7 @@ Commit all changes with a conventional commit message (use `git-commit` skill):
 - **74 端点**（68 在 `backend/api/*.py` + 2 在 `backend/main.py` 健康/根 + 4 `data_sources` 子路径，全部 `/api/v1/` 前缀）
 - **8 个 Provider**（`backend/collectors/*.py`：NeoData / RSS / SearchEngineNews / Sina / SinaNews / TencentNews / TencentNewsHTTP / WeStock）
 - **458 测试**（`tests/`，`pytest asyncio_mode = "auto"`）
+- **React + Vite 前端**（`frontend/`，7 页面全部迁移完成：Settings / NewsList / TaskStatus / AiReports / TrackedAssets / Portfolio / AssetDetail）
 
 ### 资金主线 CRITICAL 状态
 
@@ -350,6 +361,7 @@ Commit all changes with a conventional commit message (use `git-commit` skill):
 - **第 9 轮** — 5 条收尾（quotes CTE MAJOR / naive datetime MAJOR / realized-pnl 翻页 doc MINOR / lifespan 资源清理 NIT / westock 贪婪匹配 NIT）
 - **第 10 轮** — 7 doc 校准 + 30 个 client 方法补全（72 端点全覆盖）+ realized-pnl wrapper 同构
 - **第 11 轮** — 收尾：`git mv` 清理错位文件 / pre-commit 钩子补全 / CI workflow 落地
+- **第 12 轮** — Streamlit → React + Vite 完整迁移：7 页面全部实现 / Streamlit 删除 / 启动器重构 / CI 增加 frontend job / 文档同步
 
 > 详细逐条复验表 + 决策追踪见 `ISSUES.md` 第 8-11 轮复验记录（行 117-200）。
 
@@ -362,8 +374,8 @@ CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 *
    - 历史教训：第 4 轮 5 个 portfolio 写端点全部漏锁 → 用户 P&L 串号；第 6/8 轮补登 `report_service` / `news_service` / `_run_cleanup` 3 处
    - 新增 Service / 新增写端点 → 第一件事就是加 `with _WRITE_LOCK:`
 
-2. **`ui/` 严禁 import `backend/storage/`**（Module boundaries，第 197-207 行）
-   - UI 必须走 FastAPI（`ui/api_client.py`），绝不能直接碰 SQLite
+2. **`frontend/` 严禁 import `backend/storage/`**（Module boundaries，第 197-207 行）
+   - UI 必须走 FastAPI（`frontend/src/api/client.ts`），绝不能直接碰 SQLite
    - 跨层 import 是部署期地雷：UI 与 backend 用不同的 venv/进程时会立即炸
 
 3. **文档同步 = 后端代码改必动 `docs/api/*.md`**（Task Completion Checklist 第 3 步）

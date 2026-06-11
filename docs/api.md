@@ -282,6 +282,6 @@ ISO 8601 带时区：`"2026-05-31T15:30:00+08:00"`。日期（无时间）使用
 
 1. **生产环境必须覆盖默认 API Key**。`marketlens-local` 仅用于本地单用户场景；通过 `MARKETLENS_API_KEY` 环境变量或 `config.security.api_key` 覆盖，否则攻击者可绕过鉴权。
 2. **部署必须启用 HTTPS**。`Strict-Transport-Security` 头依赖 TLS；仅在生产环境前置 Nginx/Caddy 反向代理时生效。
-3. **CORS 来源最小化**。默认仅放行 `http://localhost:8501`（Streamlit UI）；其他前端需要显式加入 `security.cors_origins`。
+3. **CORS 来源最小化**。默认仅放行 `http://localhost:5173`（React dev server）和 `http://localhost:8000`（生产模式）；其他前端需要显式加入 `security.cors_origins`。
 4. **Swagger UI 在线文档**。开发环境访问 `/docs` 与 `/redoc`；生产环境建议禁用或将文档路由放在鉴权之后。
 5. **NeoData Token 持久化**。`POST /neodata/token` 写入 `~/.workbuddy/.neodata_token`，请确保主目录权限为 `0700`。

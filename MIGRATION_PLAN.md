@@ -243,14 +243,12 @@ defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: 
 
 ---
 
-## 共存策略
+## 共存策略（已完成）
 
-迁移期间（Phase 1-3），两个前端同时可用：
-- Streamlit：`uv run streamlit run ui/app.py`（8501 端口）— 未迁移页面
-- React：`cd frontend && npm run dev`（5173 端口，proxy 到 8000）— 已迁移页面
-- FastAPI：不变，两个前端共享同一后端
-
-启动器（launcher.py）在 Phase 4 才切换，迁移期间开发者手动启动 Vite。
+迁移已完成（2026-06-11），Streamlit 已移除：
+- React：`cd frontend && npm run dev`（5173 端口，proxy 到 8000）— 全部页面
+- 生产模式：`uv run python scripts/launcher.py`（单端口 8000，FastAPI 挂载 `frontend/dist`）
+- FastAPI：不变，React 前端通过 `/api/v1/` 通信
 
 ---
 

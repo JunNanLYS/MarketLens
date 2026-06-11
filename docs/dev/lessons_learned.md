@@ -98,7 +98,7 @@ backend/services/    → business logic orchestration
 backend/storage/     → database read/write + init schema
 backend/scheduler/   → ONLY module that registers APScheduler jobs
 backend/main.py      → FastAPI entry
-ui/                  → Streamlit pages; NEVER touches DB directly
+frontend/            → React + Vite UI; NEVER touches DB directly
 ```
 
 ### 关键规则

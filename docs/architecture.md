@@ -28,7 +28,7 @@ MarketLens 是一个**本地优先、证据驱动**的 AI 金融研究助理系�
                 aiosqlite 异步数据库连接（仅 schema 初始化使用）
                 sqlite3 同步连接 + asyncio.Lock 串行化业务写入
 调度            APScheduler (BackgroundScheduler)
-前端            Streamlit (展示层)
+前端            React + Vite + TypeScript (展示层，Ant Design 5)
 存储            SQLite (WAL 模式 + foreign_keys=ON)
 日志            loguru (文件)  +  run_logs 表 (持久化)
 包管理          uv
@@ -85,9 +85,13 @@ MarketLens/
 │   │   └── schema.py              # 建表脚本（schema 唯一入口）
 │   └── scheduler/                 # 定时任务
 │       └── jobs.py                # SchedulerManager + _run_* 包装层（asyncio.run）
-├── ui/                            # Streamlit 前端
-│   ├── app.py
-│   └── pages/
+├── frontend/                       # React + Vite 前端
+│   ├── src/
+│   │   ├── pages/
+│   │   ├── api/
+│   │   └── components/
+│   ├── package.json
+│   └── vite.config.ts
 ├── data/                          # 数据文件（SQLite DB、日志）
 ├── docs/                          # 项目文档
 │   ├── architecture.md
@@ -102,7 +106,7 @@ MarketLens/
 
 ### 2.1 模块边界规则
 
-- **`ui/`** 不直接读数据库，所有数据通过 FastAPI HTTP 接口获取
+- **`frontend/`** 不直接读数据库，所有数据通过 FastAPI HTTP 接口获取
 - **`backend/collectors/`** 是唯一可调外部数据源的模块
 - **`backend/storage/`** 是唯一可执行 `CREATE TABLE` / `ALTER TABLE` 的模块
 - **`backend/scheduler/`** 是唯一可注册定时任务的模块
@@ -115,8 +119,8 @@ MarketLens/
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                       Streamlit UI                                │
-│            (app.py + pages/)   仅通过 HTTP API 通信                │
+│                       React + Vite UI                            │
+│            (Ant Design 5)   仅通过 HTTP API 通信                    │
 └─────────────────────────┬────────────────────────────────────────┘
                           │ HTTP (RESTful JSON, /api/v1/*)
 ┌─────────────────────────▼────────────────────────────────────────┐
@@ -259,10 +263,10 @@ Scheduler 或 POST /api/v1/reports/generate 触发
 ### 5.3 用户查询流程
 
 ```
-Streamlit 发起 GET /api/v1/data/quotes/{symbol}
+前端发起 GET /api/v1/data/quotes/{symbol}
   → API 路由（无副作用）→ CollectionService.get_quote(symbol)
   → 同步 sqlite3 SELECT (最新一条)
-  → 返回 JSON → Streamlit 渲染卡片
+  → 返回 JSON → React 组件渲染卡片
 
 写端点（如 POST /api/v1/reports/generate）：
   → API 路由 → verify_api_key 依赖校验 X-API-Key
@@ -847,7 +851,7 @@ FastAPI 异常 → 全局异常 handler → 统一 JSON 错误响应
 
 ### 15.5 CORS
 
-- 默认白名单：`http://localhost:8501`, `http://127.0.0.1:8501`（Streamlit）
+- 默认白名单：`http://localhost:5173`（Vite dev）、`http://localhost:8000`（生产模式）
 - 生产环境通过 `config.yaml` 的 `security.cors_origins` 显式声明
 - 禁止使用通配符 `*` 与 `allow_credentials=True` 同时启用
 
@@ -871,8 +875,11 @@ uv sync
 # 启动 FastAPI 后端（开发模式）
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
-# 启动 Streamlit UI
-uv run streamlit run ui/app.py
+# 启动 React 前端（开发模式，Vite 代理 /api → 8000）
+cd frontend && npm run dev
+
+# 或使用统一启动器（dev: Vite 子进程 + uvicorn; prod: 单端口）
+uv run python scripts/launcher.py
 ```
 
 ### 16.3 初始化与单次运行

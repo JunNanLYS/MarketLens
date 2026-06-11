@@ -109,11 +109,10 @@ app = FastAPI(
 )
 
 config = get_config()
-# CORS 配置：默认仅放行本地 Streamlit (8501)，如需放行其他来源请在 config.yaml 的
+# CORS 配置：默认放行本地前端（5173 = Vite dev, 8000 = 生产模式挂载），
+# 如需放行其他来源请在 config.yaml 的
 # security.cors_origins 中显式声明，避免在生产环境中使用通配符。
 _default_cors_origins = [
-    "http://localhost:8501",
-    "http://127.0.0.1:8501",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:8000",

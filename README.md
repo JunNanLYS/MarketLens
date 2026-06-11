@@ -15,7 +15,7 @@ MarketLens 是一款单用户、本地运行的金融研究工具。它在开发
 | 语言 | Python ≥ 3.13 |
 | 包管理 | `uv`（`.venv` 隔离，不用系统 Python） |
 | 后端 | FastAPI + Pydantic v2（异步路由） |
-| 前端 | Streamlit（展示层） |
+| 前端 | React + Vite + TypeScript（Ant Design 5） |
 | 数据库 | SQLite（WAL + `foreign_keys=ON`），同步 `sqlite3` + 异步 `aiosqlite` 双连接 |
 | 调度 | APScheduler `BackgroundScheduler` |
 | HTTP | `httpx.AsyncClient`（Provider 懒加载） |
@@ -30,7 +30,7 @@ MarketLens 是一款单用户、本地运行的金融研究工具。它在开发
 
 ```
                 +----------------------+
-                |  Streamlit UI (ui/)  |   仅通过 HTTP 通信，不直连 DB
+                |  React + Vite UI (frontend/)  |   仅通过 HTTP 通信，不直连 DB
                 +----------+-----------+
                            |  HTTP /api/v1/* (JSON)
                 +----------v-----------+
@@ -87,6 +87,7 @@ MarketLens 是一款单用户、本地运行的金融研究工具。它在开发
 | AI 端点 | **4 个** | 报告列表 / 单标最新 / 历史 / 手动生成 |
 | 投资组合端点 | **12 个** | 账户 CRUD（5）+ 交易 CRUD（5）+ 持仓总览（1）+ 已实现盈亏（1） |
 | 鉴权端点 | **26 个** | 写端点全部要求 `X-API-Key` 头，默认 key `marketlens-local`（仅本地） |
+| 前端 | **7 页面** | React + Vite + TypeScript + Ant Design 5（Settings/NewsList/TaskStatus/AiReports/TrackedAssets/Portfolio/AssetDetail） |
 
 ---
 
@@ -102,15 +103,19 @@ uv run python -m backend.storage.schema
 # 3. 启动 FastAPI 后端（开发模式，含自动重载）
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
-# 4. 另起一个终端：启动 Streamlit 前端
-uv run streamlit run ui/app.py
+# 4. 启动前端（开发模式，Vite 代理 /api → FastAPI）
+cd frontend && npm run dev
+
+# 或使用统一启动器（dev: Vite 子进程 + uvicorn; prod: 单端口）
+uv run python scripts/launcher.py
 ```
 
 启动后访问：
 
 - 后端 Swagger UI — http://localhost:8000/docs
 - 后端健康检查 — http://localhost:8000/api/v1/health
-- Streamlit UI — http://localhost:8501
+- React UI（开发）— http://localhost:5173
+- React UI（生产）— http://127.0.0.1:8000
 
 ### 手动触发采集
 
@@ -156,7 +161,7 @@ MarketLens/
 │   ├── services/             # 业务编排（CollectionService/EvidenceBuilder/AIAnalyzer/...）
 │   ├── storage/              # schema.py (29 张表) + database.py (连接管理)
 │   └── scheduler/            # APScheduler 任务注册与异步包装
-├── ui/                       # Streamlit 前端
+├── frontend/                 # React + Vite 前端
 ├── data/                     # SQLite DB + loguru 日志
 ├── docs/                     # architecture.md + api.md + api/*.md
 └── tests/                    # 457 个测试，镜像 backend/ 结构
@@ -166,7 +171,7 @@ MarketLens/
 
 ---
 
-## 第 9 轮审查收尾状态
+## 第 12 轮：React 迁移完成
 
 项目已完成 9 轮系统性代码审查，修复 **65+ 条问题**，覆盖以下主线：
 
@@ -181,7 +186,7 @@ MarketLens/
 - 软删除（`deleted_at`）保持审计可追溯
 - 写端点全部走 `verify_api_key` 依赖，杜绝未授权写入
 - `realized-pnl` 页面与 `/transactions` 同构，避免前端误读
-- `ui/api_client.py` 30 个 client 方法补全（72 端点全覆盖）
+- `frontend/src/api/client.ts` 30 个 client 方法补全（72 端点全覆盖）
 
 ### 文档校准
 
