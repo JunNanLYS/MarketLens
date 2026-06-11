@@ -197,11 +197,11 @@ function TransactionsTab() {
               { value: "split", label: "拆股" },
             ]} />
           </Form.Item>
-          <Form.Item name="quantity" label="数量" rules={[{ required: true }]}>
-            <InputNumber style={{ width: "100%" }} />
+          <Form.Item name="quantity" label="数量" rules={[{ required: true }]} extra="A 股按 1 手 = 100 股，ETF/基金按份">
+            <InputNumber style={{ width: "100%" }} min={0} step={1} />
           </Form.Item>
-          <Form.Item name="price" label="价格" rules={[{ required: true }]}>
-            <InputNumber style={{ width: "100%" }} />
+          <Form.Item name="price" label="价格" rules={[{ required: true }]} extra="每股/份成交价">
+            <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
           </Form.Item>
           <Form.Item name="fee" label="手续费">
             <InputNumber style={{ width: "100%" }} />
