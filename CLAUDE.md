@@ -300,6 +300,21 @@ uv run ruff check .
 ```
 If issues are found, fix them and re-run until clean.
 
+### 1.75 Frontend Check
+
+当 `frontend/` 目录下任何文件被修改时,运行前端静态检查(全通过才视为"前端无误"):
+
+```bash
+cd frontend
+npm run lint
+npm run type-check
+npm run build
+```
+
+任一命令失败 → 修复后**重新从 step 1 开始**。
+
+> 命令来源:`frontend/package.json` scripts。`type-check` 是带连字符的正式名(`tsc -b --noEmit`),不是 `typecheck`;`build` 内嵌 `tsc -b && vite build`,虽与 `type-check` 语义重叠,但单独跑 `type-check` 失败暴露更快、定位更准。Vitest 单元/集成测试归到 step 2。
+
 ### 2. Test Judgment & Execution
 
 Determine if the task falls into test-required categories:

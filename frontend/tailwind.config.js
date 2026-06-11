@@ -1,12 +1,16 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
-  // 预留给后续 antd 主题 token 同步
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
         brand: {
-          DEFAULT: "#1677ff",
+          DEFAULT: "var(--color-primary)",
+          success: "var(--color-success)",
+          warning: "var(--color-warning)",
+          error: "var(--color-error)",
+          info: "var(--color-info)",
         },
       },
     },

@@ -1,4 +1,4 @@
-import { Button, Card, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Form, Input, Modal, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -6,7 +6,8 @@ import { apiClient, extractErrorMessage } from "@/api/client";
 import type { PageResult, TrackedAsset } from "@/api/types";
 import { MARKET_LABELS } from "@/utils/constants";
 import { confirmDelete } from "@/components/shared/ConfirmDelete";
-import { formatNumber, formatPercent } from "@/utils/format";
+import { PnlDisplay } from "@/components/shared/PnlDisplay";
+import { formatNumber } from "@/utils/format";
 
 interface SearchResult {
   symbol: string;
@@ -124,11 +125,7 @@ export default function TrackedAssetsPage() {
       title: "涨跌幅",
       dataIndex: "latest_change_pct",
       key: "latest_change_pct",
-      render: (v?: number | null) => {
-        if (v === null || v === undefined) return "-";
-        const color = v > 0 ? "green" : v < 0 ? "red" : "default";
-        return <Tag color={color}>{formatPercent(v)}</Tag>;
-      },
+      render: (v?: number | null) => <PnlDisplay value={v} />,
     },
     {
       title: "启用",

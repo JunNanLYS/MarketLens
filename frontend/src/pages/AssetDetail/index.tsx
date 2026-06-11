@@ -1,15 +1,48 @@
-import { Button, Card, Col, Empty, Row, Select, Skeleton, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { Button, Card, Empty, Select, Skeleton, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import dayjs from "dayjs";
+import { Panel, Group, Separator } from "react-resizable-panels";
+import type { Layout } from "react-resizable-panels";
 import { apiClient, extractErrorMessage } from "@/api/client";
 import type { AssetDetail, PageResult, TrackedAsset } from "@/api/types";
 import { PnlDisplay } from "@/components/shared/PnlDisplay";
+import { CollectionTimeline } from "@/components/shared/CollectionTimeline";
 import { formatNumber, formatPercent } from "@/utils/format";
 
-// 标的详情：核心 7 个 tab（行情 / K线 / 财务 / 资金流向 / 分时 / 股东 / AI 报告）
-// 其余 5 个（业绩预告 / 分红 / ETF / 行业 / 日历 / 筹码）以"即将开放"占位，避免单页面 1000+ 行不可控
+// 布局持久化 key
+const LAYOUT_KEY = "marketlens:layout:asset-resizer";
+
+const PANEL_IDS = { left: "fundamental", middle: "chart", right: "ai" } as const;
+
+function loadLayout(): Layout | null {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveLayout(layout: Layout) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+  } catch { /* ignore */ }
+}
+
+// 判断窄屏
+function useIsNarrow() {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 1023px)");
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return narrow;
+}
+
+// 标的详情：三栏可拖拽布局（桌面）或 Tabs（窄屏）
 export default function AssetDetailPage() {
   const queryClient = useQueryClient();
   const [assetId, setAssetId] = useState<number | null>(null);
@@ -36,10 +69,25 @@ export default function AssetDetailPage() {
     }
   };
 
+  const narrow = useIsNarrow();
+
+  const content = assetId === null ? (
+    <Empty description="请选择一个标的" />
+  ) : detail.isLoading ? (
+    <Skeleton active />
+  ) : detail.isError ? (
+    <Card><Typography.Text type="danger">加载失败：{extractErrorMessage(detail.error)}</Typography.Text></Card>
+  ) : !detail.data ? (
+    <Empty />
+  ) : narrow ? (
+    <NarrowLayout detail={detail.data} onRefresh={refresh} refreshing={detail.isFetching} />
+  ) : (
+    <WideLayout detail={detail.data} onRefresh={refresh} refreshing={detail.isFetching} />
+  );
+
   return (
     <Space direction="vertical" size="large" className="w-full">
       <Typography.Title level={3}>标的详情</Typography.Title>
-
       <Card size="small">
         <Space wrap>
           <Select
@@ -55,85 +103,164 @@ export default function AssetDetailPage() {
           <Button onClick={refresh} loading={detail.isFetching}>刷新数据</Button>
         </Space>
       </Card>
-
-      {assetId === null ? (
-        <Empty description="请选择一个标的" />
-      ) : detail.isLoading ? (
-        <Skeleton active />
-      ) : detail.isError ? (
-        <Card><Typography.Text type="danger">加载失败：{extractErrorMessage(detail.error)}</Typography.Text></Card>
-      ) : !detail.data ? (
-        <Empty />
-      ) : (
-        <Card title={`${detail.data.symbol} ${detail.data.name ?? ""}`}>
-          <Tabs
-            items={[
-              { key: "quote", label: "行情", children: <QuoteTab detail={detail.data} /> },
-              { key: "kline", label: "K线", children: <KlineTab detail={detail.data} /> },
-              { key: "finance", label: "财务", children: <FinanceTab detail={detail.data} /> },
-              { key: "flow", label: "资金流向", children: <FundFlowTab detail={detail.data} /> },
-              { key: "intraday", label: "分时走势", children: <IntradayTab symbol={detail.data.symbol} /> },
-              { key: "shareholder", label: "股东结构", children: <ShareholderTab symbol={detail.data.symbol} /> },
-              { key: "ai", label: "AI 报告", children: <AiReportTab detail={detail.data} /> },
-              { key: "etc", label: "更多", children: <MoreTab /> },
-            ]}
-          />
-        </Card>
-      )}
+      {content}
     </Space>
   );
 }
 
-function QuoteTab({ detail }: { detail: AssetDetail }) {
-  const q = detail.quote ?? {};
+// ─── 三栏可拖拽布局（≥1024px）────────────────────────────
+function WideLayout({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRefresh: () => void; refreshing: boolean }) {
+  const defaultLayout: Layout = loadLayout() ?? { [PANEL_IDS.left]: 25, [PANEL_IDS.middle]: 50, [PANEL_IDS.right]: 25 };
+
+  const handleLayoutChange = useCallback((layout: Layout) => {
+    saveLayout(layout);
+  }, []);
+
   return (
-    <Row gutter={[16, 16]}>
-      <Col span={6}><Statistic title="最新价" value={q.price} precision={2} /></Col>
-      <Col span={6}><Statistic title="涨跌" value={q.change} precision={2} /></Col>
-      <Col span={6}><Statistic title="涨跌幅" valueRender={() => <PnlDisplay value={q.change_pct} />} /></Col>
-      <Col span={6}><Statistic title="成交量" value={q.volume} /></Col>
-      <Col span={6}><Statistic title="开盘" value={q.open} precision={2} /></Col>
-      <Col span={6}><Statistic title="最高" value={q.high} precision={2} /></Col>
-      <Col span={6}><Statistic title="最低" value={q.low} precision={2} /></Col>
-      <Col span={6}><Statistic title="昨收" value={q.prev_close} precision={2} /></Col>
-      <Col span={6}><Statistic title="成交额" value={q.amount} /></Col>
-    </Row>
+    <Group orientation="horizontal" onLayoutChanged={handleLayoutChange} defaultLayout={defaultLayout} className="h-[calc(100vh-200px)] min-h-[400px]">
+      <Panel id={PANEL_IDS.left} minSize={15} className="overflow-auto">
+        <div className="pr-2 h-full">
+          <FundamentalPanel detail={detail} />
+        </div>
+      </Panel>
+      <Separator className="w-1.5 flex items-center justify-center cursor-col-resize hover:bg-[var(--color-primary)]/20 transition-colors group" aria-label="拖拽以调整宽度">
+        <div className="w-0.5 h-8 rounded-full bg-[var(--color-border-secondary)] group-hover:bg-[var(--color-primary)] transition-colors" />
+      </Separator>
+
+      <Panel id={PANEL_IDS.middle} minSize={30} className="overflow-auto">
+        <div className="px-2 h-full">
+          <ChartPanel detail={detail} />
+        </div>
+      </Panel>
+      <Separator className="w-1.5 flex items-center justify-center cursor-col-resize hover:bg-[var(--color-primary)]/20 transition-colors group" aria-label="拖拽以调整宽度">
+        <div className="w-0.5 h-8 rounded-full bg-[var(--color-border-secondary)] group-hover:bg-[var(--color-primary)] transition-colors" />
+      </Separator>
+
+      <Panel id={PANEL_IDS.right} minSize={15} className="overflow-auto">
+        <div className="pl-2 h-full">
+          <AiPanel detail={detail} onRefresh={onRefresh} refreshing={refreshing} />
+        </div>
+      </Panel>
+    </Group>
   );
 }
 
-function KlineTab({ detail }: { detail: AssetDetail }) {
+// ─── 窄屏 Tabs 布局（<1024px）────────────────────────────
+function NarrowLayout({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRefresh: () => void; refreshing: boolean }) {
+  return (
+    <Card title={`${detail.symbol} ${detail.name ?? ""}`}>
+      <Tabs
+        items={[
+          { key: "fundamental", label: "基本面", children: <FundamentalPanel detail={detail} /> },
+          { key: "chart", label: "行情/K线", children: <ChartPanel detail={detail} /> },
+          { key: "ai", label: "AI 报告", children: <AiPanel detail={detail} onRefresh={onRefresh} refreshing={refreshing} /> },
+          { key: "intraday", label: "分时走势", children: <IntradayTab symbol={detail.symbol} /> },
+          { key: "shareholder", label: "股东结构", children: <ShareholderTab symbol={detail.symbol} /> },
+          { key: "collection", label: "采集历史", children: <CollectionTimeline symbol={detail.symbol} /> },
+        ]}
+      />
+    </Card>
+  );
+}
+
+// ─── 面板：基本面（财务 + 资金流向）────────────────────────
+function FundamentalPanel({ detail }: { detail: AssetDetail }) {
+  const f = detail.finance_summary ?? {};
+  const flow = detail.fund_flow_summary ?? {};
+  return (
+    <Space direction="vertical" className="w-full" size="middle">
+      <Card size="small" title="财务摘要" className="w-full">
+        <Space direction="vertical" className="w-full">
+          <Statistic title="报告期" value={f.report_period ?? "-"} />
+          <Statistic title="营收同比" valueRender={() => <PnlDisplay value={f.revenue_yoy} mode="text" />} />
+          <Statistic title="EPS" value={f.eps} precision={2} />
+          <Statistic title="ROE" valueRender={() => <PnlDisplay value={f.roe} mode="text" />} />
+        </Space>
+      </Card>
+      <Card size="small" title="资金流向" className="w-full">
+        <Space direction="vertical" className="w-full">
+          <Statistic title="5 日主力净流入" valueRender={() => <PnlDisplay value={flow.net_flow_5d} mode="text" />} />
+          <Statistic title="趋势" value={flow.trend ?? "-"} />
+        </Space>
+      </Card>
+    </Space>
+  );
+}
+
+// ─── 面板：行情 + K 线 ───────────────────────────────
+function ChartPanel({ detail }: { detail: AssetDetail }) {
+  const q = detail.quote ?? {};
   const k = detail.kline_summary ?? {};
   return (
-    <Row gutter={16}>
-      <Col span={6}><Statistic title="MA5" value={k.ma5} precision={2} /></Col>
-      <Col span={6}><Statistic title="MA20" value={k.ma20} precision={2} /></Col>
-      <Col span={6}><Statistic title="MA60" value={k.ma60} precision={2} /></Col>
-      <Col span={6}><Statistic title="趋势" value={k.trend ?? "-"} /></Col>
-    </Row>
+    <Space direction="vertical" className="w-full" size="middle">
+      <Card size="small" title="行情" className="w-full">
+        <div className="grid grid-cols-3 gap-3">
+          <Statistic title="最新价" value={q.price} precision={2} />
+          <Statistic title="涨跌" value={q.change} precision={2} />
+          <Statistic title="涨跌幅" valueRender={() => <PnlDisplay value={q.change_pct} mode="text" />} />
+          <Statistic title="开盘" value={q.open} precision={2} />
+          <Statistic title="最高" value={q.high} precision={2} />
+          <Statistic title="最低" value={q.low} precision={2} />
+          <Statistic title="昨收" value={q.prev_close} precision={2} />
+          <Statistic title="成交量" value={q.volume} />
+          <Statistic title="成交额" value={q.amount} />
+        </div>
+      </Card>
+      <Card size="small" title="K 线指标" className="w-full">
+        <div className="grid grid-cols-2 gap-3">
+          <Statistic title="MA5" value={k.ma5} precision={2} />
+          <Statistic title="MA20" value={k.ma20} precision={2} />
+          <Statistic title="MA60" value={k.ma60} precision={2} />
+          <Statistic title="趋势" value={k.trend ?? "-"} />
+        </div>
+      </Card>
+    </Space>
   );
 }
 
-function FinanceTab({ detail }: { detail: AssetDetail }) {
-  const f = detail.finance_summary ?? {};
+// ─── 面板：AI 报告 ──────────────────────────────────
+function AiPanel({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRefresh: () => void; refreshing: boolean }) {
+  const r = detail.latest_report;
+  if (!r) {
+    return (
+      <Space direction="vertical" className="w-full">
+        <Card size="small" title="AI 报告" className="w-full">
+          <Empty description="暂无 AI 报告">
+            <Button onClick={onRefresh} loading={refreshing}>刷新数据</Button>
+          </Empty>
+        </Card>
+        <CollectionTimeline symbol={detail.symbol} />
+      </Space>
+    );
+  }
   return (
-    <Row gutter={16}>
-      <Col span={6}><Statistic title="报告期" value={f.report_period ?? "-"} /></Col>
-      <Col span={6}><Statistic title="营收同比" valueRender={() => <PnlDisplay value={f.revenue_yoy} />} /></Col>
-      <Col span={6}><Statistic title="EPS" value={f.eps} precision={2} /></Col>
-      <Col span={6}><Statistic title="ROE" valueRender={() => <PnlDisplay value={f.roe} />} /></Col>
-    </Row>
+    <Space direction="vertical" className="w-full">
+      <Card size="small" title="AI 报告" extra={<Button size="small" onClick={onRefresh} loading={refreshing}>刷新</Button>} className="w-full">
+        <Space direction="vertical" className="w-full">
+          <Space>
+            <Tag color="blue">{r.action}</Tag>
+            <Tag>{r.risk_level}</Tag>
+            <Typography.Text type="secondary">{dayjs(r.generated_at).format("YYYY-MM-DD HH:mm")}</Typography.Text>
+          </Space>
+          <Typography.Paragraph>{r.summary}</Typography.Paragraph>
+          {r.bullish_reasons && r.bullish_reasons.length > 0 && (
+            <Card size="small" type="inner" title="看多理由">
+              {r.bullish_reasons.map((s, i) => <div key={i}>▲ {s}</div>)}
+            </Card>
+          )}
+          {r.bearish_reasons && r.bearish_reasons.length > 0 && (
+            <Card size="small" type="inner" title="看空/风险">
+              {r.bearish_reasons.map((s, i) => <div key={i}>▼ {s}</div>)}
+            </Card>
+          )}
+        </Space>
+      </Card>
+      <CollectionTimeline symbol={detail.symbol} />
+    </Space>
   );
 }
 
-function FundFlowTab({ detail }: { detail: AssetDetail }) {
-  const f = detail.fund_flow_summary ?? {};
-  return (
-    <Row gutter={16}>
-      <Col span={8}><Statistic title="5 日主力净流入" valueRender={() => <PnlDisplay value={f.net_flow_5d} />} /></Col>
-      <Col span={8}><Statistic title="趋势" value={f.trend ?? "-"} /></Col>
-    </Row>
-  );
-}
+// ─── 原 Tabs 子组件保留供窄屏 fallback ──────────────────
 
 function isNoDataError(error: unknown): boolean {
   return (error as { response?: { status?: number } } | undefined)?.response?.status === 404;
@@ -306,45 +433,5 @@ function ShareholderTab({ symbol }: { symbol: string }) {
         ]}
       />
     </Space>
-  );
-}
-
-function AiReportTab({ detail }: { detail: AssetDetail }) {
-  const r = detail.latest_report;
-  if (!r) return <Empty description="暂无 AI 报告" />;
-  return (
-    <Space direction="vertical" className="w-full">
-      <Space>
-        <Tag color="blue">{r.action}</Tag>
-        <Tag>{r.risk_level}</Tag>
-        <Typography.Text type="secondary">{dayjs(r.generated_at).format("YYYY-MM-DD HH:mm")}</Typography.Text>
-      </Space>
-      <Typography.Paragraph>{r.summary}</Typography.Paragraph>
-      {r.bullish_reasons && r.bullish_reasons.length > 0 && (
-        <Card size="small" title="看多理由">
-          {r.bullish_reasons.map((s, i) => <div key={i}>▲ {s}</div>)}
-        </Card>
-      )}
-      {r.bearish_reasons && r.bearish_reasons.length > 0 && (
-        <Card size="small" title="看空/风险">
-          {r.bearish_reasons.map((s, i) => <div key={i}>▼ {s}</div>)}
-        </Card>
-      )}
-    </Space>
-  );
-}
-
-function MoreTab() {
-  return (
-    <Empty
-      description={
-        <Space direction="vertical">
-          <Typography.Text>业绩预告 / 分红记录 / ETF / 行业板块 / 日历 / 筹码</Typography.Text>
-          <Typography.Text type="secondary" className="text-xs">
-            这些 tab 暂以"即将开放"占位，详细实现请见 MIGRATION_PLAN.md Phase 3f
-          </Typography.Text>
-        </Space>
-      }
-    />
   );
 }

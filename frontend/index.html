@@ -4,7 +4,25 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MarketLens</title>
+    <meta name="theme-color" content="#FFFFFF" />
+    <title>MarketLens — 你的本地金融研究终端</title>
+    <!-- 防止暗色模式闪烁：在 React 挂载前同步读取偏好 -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("marketlens_preferences");
+          var mode = raw ? JSON.parse(raw).state.theme : "system";
+          var dark =
+            mode === "dark" ||
+            (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) {
+            document.documentElement.setAttribute("data-theme", "dark");
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute("content", "#141414");
+          }
+        } catch (e) { /* no-op */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

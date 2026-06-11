@@ -28,7 +28,7 @@ function AppMessageBridge() {
 
 function withSuspense(Page: ComponentType) {
   return (
-    <Suspense fallback={<Spin tip="加载中…" />}>
+    <Suspense fallback={<Spin tip="加载市场数据中…" />}>
       <MotionPage>
         <Page />
       </MotionPage>
