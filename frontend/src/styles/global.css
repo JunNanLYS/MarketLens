@@ -17,7 +17,7 @@ body,
   background-color: var(--color-bg-layout);
 }
 
-/* ── Sidebar 折叠态填满：让 antd Menu 内部 ul 变为 flex 分布 ── */
+/* ── Sidebar 折叠态填满：让 antd Menu 内部 ul 变为 flex 列 ── */
 .ant-layout-sider > .ant-layout-sider-children {
   display: flex !important;
   flex-direction: column !important;
@@ -25,7 +25,6 @@ body,
 .ant-layout-sider .ant-menu-root {
   display: flex !important;
   flex-direction: column !important;
-  justify-content: space-between !important;
 }
 
 /* ── 浅色 CSS 变量（与 antd token 对齐） ── */
