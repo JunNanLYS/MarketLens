@@ -20,6 +20,12 @@ const ASSET_TYPES = [
   { value: "stock", label: "股票" },
   { value: "etf", label: "ETF" },
   { value: "index", label: "指数" },
+  { value: "future", label: "期货" },
+  { value: "option", label: "期权" },
+  { value: "fx", label: "外汇" },
+  { value: "fund", label: "基金" },
+  { value: "bond", label: "债券" },
+  { value: "crypto", label: "加密货币" },
 ];
 
 interface AddAssetForm {
