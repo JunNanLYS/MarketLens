@@ -1,6 +1,6 @@
 @echo off
 REM MarketLens - one-click launcher
-REM Double-click or run from cmd: starts FastAPI (8000) + Streamlit (8501) + auto-opens browser
+REM Double-click or run from cmd: starts FastAPI (8000) + Vite dev (5173) + auto-opens browser
 REM Ctrl+C gracefully cleans up child processes
 
 pushd "%~dp0"

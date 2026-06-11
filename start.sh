@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MarketLens 一键启动前后端
 # ./start.sh  或  bash start.sh
-# 拉起 FastAPI (8000) + Streamlit (8501) + 自动弹浏览器
+# 拉起 FastAPI (8000) + Vite dev (5173) + 自动弹浏览器
 # Ctrl+C 优雅清理子进程
 
 set -e

@@ -72,6 +72,9 @@ def setup_logging() -> int:
     level = _resolve_log_level()
     log_dir = _log_dir()
 
+    # 0) 移除 loguru 默认 handler（避免与下面新加的终端 handler 重复输出）
+    logger.remove()
+
     # 1) 落盘:按天 + 50 MB 切分,保留 30 天,UTF-8,无 ANSI 颜色
     logger.add(
         str(log_dir / "marketlens-{time:YYYY-MM-DD}.log"),

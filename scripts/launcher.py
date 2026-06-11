@@ -164,7 +164,11 @@ async def _run(stop_event: asyncio.Event | None = None) -> None:
         logger.debug("已注入 sys.path: {}", project_root_str)
 
     # 0) 决定 dev / prod 模式
-    is_prod = _frontend_dist_exists(project_root) or os.environ.get("MARKETLENS_PROD") == "1"
+    # 默认开发模式（Vite dev server 5173 + backend 8000），
+    # 仅在显式设置 MARKETLENS_PROD=1 时走生产模式（单端口 8000 挂载 frontend/dist）。
+    # 原来的 _frontend_dist_exists 判断会导致开发期误走生产模式（dist 残留），
+    # 改为纯环境变量驱动，避免开发期忘记清 dist 就弹到静态挂载。
+    is_prod = os.environ.get("MARKETLENS_PROD") == "1"
     frontend_proc: subprocess.Popen | None = None
     frontend_url: str
 
