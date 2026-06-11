@@ -44,9 +44,15 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
     def _to_sina_code(symbol: str) -> str:
         if any(
             symbol.startswith(p)
-            for p in ("sh", "sz", "bj", "hk", "us", "hf", "nf", "gb")
+            for p in ("sh", "sz", "bj", "hk", "us", "gb")
         ):
             return symbol
+        # 国内期货/海外期货：新浪格式是 nf_xxx / hf_xxx（带下划线），
+        # 而非 nfxxx / hfxxx。例如 AU2608 → nf_AU2608。
+        if symbol.startswith("nf"):
+            return f"nf_{symbol[2:]}"
+        if symbol.startswith("hf"):
+            return f"hf_{symbol[2:]}"
         code = symbol.strip()
         if code.startswith("6"):
             return f"sh{code}"
@@ -162,7 +168,9 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
             amplitude = round((high - low) / prev_close * 100, 2)
 
         return {
-            "symbol": code,
+            # Sina 期货的 code 是 nf_AU2608，但 tracked_assets.symbol 存的是
+            # nfAU2608（无下划线），去掉下划线才能与资产表 JOIN。
+            "symbol": code.replace("_", ""),
             "price": price,
             "change": change,
             "change_pct": change_pct,
