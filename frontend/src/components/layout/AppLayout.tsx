@@ -9,9 +9,13 @@ import { CommandPalette } from "@/components/shared/CommandPalette";
 const { Sider, Header, Content } = Layout;
 
 // 应用整体布局：左侧导航 + 顶部 KPI Bar + 主内容区。
+//
+// 高度策略：外/内 Layout 用 min-h-screen + h-screen 锁死为视口高度，
+// Content 自己 overflow:auto 滚动。否则 Sider 会被内容撑高（每个
+// 页面高度不同，侧边栏长度跟着变）。
 export function AppLayout() {
   return (
-    <Layout className="h-full">
+    <Layout className="min-h-screen h-screen">
       <CommandPalette />
       <Sider
         width={220}
@@ -27,7 +31,7 @@ export function AppLayout() {
         </div>
         <Sidebar />
       </Sider>
-      <Layout className="h-full" style={{ background: "var(--color-bg-layout)" }}>
+      <Layout className="min-h-screen h-screen" style={{ background: "var(--color-bg-layout)" }}>
         <Header
           style={{
             borderBottom: "1px solid var(--color-border-secondary)",
@@ -44,7 +48,7 @@ export function AppLayout() {
             <ThemeToggle />
           </Space>
         </Header>
-        <Content className="h-full" style={{ padding: 24, overflow: "auto", background: "var(--color-bg-layout)" }}>
+        <Content style={{ padding: 24, overflow: "auto", background: "var(--color-bg-layout)" }}>
           <Outlet />
         </Content>
       </Layout>
