@@ -42,9 +42,12 @@ def get_db(db_path: str | None = None) -> Generator[sqlite3.Connection, None, No
     try:
         yield conn
         conn.commit()
-    except Exception:
+    except sqlite3.Error:
         conn.rollback()
         logger.exception("数据库操作异常，已回滚")
+        raise
+    except Exception:
+        conn.rollback()
         raise
     finally:
         conn.close()
@@ -78,12 +81,18 @@ async def aget_db(
     try:
         yield conn
         await conn.commit()
-    except Exception:
+    except (aiosqlite.Error, sqlite3.Error):
         try:
             await conn.rollback()
         except Exception:
             logger.warning("回滚操作失败，连接可能已断开")
         logger.exception("数据库操作异常，已回滚")
+        raise
+    except Exception:
+        try:
+            await conn.rollback()
+        except Exception:
+            logger.warning("回滚操作失败，连接可能已断开")
         raise
     finally:
         try:

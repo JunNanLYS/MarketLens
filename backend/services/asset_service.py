@@ -1,5 +1,6 @@
 import re
 import sqlite3
+import threading
 from typing import Any
 
 from loguru import logger
@@ -10,6 +11,9 @@ from backend.storage.database import get_db
 from backend.utils import build_fund_flow_summary, escape_like
 
 SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut|hf|nf)(\w+)$")
+
+# CLAUDE.md 硬约束：所有 SQLite 写路径必须持写锁串行化
+_WRITE_LOCK: threading.Lock = threading.Lock()
 
 
 class AssetExistsError(ValueError):
@@ -101,13 +105,29 @@ class AssetService:
         tags = self._tags_to_str(data.get("tags"))
         notes = data.get("notes")
 
-        with get_db() as conn:
+        with _WRITE_LOCK, get_db() as conn:
             existing = conn.execute(
                 """SELECT id, symbol, name, market, asset_type, enabled
                    FROM tracked_assets WHERE symbol = ?""",
                 (symbol,),
             ).fetchone()
             if existing is not None:
+                # 软删除记录：重新启用并更新字段
+                if not existing["enabled"]:
+                    conn.execute(
+                        """UPDATE tracked_assets
+                           SET enabled = 1, name = ?, asset_type = ?, tags = ?, notes = ?,
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE id = ?""",
+                        (name, asset_type, tags, notes, existing["id"]),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM tracked_assets WHERE id = ?",
+                        (existing["id"],),
+                    ).fetchone()
+                    logger.info("已重新启用标的: {} ({})", symbol, name)
+                    return self._row_to_dict(dict(row))
+
                 raise AssetExistsError(
                     f"标的 '{symbol}' 已在追踪列表中（ID: {existing['id']}）",
                     {
@@ -470,7 +490,7 @@ class AssetService:
         set_clause = ", ".join(set_parts)
         sql = f"UPDATE tracked_assets SET {set_clause} WHERE id = ?"
 
-        with get_db() as conn:
+        with _WRITE_LOCK, get_db() as conn:
             cursor = conn.execute(sql, values + [asset_id])
             if cursor.rowcount == 0:
                 return None
@@ -482,7 +502,7 @@ class AssetService:
         return self._row_to_dict(dict(row))
 
     def delete_asset(self, asset_id: int, soft: bool = True) -> bool:
-        with get_db() as conn:
+        with _WRITE_LOCK, get_db() as conn:
             if soft:
                 cursor = conn.execute(
                     "UPDATE tracked_assets SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND enabled = 1",

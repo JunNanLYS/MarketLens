@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from backend.collectors.base import BaseProvider
-from backend.services.asset_service import AssetService
+from backend.services.asset_service import AssetExistsError, AssetService
 from backend.storage.database import aget_db, set_db_path
 from backend.storage.schema import init_db_sync as init_db
 
@@ -352,6 +352,24 @@ async def test_delete_asset_soft_already_disabled(service: AssetService) -> None
     service.delete_asset(asset["id"], soft=True)
     success = service.delete_asset(asset["id"], soft=True)
     assert success is False
+
+
+async def test_add_asset_reenables_soft_deleted(service: AssetService) -> None:
+    """软删除后重新添加同一 symbol → 重新启用而非报错。"""
+    asset = await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+    service.delete_asset(asset["id"], soft=True)
+
+    # 重新添加同一 symbol
+    result = await service.add_asset({"symbol": "hk00700"})
+    assert result["enabled"] is True or result["enabled"] == 1
+    assert result["id"] == asset["id"]  # 复用同一条记录
+
+
+async def test_add_asset_active_duplicate_still_errors(service: AssetService) -> None:
+    """已启用的标的重复添加仍抛 AssetExistsError。"""
+    await service.add_asset({"symbol": "hk00700", "name": "腾讯控股"})
+    with pytest.raises(AssetExistsError, match="已在追踪列表"):
+        await service.add_asset({"symbol": "hk00700"})
 
 
 async def test_search_assets(service: AssetService) -> None:
