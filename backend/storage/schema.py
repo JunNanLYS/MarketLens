@@ -744,9 +744,10 @@ def _migrate_raw_data_symbol_nullable_sync(conn: sqlite3.Connection) -> None:
 
 async def _migrate_raw_data_symbol_nullable(conn: aiosqlite.Connection) -> None:
     """异步版的 _migrate_raw_data_symbol_nullable_sync。"""
-    row = await conn.execute(
+    cursor = await conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='raw_data'"
-    ).fetchone()
+    )
+    row = await cursor.fetchone()
     if row is None or "symbol" not in (row[0] or ""):
         return
     create_sql = row[0]
