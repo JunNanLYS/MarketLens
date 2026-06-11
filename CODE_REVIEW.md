@@ -7,13 +7,6 @@
 
 ## CRITICAL
 
-### C1. `/assets/search` 路由被 `/{asset_id}` 遮蔽，外部搜索返回 422
-
-- **文件**: `backend/api/assets.py:79,112`
-- **问题**: `@router.get("/{asset_id}")`（行 79）声明在 `@router.get("/search")`（行 112）之前。FastAPI 按声明顺序匹配路由，`/assets/search` 被 `/{asset_id: int}` 先匹配，返回 422 `{"detail":[{"type":"int_parsing","loc":["path","asset_id"],"msg":"Input should be a valid integer","input":"search"}]}`。
-- **影响**: TrackedAssets 页"外部搜索"按钮静默失败（`frontend/src/pages/TrackedAssets/index.tsx:102` 调用 `/assets/search`）。
-- **修复**: 将 `search_assets` 路由移到 `get_asset` 之前，或在路由定义中使用更有辨识度的前缀（如 `/detail/{asset_id}`）。
-
 ### C2. `NewsItem.importance` 类型错误：前端 `number | null` vs 后端 `TEXT`（"normal"/"high"/"low"）
 
 - **文件**: `frontend/src/api/types.ts:78`, `backend/storage/schema.py:132`, `backend/collectors/tencent_news_http.py:111-115`

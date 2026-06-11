@@ -76,6 +76,17 @@ def list_assets(
     return _service.get_assets(filters=filters or None, page=page, page_size=page_size)
 
 
+# 注意：/search 必须在 /{asset_id} 之前声明，否则 FastAPI 会先匹配
+# /{asset_id: int} 而把 "search" 解析成 ID 导致 422。
+@router.get("/search")
+async def search_assets(
+    keyword: str = Query(..., min_length=1),
+    market: str | None = Query(default=None),
+) -> dict:
+    items = await _service.search_assets(keyword=keyword, market=market)
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/{asset_id}")
 def get_asset(asset_id: int) -> dict:
     result = _service.get_asset_by_id(asset_id)
@@ -107,12 +118,3 @@ def delete_asset(asset_id: int, soft: bool = Query(default=True)) -> None:
             status_code=404,
             detail={"error": "ASSET_NOT_FOUND", "detail": f"标的 ID {asset_id} 不存在"},
         )
-
-
-@router.get("/search")
-async def search_assets(
-    keyword: str = Query(..., min_length=1),
-    market: str | None = Query(default=None),
-) -> dict:
-    items = await _service.search_assets(keyword=keyword, market=market)
-    return {"items": items, "total": len(items)}
