@@ -500,8 +500,13 @@ class AssetService:
         return affected
 
     async def search_assets(
-        self, keyword: str, market: str | None = None
+        self, keyword: str, market: str | None = None, include_local: bool = True
     ) -> list[dict]:
+        """搜索标的：先调所有 structured Provider（外部数据源），再回退查本地 tracked_assets。
+
+        每条结果附 source（provider.name / "local"）和 already_tracked 标志，
+        供前端区分已添加/未添加、来源，避免重复追踪。
+        """
         results: list[dict] = []
         seen_symbols: set[str] = set()
 
@@ -513,13 +518,51 @@ class AssetService:
                     if sym and sym not in seen_symbols:
                         if market is None or item.get("market") == market:
                             item["source"] = provider.name
+                            item["already_tracked"] = self._is_tracked(sym)
                             results.append(item)
                             seen_symbols.add(sym)
             except Exception:
                 logger.warning("Provider {} 搜索失败，跳过", provider.name)
                 continue
 
+        # 本地回退：外部结果不足时查已追踪的标的，让用户能搜到本地存在的资产
+        if include_local and len(results) < 10:
+            for item in self._search_local(keyword, market):
+                sym = item.get("symbol", "")
+                if sym and sym not in seen_symbols:
+                    item["source"] = "local"
+                    item["already_tracked"] = True
+                    results.append(item)
+                    seen_symbols.add(sym)
+
         return results
+
+    def _is_tracked(self, symbol: str) -> bool:
+        """检查标的 symbol 是否已在本地追踪列表中。"""
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM tracked_assets WHERE symbol = ? LIMIT 1", (symbol,)
+            ).fetchone()
+        return row is not None
+
+    def _search_local(self, keyword: str, market: str | None) -> list[dict]:
+        """在 tracked_assets 里按 symbol 或 name 模糊匹配。"""
+        kw = escape_like(keyword)
+        conditions = ["(symbol LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')"]
+        params: list[Any] = [f"%{kw}%", f"%{kw}%"]
+        if market is not None:
+            conditions.append("market = ?")
+            params.append(market)
+        sql = (
+            "SELECT symbol, name, market, asset_type FROM tracked_assets "
+            f"WHERE {' AND '.join(conditions)} LIMIT 10"
+        )
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            {"symbol": r[0], "name": r[1], "market": r[2], "asset_type": r[3]}
+            for r in rows
+        ]
 
     def get_active_assets(self) -> list[dict]:
         with get_db() as conn:

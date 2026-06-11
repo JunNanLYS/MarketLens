@@ -82,8 +82,9 @@ def list_assets(
 async def search_assets(
     keyword: str = Query(..., min_length=1),
     market: str | None = Query(default=None),
+    include_local: bool = Query(default=True, description="外部结果不足时是否回退查本地 tracked_assets"),
 ) -> dict:
-    items = await _service.search_assets(keyword=keyword, market=market)
+    items = await _service.search_assets(keyword=keyword, market=market, include_local=include_local)
     return {"items": items, "total": len(items)}
 
 

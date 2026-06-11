@@ -190,8 +190,86 @@ async def test_quote_empty_symbols(provider: SinaProvider) -> None:
     assert result == []
 
 
-async def test_search_returns_empty(provider: SinaProvider) -> None:
-    assert await provider.search("茅台") == []
+async def test_search_empty_keyword(provider: SinaProvider) -> None:
+    """空 keyword 直接返回 []，不发起 HTTP 请求。"""
+    result = await provider.search("")
+    assert result == []
+
+
+async def test_search_parses_suggest_response(provider: SinaProvider) -> None:
+    """单条与多条 Sina suggest 响应均能解析出 fullcode + 名称。"""
+    # 真实 Sina 响应（GBK 编码，含多条 ; 分隔）
+    gbk_text = (
+        'var suggestvalue="宁德时代,11,300750,sz300750,宁德时代,,宁德时代,99,1,ESG,,;'
+        '贵州茅台,11,600519,sh600519,贵州茅台,,贵州茅台,99,1,ESG,,";'
+        '"'
+    ).encode("gbk")
+    mock_resp = MagicMock()
+    mock_resp.content = gbk_text
+    mock_resp.text = gbk_text.decode("gbk")
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_get = AsyncMock(return_value=mock_resp)
+    _inject_client(provider, mock_get)
+
+    result = await provider.search("宁德")
+    assert len(result) == 2
+    assert result[0]["symbol"] == "sz300750"
+    assert result[0]["name"] == "宁德时代"
+    assert result[0]["market"] == "sz"
+    assert result[0]["asset_type"] == "stock"
+    assert result[1]["symbol"] == "sh600519"
+    assert result[1]["market"] == "sh"
+
+
+async def test_search_empty_payload(provider: SinaProvider) -> None:
+    """Sina 返回空字符串（搜不到）→ []。"""
+    mock_resp = MagicMock()
+    mock_resp.content = b'var suggestvalue="";'
+    mock_resp.text = 'var suggestvalue="";'
+    mock_resp.raise_for_status = MagicMock()
+    mock_get = AsyncMock(return_value=mock_resp)
+    _inject_client(provider, mock_get)
+
+    result = await provider.search("不存在的标的")
+    assert result == []
+
+
+async def test_search_skips_short_items(provider: SinaProvider) -> None:
+    """字段不足的条目被跳过。"""
+    text = 'var suggestvalue="bad,11,300750;good,11,300750,sz300750,宁德时代,...";'
+    mock_resp = MagicMock()
+    mock_resp.content = text.encode("utf-8")
+    mock_resp.text = text
+    mock_resp.raise_for_status = MagicMock()
+    mock_get = AsyncMock(return_value=mock_resp)
+    _inject_client(provider, mock_get)
+
+    result = await provider.search("宁德")
+    assert len(result) == 1
+    assert result[0]["symbol"] == "sz300750"
+
+
+async def test_search_timeout_returns_empty(provider: SinaProvider) -> None:
+    mock_get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+    _inject_client(provider, mock_get)
+
+    result = await provider.search("茅台")
+    assert result == []
+
+
+async def test_search_http_error_returns_empty(provider: SinaProvider) -> None:
+    mock_resp = MagicMock()
+    mock_resp.status_code = 456
+    mock_get = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Rate limited", request=MagicMock(), response=mock_resp
+        )
+    )
+    _inject_client(provider, mock_get)
+
+    result = await provider.search("茅台")
+    assert result == []
 
 
 async def test_technical_returns_empty(provider: SinaProvider) -> None:

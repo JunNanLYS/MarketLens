@@ -14,6 +14,8 @@ interface SearchResult {
   name: string;
   market?: string;
   asset_type?: string;
+  source?: string;
+  already_tracked?: boolean;
 }
 
 const ASSET_TYPES = [
@@ -188,30 +190,46 @@ export default function TrackedAssetsPage() {
           <Table
             size="small"
             loading={externalSearch.isFetching}
-            rowKey={(r) => `${r.symbol}-${r.market ?? ""}`}
+            rowKey={(r) => `${r.symbol}-${r.market ?? ""}-${r.source ?? ""}`}
             dataSource={externalSearch.data?.items ?? []}
             pagination={false}
             columns={[
               { title: "代码", dataIndex: "symbol" },
               { title: "名称", dataIndex: "name" },
               { title: "市场", dataIndex: "market", render: (m?: string) => (m ? MARKET_LABELS[m] ?? m : "-") },
+              { title: "类型", dataIndex: "asset_type", render: (t?: string) => (t ? ASSET_TYPE_LABELS[t] ?? t : "-") },
+              {
+                title: "来源",
+                dataIndex: "source",
+                render: (s?: string) => (s ? <Tag color={s === "local" ? "default" : "blue"}>{s}</Tag> : "-"),
+              },
+              {
+                title: "状态",
+                dataIndex: "already_tracked",
+                render: (tracked?: boolean) =>
+                  tracked ? <Tag color="green">已追踪</Tag> : <Tag>未添加</Tag>,
+              },
               {
                 title: "操作",
-                render: (_, record) => (
-                  <Button
-                    size="small"
-                    onClick={() =>
-                      create.mutate({
-                        symbol: record.symbol,
-                        name: record.name,
-                        market: record.market ?? "us",
-                        asset_type: record.asset_type ?? "stock",
-                      })
-                    }
-                  >
-                    添加
-                  </Button>
-                ),
+                render: (_, record) =>
+                  record.already_tracked ? (
+                    <Typography.Text type="secondary">-</Typography.Text>
+                  ) : (
+                    <Button
+                      size="small"
+                      loading={create.isPending && create.variables?.symbol === record.symbol}
+                      onClick={() =>
+                        create.mutate({
+                          symbol: record.symbol,
+                          name: record.name,
+                          market: record.market ?? "us",
+                          asset_type: record.asset_type ?? "stock",
+                        })
+                      }
+                    >
+                      添加
+                    </Button>
+                  ),
               },
             ]}
           />

@@ -466,3 +466,75 @@ async def test_add_asset_prefixed_symbol_ignores_market(service: AssetService) -
     result = await service.add_asset({"symbol": "sz300750", "market": "sh", "name": "宁德时代"})
     assert result["symbol"] == "sz300750"
     assert result["market"] == "sz"
+
+
+# ── search_assets 测试 ─────────────────────────────────────────────
+
+
+async def test_search_external_results_mark_already_tracked(
+    service: AssetService,
+) -> None:
+    """外部 Provider 返回的结果，若已在本地追踪，already_tracked=True。"""
+    # 先添加 sz300750
+    await service.add_asset({"symbol": "sz300750", "name": "宁德时代"})
+
+    # 替换 fake provider，让它返回 sz300750
+    provider = service._providers["structured"][0]
+    provider._search_results = [
+        {"symbol": "sz300750", "name": "宁德时代", "market": "sz"},
+    ]
+
+    result = await service.search_assets("宁德")
+    assert len(result) == 1
+    assert result[0]["symbol"] == "sz300750"
+    assert result[0]["already_tracked"] is True
+    assert result[0]["source"] == "fake"
+
+
+async def test_search_falls_back_to_local_when_external_empty(
+    service: AssetService,
+) -> None:
+    """外部结果为空时，本地 tracked_assets 模糊匹配也回显。"""
+    await service.add_asset({"symbol": "sz300750", "name": "宁德时代"})
+    provider = service._providers["structured"][0]
+    provider._search_results = []
+
+    result = await service.search_assets("宁德")
+    assert any(r["symbol"] == "sz300750" and r["source"] == "local" for r in result)
+    assert all(r["already_tracked"] for r in result if r["source"] == "local")
+
+
+async def test_search_dedupes_external_and_local(service: AssetService) -> None:
+    """外部和本地都匹配到同一 symbol 时，结果只出现 1 次（优先外部 source）。"""
+    await service.add_asset({"symbol": "sz300750", "name": "宁德时代"})
+    provider = service._providers["structured"][0]
+    provider._search_results = [
+        {"symbol": "sz300750", "name": "宁德时代", "market": "sz"},
+    ]
+
+    result = await service.search_assets("宁德")
+    matches = [r for r in result if r["symbol"] == "sz300750"]
+    assert len(matches) == 1
+    assert matches[0]["source"] == "fake"  # 外部优先
+
+
+async def test_search_local_fuzzy_matches_name(service: AssetService) -> None:
+    """本地匹配按 symbol 或 name 模糊匹配。"""
+    await service.add_asset({"symbol": "sz300750", "name": "宁德时代"})
+    provider = service._providers["structured"][0]
+    provider._search_results = []
+
+    result = await service.search_assets("时代")
+    assert any(r["symbol"] == "sz300750" for r in result)
+
+
+async def test_search_include_local_false_disables_fallback(
+    service: AssetService,
+) -> None:
+    """include_local=False 时即使本地有也不回显。"""
+    await service.add_asset({"symbol": "sz300750", "name": "宁德时代"})
+    provider = service._providers["structured"][0]
+    provider._search_results = []
+
+    result = await service.search_assets("宁德", include_local=False)
+    assert result == []

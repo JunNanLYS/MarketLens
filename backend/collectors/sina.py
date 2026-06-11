@@ -1,5 +1,6 @@
 import re
 import json
+import urllib.parse
 from datetime import datetime, timezone
 
 import httpx
@@ -24,6 +25,10 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
         self.quote_url: str = self.params.get(
             "quote_url", "https://hq.sinajs.cn/list={codes}"
+        )
+        # Sina 搜索建议接口：type=11(A股)/12(B股)/13(港股)/14(美股)/15(基金等)
+        self._search_url: str = self.params.get(
+            "search_url", "http://suggest3.sinajs.cn/suggest/type=11,12,13,14,15&key={keyword}"
         )
         # 懒加载 httpx.AsyncClient：见 _HttpClientMixin 注释
         self._client: httpx.AsyncClient | None = None
@@ -105,7 +110,74 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
     # ------------------------------------------------------------------
 
     async def search(self, keyword: str) -> list[dict]:
-        return []
+        """Sina suggest3 模糊搜索（A 股/港股/美股/基金等）。
+
+        响应为 GBK 编码的 JS 变量：var suggestvalue="name,type,code,fullcode,name,...";
+        多条用 ";" 分隔，单条用 "," 分隔（共 12 字段）。其中
+        index 3 = fullcode (如 sz300750)，index 4 = 名称。
+        编码错误或响应异常统一返回 []。
+        """
+        if not keyword:
+            return []
+        # Sina 建议接口用 GBK 解码；keyword URL 编码用 UTF-8 即可（Sina 端接受 UTF-8）
+        url = self._search_url.replace("{keyword}", urllib.parse.quote(keyword))
+        try:
+            client = await self._get_client()
+            resp = await client.get(url)
+            resp.raise_for_status()
+            # Sina 建议接口返回 GBK 编码（其他接口是 UTF-8）
+            try:
+                text = resp.content.decode("gbk")
+            except UnicodeDecodeError:
+                text = resp.text
+            return self._parse_search(text)
+        except httpx.TimeoutException:
+            logger.warning("新浪搜索请求超时: url={}, timeout={}s", url, self.timeout)
+            return []
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "新浪搜索 HTTP 错误: url={}, status={}", url, e.response.status_code
+            )
+            return []
+        except Exception as e:
+            logger.error("新浪搜索请求异常: url={}, error={}", url, e)
+            return []
+
+    def _parse_search(self, text: str) -> list[dict]:
+        """解析 Sina suggestvalue 响应。"""
+        m = re.search(r'"([^"]+)"', text)
+        if not m or not m.group(1):
+            return []
+        payload = m.group(1)
+        results: list[dict] = []
+        for item in payload.split(";"):
+            if not item:
+                continue
+            parts = item.split(",")
+            # 至少需要 type/code/fullcode/name 4 个核心字段（共 12 字段但允许末尾空）
+            if len(parts) < 5:
+                continue
+            fullcode = parts[3].strip()
+            name = parts[4].strip()
+            if not fullcode:
+                continue
+            market = self._guess_market_from_symbol(fullcode)
+            results.append(
+                {
+                    "symbol": fullcode,
+                    "name": name,
+                    "market": market,
+                    "asset_type": "stock",
+                }
+            )
+        return results
+
+    @staticmethod
+    def _guess_market_from_symbol(symbol: str) -> str:
+        """从 fullcode 推断市场前缀。Sina 行情接口支持的代码前缀：sh/sz/bj/hk/us/gb/nf/hf。"""
+        if symbol.startswith(("sh", "sz", "bj", "hk", "us", "gb", "nf", "hf")):
+            return symbol[:2]
+        return "us"
 
     async def quote(self, symbols: list[str]) -> list[dict]:
         if not symbols:
