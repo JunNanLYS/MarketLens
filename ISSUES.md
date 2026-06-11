@@ -22,3 +22,4 @@
 - `docs/dev/issues_2026-06-08.md` — 第 4-11 轮审查 70+ 条 + 9 轮修复决策历史
 - `docs/dev/issues_2026-06-08_r12.md` — 第 12 轮审查 11 条 + 修复（CRITICAL 1 + MAJOR 5 + MINOR 3 + NIT 2）
 - `docs/dev/issues_2026-06-11_r13.md` — 第 13 轮 React 迁移审查 27 条全部修复（CRITICAL 2 + MAJOR 13 + MINOR 7 + NIT 4 + 补充 MAJOR 1）
+- `docs/dev/issues_2026-06-11_r14.md` — 第 14 轮前端审查 6 条全部修复（MAJOR 2 + MINOR 3 + NIT 1）

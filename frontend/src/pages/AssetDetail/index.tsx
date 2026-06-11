@@ -27,9 +27,13 @@ export default function AssetDetailPage() {
     staleTime: 30_000,
   });
 
-  const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["asset", assetId] });
-    message.success("已刷新");
+  const refresh = async () => {
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["asset", assetId] });
+      message.success("已刷新");
+    } catch {
+      message.error("刷新失败");
+    }
   };
 
   return (
@@ -48,7 +52,7 @@ export default function AssetDetailPage() {
             loading={assets.isLoading}
             options={(assets.data?.items ?? []).map((a) => ({ value: a.id, label: `${a.symbol} ${a.name ?? ""}` }))}
           />
-          <Button onClick={refresh}>刷新数据</Button>
+          <Button onClick={refresh} loading={detail.isFetching}>刷新数据</Button>
         </Space>
       </Card>
 
@@ -220,7 +224,7 @@ function IntradayTab({ symbol }: { symbol: string }) {
   return (
     <Space direction="vertical" className="w-full">
       <Button onClick={() => m.mutate()} loading={m.isPending}>手动刷新</Button>
-      <Table size="small" rowKey="time" dataSource={items.slice(0, 50)} columns={columns} pagination={false} />
+      <Table size="small" rowKey={(_, i) => `minute-${i}`} dataSource={items.slice(0, 50)} columns={columns} pagination={false} />
     </Space>
   );
 }
@@ -280,7 +284,7 @@ function ShareholderTab({ symbol }: { symbol: string }) {
       <Button onClick={() => m.mutate()} loading={m.isPending}>手动刷新</Button>
       <Table
         size="small"
-        rowKey={(r) => r.name}
+        rowKey={(_, i) => `shareholder-${i}`}
         title={() => "前 10 大股东"}
         dataSource={topShareholders}
         pagination={false}

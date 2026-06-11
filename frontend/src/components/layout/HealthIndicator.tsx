@@ -3,20 +3,22 @@ import { Badge, Space, Typography } from "antd";
 import type { HealthResponse } from "@/api/types";
 import { useHealthCheck } from "@/hooks/useHealthCheck";
 
+function isDegradedPayload(data: unknown): data is { status: string; database?: string; scheduler?: string } {
+  return typeof data === "object" && data !== null && "status" in data && (data as { status: string }).status === "degraded";
+}
+
 function resolveHealthPayload(data: HealthResponse | undefined, error: unknown): HealthResponse | null {
   if (data) {
     return data;
   }
 
-  if (axios.isAxiosError(error)) {
-    const payload = error.response?.data as Partial<HealthResponse> | undefined;
-    if (payload?.status === "degraded") {
-      return {
-        status: "degraded",
-        database: payload.database === "error" ? "error" : "ok",
-        scheduler: payload.scheduler === "error" ? "error" : "ok",
-      };
-    }
+  if (axios.isAxiosError(error) && error.response?.data && isDegradedPayload(error.response.data)) {
+    const payload = error.response.data;
+    return {
+      status: "degraded",
+      database: payload.database === "error" ? "error" : "ok",
+      scheduler: payload.scheduler === "error" ? "error" : "ok",
+    };
   }
 
   return null;

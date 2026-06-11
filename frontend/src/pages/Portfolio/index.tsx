@@ -161,7 +161,7 @@ function TransactionsTab() {
       title: "操作",
       key: "actions",
       render: (_, r) => (
-        <Button danger size="small" onClick={() => confirmDelete({ onConfirm: () => remove.mutate(r.id) })}>
+        <Button danger size="small" onClick={() => confirmDelete({ onConfirm: () => remove.mutateAsync(r.id) })}>
           删除
         </Button>
       ),
@@ -262,7 +262,7 @@ function AccountsTab() {
       title: "操作",
       key: "actions",
       render: (_, r) => (
-        <Button danger size="small" onClick={() => confirmDelete({ title: "确认删除账户", content: `将删除账户 ${r.name}`, onConfirm: () => remove.mutate(r.id) })}>
+        <Button danger size="small" onClick={() => confirmDelete({ title: "确认删除账户", content: `将删除账户 ${r.name}`, onConfirm: () => remove.mutateAsync(r.id) })}>
           删除
         </Button>
       ),

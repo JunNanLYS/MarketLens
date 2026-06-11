@@ -152,7 +152,7 @@ export default function TrackedAssetsPage() {
             confirmDelete({
               title: "确认删除",
               content: `将删除追踪标的 ${record.symbol}`,
-              onConfirm: () => remove.mutate(record.id),
+              onConfirm: () => remove.mutateAsync(record.id),
             })
           }
         >
