@@ -27,7 +27,7 @@ export function AppLayout() {
         </div>
         <Sidebar />
       </Sider>
-      <Layout>
+      <Layout className="h-full" style={{ background: "var(--color-bg-layout)" }}>
         <Header
           style={{
             borderBottom: "1px solid var(--color-border-secondary)",
@@ -44,7 +44,7 @@ export function AppLayout() {
             <ThemeToggle />
           </Space>
         </Header>
-        <Content style={{ padding: 24, overflow: "auto" }}>
+        <Content className="h-full" style={{ padding: 24, overflow: "auto", background: "var(--color-bg-layout)" }}>
           <Outlet />
         </Content>
       </Layout>
