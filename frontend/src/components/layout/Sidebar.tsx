@@ -33,18 +33,23 @@ function getSelectedMenuKey(pathname: string): string | null {
   return matchedItem?.key ?? null;
 }
 
+// 折叠态下 antd Menu 不会自动撑满 Sider 高度，菜单项会堆在顶部
+// 导致下半部分空白。包一层 flex 容器，强制让菜单区域填满。
+// ul 内的菜单项分布由 global.css 中的 .ant-layout-sider .ant-menu-root 规则接管。
 export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const selectedKey = getSelectedMenuKey(location.pathname);
 
   return (
-    <Menu
-      mode="inline"
-      selectedKeys={selectedKey ? [selectedKey] : []}
-      style={{ height: "100%", borderRight: 0 }}
-      items={ITEMS}
-      onClick={({ key }) => navigate(key)}
-    />
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+      <Menu
+        mode="inline"
+        selectedKeys={selectedKey ? [selectedKey] : []}
+        style={{ flex: 1, borderRight: 0, minHeight: 0 }}
+        items={ITEMS}
+        onClick={({ key }) => navigate(key)}
+      />
+    </div>
   );
 }
