@@ -38,9 +38,14 @@ export function PnlDisplay({ value, mode = "tag", showLabel = false, className }
 
   const arrow = isFlat ? "—" : isUp ? "▲" : "▼";
   const label = isFlat ? "持平" : isUp ? "盈利" : "亏损";
+  // formatPercent 使用 signDisplay:"exceptZero"，对正值加 + 前缀。
+  // aria-label 传入的是绝对值（已通过 arrow/label 表达方向），
+  // 因此必须避免绝对值被 formatPercent 加上 + 号。
+  // 使用 formatNumber 代替 formatPercent，手动拼接 % 号。
+  const absDisplay = value === 0 ? "0" : `${formatNumber(Math.abs(value))}%`;
   const ariaLabel = isFlat
-    ? `盈亏持平 ${formatPercent(0)}`
-    : `盈亏${isUp ? "上涨" : "下跌"} ${formatPercent(Math.abs(value))}，绝对值 ${formatNumber(Math.abs(value))}`;
+    ? `盈亏持平 ${absDisplay}`
+    : `盈亏${isUp ? "上涨" : "下跌"} ${absDisplay}`;
 
   if (mode === "text") {
     return (
