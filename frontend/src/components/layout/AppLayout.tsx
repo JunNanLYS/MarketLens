@@ -21,7 +21,11 @@ export function AppLayout() {
         width={220}
         breakpoint="lg"
         collapsedWidth={64}
-        style={{ borderRight: "1px solid var(--color-border-secondary)" }}
+        theme="light"
+        style={{
+          borderRight: "1px solid var(--color-border-secondary)",
+          background: "var(--color-bg-container)",
+        }}
       >
         <div className="px-4 py-4">
           <Typography.Title level={4} style={{ margin: 0 }}>
