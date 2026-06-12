@@ -1,18 +1,18 @@
 # ============================================================================
-# MarketLens ??????
+# MarketLens 配置文件 — 顺序决定优先级（从上到下递减）
 # ============================================================================
-# ?????????????????? pyyaml ???
-# ?????????????????????????????
+# config.yaml 只管"声明"（有哪些源、优先级、参数），具体获取逻辑由 Provider 类实现
 
 # --------------------------------------------------------------------------
-# ?????
+# 数据源
 # --------------------------------------------------------------------------
-# structured: ??????????K????????????????
-#   - provider: ?? backend/collectors/ ?? Provider ??
-#   - enabled: ????????
-#   - optional: ? true ???????????????????
-#   - timeout: ????????
-# ???????????????????????
+# structured: 结构化数据源（行情/K线/财报/资金流/技术指标）
+#   - provider: 对应 backend/collectors/ 下的 Provider 类名
+#   - enabled: 是否启用
+#   - optional: 为 true 时，数据源不可用不会阻断其他源
+#   - timeout: 超时时间（秒）
+# 新闻源同理
+# --------------------------------------------------------------------------
 data_sources:
   structured:
   - name: westock
@@ -37,9 +37,9 @@ data_sources:
       token: ''            # 兜底占位;实际凭证由外部 workbuddy 工具
                             # 写入 ~/.workbuddy/.neodata_token,本项目只读不写。
                             # 详情见 backend/collectors/neodata_client.py。
-  # --------------------------------------------------------------------------
-  # ??????news?
-  # --------------------------------------------------------------------------
+  # ----------------------------------------------------------------------
+  # 新闻源（news sources）
+  # ----------------------------------------------------------------------
   news:
   - name: neodata
     provider: NeoDataProvider
@@ -111,7 +111,7 @@ data_sources:
     optional: true
     timeout: 15
     params:
-      url: https://www.aljazeera.com/xml/rss/all.xml
+      url: https://feeds.aljazeera.net/xml/rss/all.xml
   - name: tencent_news
     provider: TencentNewsHTTPProvider
     enabled: true
@@ -128,94 +128,94 @@ data_sources:
       primary_engine: duckduckgo
       max_items: 30
       keywords:
-      - ????
-      - ??
+      - 宏观
+      - 政策
 
 # --------------------------------------------------------------------------
-# ????
+# 市场与资产类型
 # --------------------------------------------------------------------------
-# ???????
-#   - prefix: ???????? hk00700 ?? "hk"?
-#   - asset_types: ???????????stock / etf / index / future / commodity?
-#   - note: ????
+# 配置项说明：
+#   - prefix: 代码前缀，如 hk00700 的前缀是 "hk"
+#   - asset_types: 支持的资产类型（stock / etf / index / future / commodity）
+#   - note: 备注
 markets:
-  sh:
+  sh:        # 上海 A 股
     prefix: sh
     asset_types:
     - stock
     - etf
     - index
-  sz:
+  sz:        # 深圳 A 股
     prefix: sz
     asset_types:
     - stock
     - etf
     - index
-  hk:
+  hk:        # 港股
     prefix: hk
     asset_types:
     - stock
     - etf
     - index
-  us:
+  us:        # 美股
     prefix: us
     asset_types:
     - stock
     - etf
     - index
-  fut:
+  fut:       # 国内期货（上期所/大商所/郑商所/中金所/上能源）
     prefix: fut
     asset_types:
     - future
-    note: ???????????? rb2501?IF2506?sc2401
+    note: 期货代码不含市场前缀，如 rb2501、IF2506、sc2401
 
-  hf:
+  hf:        # 国际商品（伦敦金/银等）
     prefix: hf
     asset_types:
     - commodity
-    note: ????(? hf_XAU ????hf_XAG ???)
-  nf:
+    note: 国际商品（如 hf_XAU 伦敦金、hf_XAG 伦敦银）
+  nf:        # 国内商品期货（沪金/原油等）
     prefix: nf
     asset_types:
     - future
-    note: ??????(? nf_AU0 ?????nf_SC0 ????)
+    note: 国内商品期货（如 nf_AU0 沪金连续、nf_SC0 原油连续）
 
 # --------------------------------------------------------------------------
-# ?????
+# 数据库
 # --------------------------------------------------------------------------
-# path: SQLite ?????????????????
-# echo: ???? SQL ?????????
+# path: SQLite 数据库文件路径
+# echo: 是否打印 SQL 语句（调试用）
 database:
   path: marketlens.db
   echo: false
 
 # --------------------------------------------------------------------------
-# ???????
+# 证据配置
 # --------------------------------------------------------------------------
-# ?? EvidenceBuilder ? AI ?????????????
+# 供 EvidenceBuilder 和 AI 分析器使用的默认参数
 evidence:
-  kline_limit: 60      # ??? N ?? K ?
-  fund_flow_limit: 5   # ??? N ?????
+  kline_limit: 60      # 取最近 N 根日 K 线
+  fund_flow_limit: 5   # 取最近 N 天资金流
   finance_limit: 4     # 取最近 N 期（多期+YoY 派生）
-  news_days: 7          # ??? N ?????
+  news_days: 7          # 取最近 N 天新闻
 
 # --------------------------------------------------------------------------
-# ????
+# 安全
 # --------------------------------------------------------------------------
-# cors_origins: ??????????["*"] ????????
-# ???????????????????
+# cors_origins: 允许的跨域来源，设为["*"]允许所有
+# api_key: 本地访问密钥
 security:
   api_key: "marketlens-local"
   cors_origins:
   - '*'
 
 # --------------------------------------------------------------------------
-# ?????
+# 调度
 # --------------------------------------------------------------------------
-# timezone: ????
-# tasks: ??????????
-#   - interval: ?????
-#   - cron: CRON ?????? ?? ? ? ???
+# timezone: 时区
+# tasks: 定时任务定义
+#   - interval: 间隔（分钟）
+#   - cron: CRON 表达式（分 时 日 月 周）
 # --------------------------------------------------------------------------
 # 情感分析
 # --------------------------------------------------------------------------
@@ -227,19 +227,18 @@ sentiment:
   provider: deepseek
   api_key: ''                # 兜底占位；优先读取 DEEPSEEK_API_KEY 环境变量
   base_url: 'https://api.deepseek.com/v1'
-  model: 'deepseek-chat'    # deepseek-v4-pro 对应的 API model 名
+  model: 'deepseek-chat'     # DeepSeek chat 模型名
   timeout: 30
   optional: true
-
 
 scheduler:
   timezone: Asia/Shanghai
   tasks:
-    quote:              # ??????
-      interval: 15      # ? 15 ??
-    daily_close:        # ???????
-      cron: 0 16 * * 1-5  # ??? 16:00
-    news:               # ????
-      interval: 60      # ? 60 ??
-    ai_report:          # AI ??????
-      cron: 0 20 * * *  # ?? 20:00
+    quote:              # 行情采集
+      interval: 15      # 每 15 分钟
+    daily_close:        # 收盘处理
+      cron: 0 16 * * 1-5  # 工作日 16:00
+    news:               # 新闻采集
+      interval: 60      # 每 60 分钟
+    ai_report:          # AI 分析报告
+      cron: 0 20 * * *  # 每日 20:00

@@ -195,6 +195,7 @@ Positions are computed in real-time (not persisted). `portfolio_service.py` aggr
 - **Python ≥ 3.13** with `uv` package manager; use `.venv`, never system Python
 - **Node.js ≥ v18** required for `westock-data-clawhub` CLI (WeStock data source)
 - All comments and docstrings in **Chinese**
+- **Encoding**: 所有源文件必须使用 **UTF-8 无 BOM** 编码。CI runner / pre-commit hook / formatter 保存文件时不得改变编码。文件头部不要加 `#!/usr/bin/env python` 或编码声明（Python 3 默认 UTF-8）。
 - Import order: stdlib → third-party → local
 - Type annotations required on all function signatures and class attributes
 - All configuration reads from `config.yaml` (paths, timeouts, keys, schedules)
