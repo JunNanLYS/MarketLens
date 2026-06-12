@@ -78,6 +78,11 @@ export interface NewsItem {
   importance?: number | null;
   related_symbols?: string[] | null;
   collected_at?: string;
+  // 2026-06-12 升级：DeepSeek 情感分析完整结果透出
+  ai_scored?: boolean;            // true = 走过 DeepSeek；false = 迁移前数据或本次分析失败
+  confidence?: number | null;     // 0~1 原始置信度（to_db_value 阈值降级前的真值）
+  sentiment_reason?: string | null; // 一句话审计理由
+  sectors?: string[] | null;      // 受影响板块（暂未在 NewsList 渲染，留作 UI 后续接入）
 }
 
 export interface HealthResponse {

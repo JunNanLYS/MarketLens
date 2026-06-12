@@ -1,4 +1,4 @@
-import { Card, Empty, Input, Select, Skeleton, Space, Tag, Typography } from "antd";
+import { Card, Empty, Input, Select, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import dayjs from "dayjs";
@@ -11,6 +11,30 @@ interface NewsFilters {
   symbol: string;
   days: number;
   sentiment?: "positive" | "negative" | "neutral";
+}
+
+// 渲染 "AI 已评分" 角标 + 置信度。ai_scored=false 时（迁移前数据 / 本次分析失败）
+// 用灰色 tag 标 "未评分"，让用户对每条新闻的评分可信度心里有数。
+function ScoredTag({ item }: { item: NewsItem }) {
+  if (item.ai_scored) {
+    const conf = typeof item.confidence === "number" ? item.confidence : null;
+    const label = conf !== null ? `AI 评分 · ${conf.toFixed(2)}` : "AI 已评分";
+    const reasonTip = item.sentiment_reason || "无理由";
+    return (
+      <Tooltip title={reasonTip}>
+        <Tag color="geekblue" data-testid="ai-scored-tag">
+          {label}
+        </Tag>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip title="该新闻采集时 DeepSeek 未出分（迁移前数据或本次分析失败），sentiment 字段取自原始数据源">
+      <Tag color="default" data-testid="ai-unscored-tag">
+        未评分
+      </Tag>
+    </Tooltip>
+  );
 }
 
 // 新闻列表：单只读端点 + 3 个筛选器（symbol / days / sentiment）
@@ -97,6 +121,7 @@ export default function NewsListPage() {
                         {SENTIMENT_LABELS[item.sentiment] ?? item.sentiment}
                       </Tag>
                     )}
+                    <ScoredTag item={item} />
                   </Space>
                   <Space wrap size="small">
                     {item.source && <Tag>{item.source}</Tag>}

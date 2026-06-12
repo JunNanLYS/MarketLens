@@ -57,6 +57,25 @@ GET /api/v1/news?symbol=hk00700&days=7 HTTP/1.1
   "page_info": { "page": 1, "page_size": 20, "total": 8, "total_pages": 1 }
 }
 ```
+
+#### `GET /news` 响应字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | integer | 主键 |
+| `title` | string | 标题 |
+| `source` | string | 数据源（sina_rss / bbc_top / tencent_news 等） |
+| `url` | string | 原文链接（可空） |
+| `published_at` | string | 发布时间（ISO 8601） |
+| `summary` | string | AI 摘要（部分源有） |
+| `sentiment` | string | 情感方向：`positive` / `negative` / `neutral`（**已含 0.55 阈值降级**） |
+| `confidence` | number \| null | DeepSeek 原始置信度 0~1；**未评分时为 null**（迁移前数据 / 本次分析失败） |
+| `sentiment_reason` | string \| null | 一句话审计理由；**未评分时为 null** |
+| `sectors` | string[] \| null | 受影响板块列表（DeepSeek 抽取）；**未评分时为 null** |
+| `ai_scored` | bool | `confidence` 非空即为 `true`，前端用此字段显式标注"AI 评分 · 0.85"或"未评分" |
+| `importance` | int | 重要程度 0~3 |
+| `related_symbols` | string[] | 关联标的代码 |
+
 </details>
 
 ### `GET /news/{id}` — 新闻详情

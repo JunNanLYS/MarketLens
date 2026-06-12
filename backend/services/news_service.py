@@ -465,6 +465,9 @@ class NewsService:
             item["related_symbols"] = self._parse_related_symbols(
                 item.get("related_symbols")
             )
+            # ai_scored: confidence 列非空即代表 DeepSeek 真出过评分；
+            # NULL 是 fallback（Provider 原值或全失败）——前端要明确区分这两种
+            item["ai_scored"] = item.get("confidence") is not None
             items.append(item)
 
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -490,6 +493,7 @@ class NewsService:
             result["related_symbols"] = self._parse_related_symbols(
                 result.get("related_symbols")
             )
+            result["ai_scored"] = result.get("confidence") is not None
             return result
 
     @staticmethod
