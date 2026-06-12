@@ -9,11 +9,27 @@ from loguru import logger
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
 from backend.services.collection_service import _WRITE_LOCK
+from backend.services.sentiment import create_sentiment_analyzer
+from backend.services.sentiment.base import SentimentAnalyzer
+from backend.services.sentiment.models import SentimentResult
 from backend.storage.database import get_connection_sync, get_db
 
 
 class NewsService:
-    def __init__(self, news_providers: list[BaseProvider] | None = None) -> None:
+    def __init__(
+        self,
+        news_providers: list[BaseProvider] | None = None,
+        sentiment_analyzer: SentimentAnalyzer | None | bool = None,
+    ) -> None:
+        """初始化新闻服务。
+
+        Args:
+            news_providers: 新闻数据源列表，None 时从配置加载。
+            sentiment_analyzer: 情感分析器实例。
+                - None: 从配置自动创建；
+                - False: 跳过情感分析（测试用）；
+                - SentimentAnalyzer 实例: 直接使用。
+        """
         if news_providers is not None:
             self._providers = news_providers
         else:
@@ -25,16 +41,28 @@ class NewsService:
         # 改为初始化即建立 cache，并在调用前一次性 build。
         self._symbol_patterns: dict[str, re.Pattern] = {}
         # tags 缓存：(symbol, tags_str) -> list[re.Pattern]。旧实现用 id(row)
-        # 作为 key,sqlite3.Row 的 id() 在 fetchall 后被 GC 回收,缓存实际从不命中。
+        # 作为 key,sqlite3.Row 的 id() 在 fetchall 后被 GC 回收，缓存实际从不命中。
         self._tag_patterns_cache: dict[tuple[str | None, str], list[re.Pattern]] = {}
+        # 情感分析器：None → 自动创建，False → 禁用，实例 → 直接使用
+        if sentiment_analyzer is False:
+            self._sentiment: SentimentAnalyzer | None = None
+        elif isinstance(sentiment_analyzer, SentimentAnalyzer):
+            self._sentiment = sentiment_analyzer
+        else:
+            self._sentiment = create_sentiment_analyzer()
 
     async def close_providers(self) -> None:
-        """关闭当前服务持有的新闻 Provider 资源。"""
+        """关闭当前服务持有的新闻 Provider 和情感分析器资源。"""
         for provider in self._providers:
             try:
                 await provider.close()
             except Exception:
                 logger.exception("关闭 Provider 失败: {}", provider.name)
+        if self._sentiment is not None:
+            try:
+                await self._sentiment.close()
+            except Exception:
+                logger.exception("关闭情感分析器失败")
 
     async def collect_news(self) -> dict[str, int]:
         """采集新闻并写入 news_items / raw_data，同时记录 run_logs 审计行。
@@ -81,6 +109,23 @@ class NewsService:
                         logger.warning("可选数据源 {} 不可用，静默跳过", provider.name)
                     continue
 
+            # 情感分析：对去重前的新闻批量评分。
+            # 分析器不可用时（optional=True + 无 key）全部 fallback neutral。
+            sentiment_map: dict[int, SentimentResult] = {}
+            if self._sentiment is not None and all_items:
+                try:
+                    results = await self._sentiment.analyze(all_items)
+                    for i, result in enumerate(results):
+                        if result is not None:
+                            sentiment_map[i] = result
+                    logger.info(
+                        "情感分析完成: {} 条中有 {} 条成功分类",
+                        len(all_items),
+                        len(sentiment_map),
+                    )
+                except Exception:
+                    logger.exception("情感分析整体失败，全部 fallback neutral")
+
             with _WRITE_LOCK:
                 conn = get_connection_sync()
                 try:
@@ -105,7 +150,7 @@ class NewsService:
                     ).fetchall()
                     existing_urls = {r["url"] for r in url_rows}
 
-                    for item in all_items:
+                    for idx, item in enumerate(all_items):
                         url = (item.get("url", "") or "").strip() or None
                         if url and url in existing_urls:
                             skipped += 1
@@ -123,6 +168,13 @@ class NewsService:
                             related_symbols, ensure_ascii=False
                         )
 
+                        # 情感分析结果：优先用 AI 分类，fallback 为 Provider 原始值/neutral
+                        sentiment_result = sentiment_map.get(idx)
+                        if sentiment_result is not None:
+                            sentiment_value = sentiment_result.to_db_value()
+                        else:
+                            sentiment_value = item.get("sentiment", "neutral")
+
                         now = datetime.now(timezone.utc).isoformat()
                         news_data = {
                             "title": item.get("title", ""),
@@ -131,7 +183,7 @@ class NewsService:
                             "content": item.get("content"),
                             "summary": item.get("summary"),
                             "published_at": item.get("published_at"),
-                            "sentiment": item.get("sentiment", "neutral"),
+                            "sentiment": sentiment_value,
                             "importance": item.get("importance", "normal"),
                             "related_symbols": related_symbols_json,
                             "collected_at": item.get("collected_at", now),

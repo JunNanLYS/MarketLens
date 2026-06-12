@@ -216,6 +216,22 @@ security:
 # tasks: ??????????
 #   - interval: ?????
 #   - cron: CRON ?????? ?? ? ? ???
+# --------------------------------------------------------------------------
+# 情感分析
+# --------------------------------------------------------------------------
+# 对采集到的新闻调用 LLM 进行情感分类（positive / negative / neutral）。
+# optional: true — API key 缺失或服务不可用时静默降级为 neutral，
+#           不阻断采集流程。
+# api_key: 也可通过环境变量 DEEPSEEK_API_KEY 注入，优先级高于本文件。
+sentiment:
+  provider: deepseek
+  api_key: ''                # 兜底占位；优先读取 DEEPSEEK_API_KEY 环境变量
+  base_url: 'https://api.deepseek.com/v1'
+  model: 'deepseek-chat'    # deepseek-v4-pro 对应的 API model 名
+  timeout: 30
+  optional: true
+
+
 scheduler:
   timezone: Asia/Shanghai
   tasks:
