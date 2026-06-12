@@ -129,6 +129,7 @@ TABLE_DDLS: list[str] = [
         summary TEXT,
         published_at TIMESTAMP,
         sentiment TEXT,
+        sectors TEXT,
         importance TEXT,
         related_symbols TEXT,
         collected_at TIMESTAMP NOT NULL
@@ -702,6 +703,7 @@ async def init_db(db_path: str | None = None) -> None:
             await conn.execute(ddl)
         await conn.commit()
         await _migrate_raw_data_symbol_nullable(conn)
+        await _migrate_news_items_add_sectors(conn)
 
 
 def init_db_sync(db_path: str | None = None) -> None:
@@ -714,6 +716,7 @@ def init_db_sync(db_path: str | None = None) -> None:
             conn.execute(ddl)
         conn.commit()
         _migrate_raw_data_symbol_nullable_sync(conn)
+        _migrate_news_items_add_sectors_sync(conn)
 
 
 def _raw_data_symbol_is_not_null_sync(conn: sqlite3.Connection) -> bool:
@@ -808,3 +811,37 @@ async def _migrate_raw_data_symbol_nullable(conn: aiosqlite.Connection) -> None:
 
     logger.info("raw_data.symbol 已迁移为可空（重建表完成）")
 
+# ---------------------------------------------------------------------------
+# 迁移：news_items 新增 sectors 列（TEXT，JSON 数组）
+# ---------------------------------------------------------------------------
+
+
+def _news_items_has_sectors_sync(conn: sqlite3.Connection) -> bool:
+    """检查 news_items 表是否已有 sectors 列。"""
+    rows = conn.execute("PRAGMA table_info(news_items)").fetchall()
+    return any(row["name"] == "sectors" for row in rows)
+
+
+def _migrate_news_items_add_sectors_sync(conn: sqlite3.Connection) -> None:
+    """迁移：为 news_items 添加 sectors 列。"""
+    if _news_items_has_sectors_sync(conn):
+        return
+    conn.execute("ALTER TABLE news_items ADD COLUMN sectors TEXT")
+    conn.commit()
+    logger.info("news_items.sectors 列已添加（ALTER TABLE 完成）")
+
+
+async def _news_items_has_sectors(conn: aiosqlite.Connection) -> bool:
+    """异步版：检查 news_items 表是否已有 sectors 列。"""
+    cursor = await conn.execute("PRAGMA table_info(news_items)")
+    rows = await cursor.fetchall()
+    return any(row["name"] == "sectors" for row in rows)
+
+
+async def _migrate_news_items_add_sectors(conn: aiosqlite.Connection) -> None:
+    """异步版迁移：为 news_items 添加 sectors 列。"""
+    if await _news_items_has_sectors(conn):
+        return
+    await conn.execute("ALTER TABLE news_items ADD COLUMN sectors TEXT")
+    await conn.commit()
+    logger.info("news_items.sectors 列已添加（ALTER TABLE 完成）")

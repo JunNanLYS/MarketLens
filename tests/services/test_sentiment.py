@@ -62,6 +62,19 @@ class TestSentimentResult:
         r = SentimentResult(sentiment="negative", confidence=0.0, reason="完全不确定")
         assert r.to_db_value() == "neutral"
 
+    def test_sectors_default_empty(self) -> None:
+        """不传 sectors 时默认为空列表。"""
+        r = SentimentResult(sentiment="neutral", confidence=0.5, reason="测试")
+        assert r.sectors == []
+
+    def test_sectors_preserved(self) -> None:
+        """sectors 正确传入和保存。"""
+        r = SentimentResult(
+            sentiment="negative", confidence=0.8, reason="地缘冲突",
+            sectors=["石油", "贵金属", "军工"],
+        )
+        assert r.sectors == ["石油", "贵金属", "军工"]
+
 
 # ---------------------------------------------------------------------------
 # deepseek_provider.py 测试
@@ -204,6 +217,7 @@ class TestDeepSeekSentimentAnalyzer:
                         "sentiment": "positive",
                         "confidence": 0.9,
                         "reason": "利好",
+                        "sectors": ["新能源", "电动车"],
                     })
                 }
             }]
@@ -212,6 +226,7 @@ class TestDeepSeekSentimentAnalyzer:
         assert result is not None
         assert result.sentiment == "positive"
         assert result.confidence == 0.9
+        assert result.sectors == ["新能源", "电动车"]
 
     def test_parse_response_invalid_sentiment_defaults_neutral(self) -> None:
         """模型返回非法 sentiment 值时降级为 neutral。"""
@@ -282,6 +297,59 @@ class TestDeepSeekSentimentAnalyzer:
         result = DeepSeekSentimentAnalyzer._parse_response(data)
         assert result is not None
         assert result.confidence == 0.0
+
+    def test_parse_response_sectors_missing_defaults_empty(self) -> None:
+        """模型未返回 sectors 时默认为空列表。"""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "sentiment": "neutral",
+                        "confidence": 0.5,
+                        "reason": "无影响",
+                    })
+                }
+            }]
+        }
+        result = DeepSeekSentimentAnalyzer._parse_response(data)
+        assert result is not None
+        assert result.sectors == []
+
+    def test_parse_response_sectors_non_list_defaults_empty(self) -> None:
+        """sectors 返回非列表时降级为空列表。"""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "sentiment": "positive",
+                        "confidence": 0.7,
+                        "reason": "利好",
+                        "sectors": "石油",
+                    })
+                }
+            }]
+        }
+        result = DeepSeekSentimentAnalyzer._parse_response(data)
+        assert result is not None
+        assert result.sectors == []
+
+    def test_parse_response_sectors_filters_non_strings(self) -> None:
+        """sectors 列表中非字符串元素被过滤。"""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "sentiment": "negative",
+                        "confidence": 0.8,
+                        "reason": "冲突",
+                        "sectors": ["石油", 123, None, "军工"],
+                    })
+                }
+            }]
+        }
+        result = DeepSeekSentimentAnalyzer._parse_response(data)
+        assert result is not None
+        assert result.sectors == ["石油", "军工"]
 
 
 # ---------------------------------------------------------------------------

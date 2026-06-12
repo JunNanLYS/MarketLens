@@ -30,8 +30,15 @@ _SYSTEM_PROMPT = """\
 2. 从投资者视角判断：这条消息会让持有者担忧还是兴奋？
 3. 一条新闻可能对不同标的有不同影响 — 需要综合判断市场整体倾向
 
+## 受影响板块（sectors）
+识别该新闻直接或间接影响的A股行业板块/概念板块/资产类别。
+例如：某地爆发冲突 → 石油、贵金属、军工、航运受影响。
+- 尽量使用公认的板块名称（如：石油、银行、新能源、军工、贵金属、航运等）
+- 没有明确影响板块时输出空列表 []
+- 一条新闻可影响多个板块，不要遗漏
+
 ## 输出格式（严格 JSON，不要输出其他内容）
-{"sentiment": "positive 或 negative 或 neutral", "confidence": 0.0到1.0的浮点数, "reason": "一句话中文理由"}"""
+{"sentiment": "positive 或 negative 或 neutral", "confidence": 0.0到1.0的浮点数, "reason": "一句话中文理由", "sectors": ["板块1", "板块2"]}"""
 
 
 class DeepSeekSentimentAnalyzer(SentimentAnalyzer):
@@ -143,7 +150,7 @@ class DeepSeekSentimentAnalyzer(SentimentAnalyzer):
                         {"role": "user", "content": user_message},
                     ],
                     "temperature": 0.1,
-                    "max_tokens": 200,
+                    "max_tokens": 300,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -191,8 +198,15 @@ class DeepSeekSentimentAnalyzer(SentimentAnalyzer):
         if not isinstance(reason, str):
             reason = str(reason)
 
+        sectors = parsed.get("sectors", [])
+        if not isinstance(sectors, list):
+            sectors = []
+        # 过滤非字符串元素
+        sectors = [s for s in sectors if isinstance(s, str)]
+
         return SentimentResult(
             sentiment=sentiment,
             confidence=confidence,
             reason=reason,
+            sectors=sectors,
         )

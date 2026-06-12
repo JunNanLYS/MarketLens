@@ -172,8 +172,14 @@ class NewsService:
                         sentiment_result = sentiment_map.get(idx)
                         if sentiment_result is not None:
                             sentiment_value = sentiment_result.to_db_value()
+                            sectors_json = json.dumps(
+                                sentiment_result.sectors, ensure_ascii=False
+                            )
                         else:
                             sentiment_value = item.get("sentiment", "neutral")
+                            sectors_json = json.dumps(
+                                item.get("sectors", []), ensure_ascii=False
+                            ) if isinstance(item.get("sectors"), list) else None
 
                         now = datetime.now(timezone.utc).isoformat()
                         news_data = {
@@ -184,6 +190,7 @@ class NewsService:
                             "summary": item.get("summary"),
                             "published_at": item.get("published_at"),
                             "sentiment": sentiment_value,
+                            "sectors": sectors_json,
                             "importance": item.get("importance", "normal"),
                             "related_symbols": related_symbols_json,
                             "collected_at": item.get("collected_at", now),
@@ -195,8 +202,8 @@ class NewsService:
                             cursor = conn.execute(
                                 """INSERT OR IGNORE INTO news_items
                                    (title, source, url, content, summary, published_at,
-                                    sentiment, importance, related_symbols, collected_at)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    sentiment, sectors, importance, related_symbols, collected_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                                 (
                                     news_data["title"],
                                     news_data["source"],
@@ -205,6 +212,7 @@ class NewsService:
                                     news_data["summary"],
                                     news_data["published_at"],
                                     news_data["sentiment"],
+                                    news_data["sectors"],
                                     news_data["importance"],
                                     news_data["related_symbols"],
                                     news_data["collected_at"],
