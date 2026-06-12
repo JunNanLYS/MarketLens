@@ -561,3 +561,85 @@ class TestAIAnalyzerForecast:
             assert any(kw in r for r in result["bearish_reasons"]), (
                 f"关键词 '{kw}' 未触发看空信号"
             )
+
+
+class TestCheckNewsSectorExposure:
+    """_check_news 消费 sector_exposure 和 weighted 字段的测试。"""
+
+    def test_sector_exposure_positive_dominant(self) -> None:
+        """top 板块 positive 占比 >= 60% 时产出看多理由。"""
+        news = {
+            "total_count": 10,
+            "positive_count": 4,
+            "negative_count": 2,
+            "neutral_count": 4,
+            "positive_weighted": 3.0,
+            "negative_weighted": 1.0,
+            "sector_exposure": [
+                {"sector": "新能源", "count": 5, "positive": 4, "negative": 0, "neutral": 1, "avg_confidence": 0.85},
+            ],
+        }
+        _, _, bull_r, _ = AIAnalyzer._check_news(news)
+        assert any("新能源" in r for r in bull_r)
+
+    def test_sector_exposure_negative_dominant(self) -> None:
+        news = {
+            "total_count": 10,
+            "positive_count": 1,
+            "negative_count": 4,
+            "neutral_count": 5,
+            "positive_weighted": 0.5,
+            "negative_weighted": 3.0,
+            "sector_exposure": [
+                {"sector": "地产", "count": 5, "positive": 0, "negative": 4, "neutral": 1, "avg_confidence": 0.78},
+            ],
+        }
+        _, bear, _, bear_r = AIAnalyzer._check_news(news)
+        assert any("地产" in r for r in bear_r)
+
+    def test_sector_exposure_mixed_no_reason(self) -> None:
+        """top 板块 pos/neg 都 < 60% 时不产出板块理由。"""
+        news = {
+            "total_count": 10,
+            "positive_count": 3,
+            "negative_count": 3,
+            "neutral_count": 4,
+            "positive_weighted": 2.0,
+            "negative_weighted": 2.0,
+            "sector_exposure": [
+                {"sector": "银行", "count": 6, "positive": 2, "negative": 2, "neutral": 2, "avg_confidence": 0.7},
+            ],
+        }
+        _, _, bull_r, bear_r = AIAnalyzer._check_news(news)
+        assert not any("银行" in r for r in bull_r)
+        assert not any("银行" in r for r in bear_r)
+
+    def test_weighted_net_strong_positive(self) -> None:
+        """positive_weighted - negative_weighted > 1.0 时产出加权强度理由。"""
+        news = {
+            "total_count": 5,
+            "positive_count": 2,
+            "negative_count": 0,
+            "neutral_count": 3,
+            "positive_weighted": 2.5,
+            "negative_weighted": 0.0,
+            "sector_exposure": [],
+        }
+        _, _, bull_r, _ = AIAnalyzer._check_news(news)
+        assert any("加权" in r for r in bull_r)
+
+    def test_none_sector_exposure_safe(self) -> None:
+        """sector_exposure=None 或缺失时 _check_news 不崩。"""
+        news = {
+            "total_count": 3,
+            "positive_count": 1,
+            "negative_count": 0,
+            "neutral_count": 2,
+            "positive_weighted": 0.5,
+            "negative_weighted": 0.0,
+        }
+        # 不传 sector_exposure
+        _, _, bull_r, bear_r = AIAnalyzer._check_news(news)
+        # 不应崩, 不应产出板块相关理由
+        assert all("板块" not in r for r in bull_r)
+        assert all("板块" not in r for r in bear_r)

@@ -297,6 +297,7 @@ class EvidenceBuilder:
             "avg_confidence": avg_confidence,
             "sector_exposure": sector_exposure,
             "latest": items[:5],
+            "ai_scored_count": sum(1 for it in items if isinstance(it.get("confidence"), (int, float))),
         }
 
     @staticmethod

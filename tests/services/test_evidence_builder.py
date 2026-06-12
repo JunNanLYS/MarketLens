@@ -988,3 +988,13 @@ class TestAggregateNews:
         assert r["positive_count"] == 1
         # 解析出的是 str 而非 list → sector_buckets 不变
         assert r["sector_exposure"] == []
+
+    def test_ai_scored_count(self) -> None:
+        """ai_scored_count: confidence 非 None 的条目数。"""
+        items = [
+            {"sentiment": "positive", "confidence": 0.9, "sectors": None},
+            {"sentiment": "positive", "confidence": None, "sectors": None},
+            {"sentiment": "negative", "confidence": 0.7, "sectors": None},
+        ]
+        r = EvidenceBuilder._aggregate_news(items)
+        assert r["ai_scored_count"] == 2

@@ -227,6 +227,7 @@ def _run_ai_report() -> None:
 # 调整策略：仅修改本字典即可，无需改清理逻辑。
 CLEANUP_RULES: dict[str, tuple[str, int]] = {
     "raw_data": ("collected_at", 30),
+    "news_items": ("collected_at", 90),  # 用 collected_at 而非 published_at：避免历史新闻同步时 published_at 太老被立刻清掉
     "etf_basic": ("collected_at", 365),
     "etf_holdings": ("collected_at", 365),
     "etf_nav_history": ("date", 1825),

@@ -140,6 +140,14 @@ GET /api/v1/reports/hk00700 HTTP/1.1
   "generated_at": "2026-05-31T20:00:00+08:00"
 }
 ```
+
+#### `GET /reports/{symbol}` 响应字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `sector_exposure` | array | news 段 top 3 板块: [{sector, count, positive, negative, neutral, avg_confidence}] |
+| `news_ai_scored_pct` | number \| null | 0~100, 证据包里"AI 评过分"的新闻占比; 0 = 全部迁移前数据 |
+
 </details>
 
 ### `GET /reports/{symbol}/history` — 历史报告

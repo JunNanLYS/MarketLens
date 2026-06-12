@@ -41,7 +41,7 @@ class TestSentimentResult:
         assert r.to_db_value() == "neutral"
 
     def test_low_confidence_downgrades_to_neutral(self) -> None:
-        """置信度低于 0.4 时，positive/negative 都降级为 neutral。"""
+        """置信度低于 0.55 时，positive/negative 都降级为 neutral。"""
         r1 = SentimentResult(sentiment="positive", confidence=0.3, reason="不太确定")
         assert r1.to_db_value() == "neutral"
 
@@ -164,6 +164,35 @@ class TestDeepSeekSentimentAnalyzer:
         assert results[0].sentiment == "positive"
         assert results[0].confidence == 0.85
         assert "降息" in results[0].reason
+
+        # 验证请求体开启了思考模式（v4-pro + thinking enabled）
+        call_args = mock_client.post.call_args
+        body = call_args.kwargs["json"]
+        assert body["model"] == "deepseek-v4-pro"  # 默认 model
+        assert body["thinking"] == {"type": "enabled"}
+        assert body["reasoning_effort"] == "high"
+        assert body["max_tokens"] == 1500
+
+    async def test_thinking_disabled_omits_thinking_field(self) -> None:
+        """思考关闭时请求体不应含 thinking/reasoning_effort 字段（兼容 cheap 模式）。"""
+        analyzer = DeepSeekSentimentAnalyzer(
+            api_key="sk-test",
+            thinking_enabled=False,
+        )
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"sentiment":"neutral","confidence":0.5,"reason":"x"}'}}]
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        analyzer._client = mock_client
+
+        await analyzer.analyze([{"title": "test"}])
+
+        body = mock_client.post.call_args.kwargs["json"]
+        assert "thinking" not in body
+        assert "reasoning_effort" not in body
 
     async def test_analyze_single_failure_does_not_block_others(self) -> None:
         """单条失败对应位置返回 None，不阻塞其他条。"""

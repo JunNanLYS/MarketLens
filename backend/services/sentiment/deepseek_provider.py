@@ -54,9 +54,11 @@ class DeepSeekSentimentAnalyzer(SentimentAnalyzer):
     def __init__(
         self,
         api_key: str = "",
-        base_url: str = "https://api.deepseek.com/v1",
-        model: str = "deepseek-chat",
-        timeout: int = 30,
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-v4-pro",
+        timeout: int = 60,
+        thinking_enabled: bool = True,
+        reasoning_effort: str = "high",
         optional: bool = True,
     ) -> None:
         # 环境变量优先级高于构造参数
@@ -64,6 +66,8 @@ class DeepSeekSentimentAnalyzer(SentimentAnalyzer):
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout
+        self.thinking_enabled = thinking_enabled
+        self.reasoning_effort = reasoning_effort
         self.optional = optional
         self._client: httpx.AsyncClient | None = None
 
@@ -141,19 +145,21 @@ class DeepSeekSentimentAnalyzer(SentimentAnalyzer):
         client = await self._get_client()
 
         try:
-            response = await client.post(
-                "/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens": 300,
-                    "response_format": {"type": "json_object"},
-                },
-            )
+            body: dict = {
+                "model": self._model,
+                "messages": [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1500,
+                "response_format": {"type": "json_object"},
+            }
+            if self.thinking_enabled:
+                body["thinking"] = {"type": "enabled"}
+                body["reasoning_effort"] = self.reasoning_effort
+
+            response = await client.post("/chat/completions", json=body)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.error(

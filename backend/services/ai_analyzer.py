@@ -183,6 +183,15 @@ class AIAnalyzer:
             "bearish_reasons": bearish_reasons,
             "key_risks": key_risks,
             "data_used": data_sources,
+            "sector_exposure": (news or {}).get("sector_exposure", [])[:3]
+            if news is not None
+            else [],
+            "news_ai_scored_pct": round(
+                ((news or {}).get("ai_scored_count", 0) / (news or {}).get("total_count", 1)) * 100,
+                1,
+            )
+            if news is not None and (news or {}).get("total_count", 0) > 0
+            else None,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         logger.info(
@@ -314,6 +323,14 @@ class AIAnalyzer:
 
     @staticmethod
     def _check_news(news: dict | None) -> tuple[float, float, list[str], list[str]]:
+        """新闻证据评分：raw 占比 + confidence 加权 + 板块涉及面。
+
+        三层信号:
+        1. raw count: positive_count / total > 60% → 弱看多 (+0.05)
+        2. weighted: positive_weighted - negative_weighted |净| > 1.0 → 中等信号 (+0.05)
+           (1.0 的含义: 至少 1 条高置信正面新闻 vs 0 条负面, 强度感更真实)
+        3. sector_exposure: top 3 板块里如果某方向占主导 (>=60%) → 板块名进 reason
+        """
         bullish = 0.0
         bearish = 0.0
         bull_reasons: list[str] = []
@@ -322,6 +339,8 @@ class AIAnalyzer:
             return bullish, bearish, bull_reasons, bear_reasons
 
         total = news.get("total_count", 0)
+
+        # 1) raw count 信号
         if total > 0:
             positive_pct = news.get("positive_count", 0) / total
             negative_pct = news.get("negative_count", 0) / total
@@ -331,6 +350,41 @@ class AIAnalyzer:
             if negative_pct > 0.4:
                 bearish += 0.05
                 bear_reasons.append(f"负面新闻占比 {negative_pct:.0%}")
+
+        # 2) confidence 加权净信号（捕捉"少数高置信新闻"vs"多数低置信噪音"）
+        pos_w = news.get("positive_weighted", 0.0) or 0.0
+        neg_w = news.get("negative_weighted", 0.0) or 0.0
+        net = pos_w - neg_w
+        if net > 1.0:
+            bullish += 0.05
+            bull_reasons.append(f"高置信正面新闻强度 {net:.2f}（confidence 加权）")
+        elif net < -1.0:
+            bearish += 0.05
+            bear_reasons.append(f"高置信负面新闻强度 {-net:.2f}（confidence 加权）")
+
+        # 3) sector_exposure 板块涉及面（top 3）
+        sectors: list[dict] = news.get("sector_exposure", []) or []
+        if sectors:
+            top3 = sectors[:3]
+            for s in top3:
+                sc = s.get("count", 0)
+                if sc <= 0:
+                    continue
+                pos = s.get("positive", 0)
+                neg = s.get("negative", 0)
+                name = s.get("sector", "")
+                if not name:
+                    continue
+                pos_pct = pos / sc
+                neg_pct = neg / sc
+                if pos_pct >= 0.6 and pos > 0:
+                    bull_reasons.append(
+                        f"近 7 天新闻利好 {name} 板块（{pos}/{sc} 条正面, 平均置信 {s.get('avg_confidence', 0) or 0:.2f}）"
+                    )
+                elif neg_pct >= 0.6 and neg > 0:
+                    bear_reasons.append(
+                        f"近 7 天新闻利空 {name} 板块（{neg}/{sc} 条负面, 平均置信 {s.get('avg_confidence', 0) or 0:.2f}）"
+                    )
 
         return bullish, bearish, bull_reasons, bear_reasons
 
@@ -553,6 +607,15 @@ class AIAnalyzer:
             net_profit_yoy = finance.get("net_profit_yoy")
             if net_profit_yoy is not None and net_profit_yoy < -20:
                 parts.append("盈利能力下滑")
+
+        # sector_exposure 摘要写入 summary
+        if news is not None:
+            sectors: list[dict] = news.get("sector_exposure", []) or []
+            if sectors:
+                top1 = sectors[0]
+                name = top1.get("sector", "")
+                if name:
+                    parts.append(f"近期新闻主要涉及 {name} 板块")
 
         if not bullish_reasons and not bearish_reasons:
             parts.append("资金面尚未确认")

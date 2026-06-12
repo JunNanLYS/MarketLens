@@ -33,12 +33,15 @@ def create_sentiment_analyzer(config: dict | None = None) -> SentimentAnalyzer |
     provider: str = sentiment_cfg.get("provider", "deepseek")
     optional: bool = sentiment_cfg.get("optional", True)
 
+    thinking_cfg: dict = sentiment_cfg.get("thinking") or {}
     if provider == "deepseek":
         return DeepSeekSentimentAnalyzer(
             api_key=sentiment_cfg.get("api_key", ""),
-            base_url=sentiment_cfg.get("base_url", "https://api.deepseek.com/v1"),
-            model=sentiment_cfg.get("model", "deepseek-chat"),
-            timeout=sentiment_cfg.get("timeout", 30),
+            base_url=sentiment_cfg.get("base_url", "https://api.deepseek.com"),
+            model=sentiment_cfg.get("model", "deepseek-v4-pro"),
+            timeout=sentiment_cfg.get("timeout", 60),
+            thinking_enabled=thinking_cfg.get("enabled", True),
+            reasoning_effort=thinking_cfg.get("reasoning_effort", "high"),
             optional=optional,
         )
 
