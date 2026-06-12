@@ -1,7 +1,7 @@
-import { Space, Statistic, Typography } from "antd";
+import { forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
-import type { Position, RealizedPnlItem, HealthResponse } from "@/api/types";
+import type { Position, RealizedPnlResult, HealthResponse } from "@/api/types";
 import { NumberFormat } from "@/components/shared/NumberFormat";
 import { PnlDisplay } from "@/components/shared/PnlDisplay";
 
@@ -12,23 +12,26 @@ interface KpiData {
   healthOk: boolean | null; // null = loading
 }
 
-function useKpiData(): KpiData {
+function useKpiData(): {
+  data: KpiData;
+  refetchAll: () => Promise<unknown[]>;
+} {
   const positions = useQuery<Position[]>({
     queryKey: ["positions"],
     queryFn: async () => (await apiClient.get<Position[]>("/positions")).data,
-    staleTime: 30_000,
+    staleTime: 15_000,
   });
 
-  const realized = useQuery<{ items: RealizedPnlItem[] }>({
+  const realized = useQuery<RealizedPnlResult>({
     queryKey: ["positions", "realized-pnl"],
-    queryFn: async () => (await apiClient.get("/positions/realized-pnl")).data,
-    staleTime: 30_000,
+    queryFn: async () => (await apiClient.get<RealizedPnlResult>("/positions/realized-pnl")).data,
+    staleTime: 15_000,
   });
 
   const health = useQuery<HealthResponse>({
     queryKey: ["health"],
     queryFn: async () => (await apiClient.get<HealthResponse>("/health")).data,
-    staleTime: 30_000,
+    staleTime: 15_000,
   });
 
   const posData = positions.data ?? [];
@@ -37,44 +40,82 @@ function useKpiData(): KpiData {
   const realizedPnl = (realized.data?.items ?? []).reduce((s, p) => s + p.realized_pnl, 0);
   const healthOk = health.data ? health.data.status === "ok" : null;
 
-  return { totalValue, realizedPnl, unrealizedPnl, healthOk };
+  return {
+    data: { totalValue, realizedPnl, unrealizedPnl, healthOk },
+    refetchAll: () => Promise.all([positions.refetch(), realized.refetch(), health.refetch()]),
+  };
 }
 
-// 顶部全局 KPI 条：总市值 / 已实现盈亏 / 浮动盈亏 / 数据源健康
-export function KpiBar() {
-  const { totalValue, realizedPnl, unrealizedPnl, healthOk } = useKpiData();
+export interface KpiBarHandle {
+  refetchKpis: () => Promise<unknown[]>;
+}
 
+// 单个 KPI chip（DESIGN.md §4.7）：label + value + 视觉分隔
+function KpiChip({
+  label,
+  value,
+  renderValue,
+}: {
+  label: string;
+  value?: number;
+  renderValue?: () => ReactNode;
+}) {
   return (
-    <Space
-      size="large"
-      style={{ overflowX: "auto", whiteSpace: "nowrap" }}
-      className="kpi-bar"
-    >
-      <Statistic
-        title={<Typography.Text type="secondary" style={{ fontSize: 12 }}>总市值</Typography.Text>}
-        value={totalValue}
-        precision={2}
-        formatter={(v) => <NumberFormat value={v as number} />}
-      />
-      <Statistic
-        title={<Typography.Text type="secondary" style={{ fontSize: 12 }}>已实现盈亏</Typography.Text>}
-        value={realizedPnl}
-        precision={2}
-        valueStyle={realizedPnl >= 0 ? { color: "var(--color-success)" } : { color: "var(--color-error)" }}
-        formatter={() => <PnlDisplay value={realizedPnl} mode="text" />}
-      />
-      <Statistic
-        title={<Typography.Text type="secondary" style={{ fontSize: 12 }}>浮动盈亏</Typography.Text>}
-        value={unrealizedPnl}
-        precision={2}
-        valueStyle={unrealizedPnl >= 0 ? { color: "var(--color-success)" } : { color: "var(--color-error)" }}
-        formatter={() => <PnlDisplay value={unrealizedPnl} mode="text" />}
-      />
-      <Statistic
-        title={<Typography.Text type="secondary" style={{ fontSize: 12 }}>数据源</Typography.Text>}
-        value={healthOk === null ? "…" : healthOk ? "正常" : "异常"}
-        valueStyle={healthOk === null ? {} : healthOk ? { color: "var(--color-success)" } : { color: "var(--color-error)" }}
-      />
-    </Space>
+    <div className="kpi-chip">
+      <span className="kpi-chip-label">{label}</span>
+      <span className="kpi-chip-value">
+        {renderValue
+          ? renderValue()
+          : value !== undefined
+            ? <NumberFormat value={value} />
+            : "—"}
+      </span>
+    </div>
   );
 }
+
+// 顶部全局 KPI 条（DESIGN.md §4.7）：4 个 chip，1px 分隔线
+export const KpiBar = forwardRef<KpiBarHandle>(function KpiBar(_props, ref) {
+  const { data, refetchAll } = useKpiData();
+  const { totalValue, realizedPnl, unrealizedPnl, healthOk } = data;
+  const refetchRef = useRef(refetchAll);
+  refetchRef.current = refetchAll;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      refetchKpis: () => refetchRef.current(),
+    }),
+    [],
+  );
+
+  return (
+    <div
+      className="kpi-bar"
+      style={{ display: "flex", overflowX: "auto", whiteSpace: "nowrap" }}
+    >
+      <KpiChip label="总市值" value={totalValue} />
+      <KpiChip
+        label="已实现盈亏"
+        renderValue={() => <PnlDisplay value={realizedPnl} mode="text" />}
+      />
+      <KpiChip
+        label="浮动盈亏"
+        renderValue={() => <PnlDisplay value={unrealizedPnl} mode="text" />}
+      />
+      <KpiChip
+        label="数据源"
+        renderValue={() => {
+          if (healthOk === null) {
+            return <span className="pnl-empty">…</span>;
+          }
+          return healthOk ? (
+            <span style={{ color: "var(--color-success)" }}>● 正常</span>
+          ) : (
+            <span style={{ color: "var(--color-error)" }}>● 异常</span>
+          );
+        }}
+      />
+    </div>
+  );
+});

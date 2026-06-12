@@ -1,4 +1,4 @@
-import { Button, Card, Col, Row, Select, Skeleton, Space, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Row, Select, Skeleton, Space, Table, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -6,6 +6,9 @@ import dayjs from "dayjs";
 import { apiClient, extractErrorMessage } from "@/api/client";
 import type { TaskLog, TaskStatusItem } from "@/api/types";
 import { MotionCard } from "@/components/shared/MotionCard";
+import { PageHeader } from "@/components/shared/PageHeader";
+import { QueryErrorState } from "@/components/shared/QueryErrorState";
+import { StatusTag } from "@/components/shared/StatusTag";
 import { TASK_LABELS } from "@/utils/constants";
 import { getTaskStatusMeta } from "@/utils/format";
 
@@ -29,12 +32,27 @@ const LOG_STATUS_OPTIONS = [
   { value: "skipped", label: "已跳过" },
 ];
 
+const STATUS_VARIANT_MAP: Record<string, "success" | "error" | "warning" | "info" | "neutral"> = {
+  success: "success",
+  running: "info",
+  failure: "error",
+  failed: "error",
+  skipped: "neutral",
+  pending: "warning",
+};
+
 function renderTaskStatusTag(status?: string | null) {
   const meta = getTaskStatusMeta(status);
   if (!meta) {
-    return "-";
+    return <span className="pnl-empty">—</span>;
   }
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  return (
+    <StatusTag
+      value={meta.label}
+      variantMap={{ [meta.label]: STATUS_VARIANT_MAP[status ?? ""] ?? "neutral" }}
+      labelMap={{ [meta.label]: meta.label }}
+    />
+  );
 }
 
 // 任务状态：手动触发 + 日志筛选
@@ -49,6 +67,10 @@ export default function TaskStatusPage() {
       return data;
     },
     staleTime: 15_000,
+    refetchInterval: (query) => {
+      const items = query.state.data?.items ?? [];
+      return items[0]?.last_status === "running" ? 3000 : false;
+    },
   });
 
   const logs = useQuery<TaskLogsResponse>({
@@ -89,15 +111,16 @@ export default function TaskStatusPage() {
   ];
 
   return (
-    <Space direction="vertical" size="large" className="w-full">
-      <Typography.Title level={3}>任务状态</Typography.Title>
+    <Space direction="vertical" size={24} className="w-full">
+      <PageHeader
+        title="任务状态"
+        subtitle="手动触发调度任务、查看运行历史"
+      />
 
       {status.isLoading ? (
         <Skeleton active />
       ) : status.isError ? (
-        <Card>
-          <Typography.Text type="danger">加载失败：{extractErrorMessage(status.error)}</Typography.Text>
-        </Card>
+        <QueryErrorState error={status.error} onRetry={status.refetch} />
       ) : (
         <Row gutter={[16, 16]}>
           {(status.data?.items ?? []).map((t, idx) => (
@@ -105,6 +128,7 @@ export default function TaskStatusPage() {
               <MotionCard delay={Math.min(idx * 0.05, 0.3)}>
                 <Card
                   size="small"
+                  className="card-hoverable h-full"
                   title={TASK_LABELS[t.task_name] ?? t.task_name}
                   extra={
                     <Button
@@ -133,7 +157,7 @@ export default function TaskStatusPage() {
         </Row>
       )}
 
-      <Card title="运行日志" size="small">
+      <Card title="运行日志" size="small" className="w-full">
         <Space style={{ marginBottom: 12 }} wrap>
           <Select
             placeholder="任务"
@@ -167,6 +191,7 @@ export default function TaskStatusPage() {
             ),
           }}
         />
+        {logs.isError ? <QueryErrorState error={logs.error} onRetry={logs.refetch} /> : null}
       </Card>
     </Space>
   );

@@ -1,11 +1,15 @@
 import { Card, Empty, Input, Select, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
-import { apiClient, extractErrorMessage } from "@/api/client";
+import { apiClient } from "@/api/client";
 import type { NewsItem, PageResult } from "@/api/types";
-import { SENTIMENT_COLORS, SENTIMENT_LABELS } from "@/utils/constants";
+import { SENTIMENT_LABELS } from "@/utils/constants";
 import { MotionCard } from "@/components/shared/MotionCard";
+import { PageHeader } from "@/components/shared/PageHeader";
+import { QueryErrorState } from "@/components/shared/QueryErrorState";
+import { StatusTag } from "@/components/shared/StatusTag";
 
 interface NewsFilters {
   symbol: string;
@@ -13,8 +17,7 @@ interface NewsFilters {
   sentiment?: "positive" | "negative" | "neutral";
 }
 
-// 渲染 "AI 已评分" 角标 + 置信度。ai_scored=false 时（迁移前数据 / 本次分析失败）
-// 用灰色 tag 标 "未评分"，让用户对每条新闻的评分可信度心里有数。
+// 渲染 "AI 已评分" 角标
 function ScoredTag({ item }: { item: NewsItem }) {
   if (item.ai_scored) {
     const conf = typeof item.confidence === "number" ? item.confidence : null;
@@ -22,26 +25,31 @@ function ScoredTag({ item }: { item: NewsItem }) {
     const reasonTip = item.sentiment_reason || "无理由";
     return (
       <Tooltip title={reasonTip}>
-        <Tag color="geekblue" data-testid="ai-scored-tag">
-          {label}
-        </Tag>
+        <StatusTag
+          value={label}
+          variantMap={{ [label]: "info" }}
+          labelMap={{ [label]: `🤖 ${label}` }}
+        />
       </Tooltip>
     );
   }
   return (
     <Tooltip title="该新闻采集时 DeepSeek 未出分（迁移前数据或本次分析失败），sentiment 字段取自原始数据源">
-      <Tag color="default" data-testid="ai-unscored-tag">
-        未评分
-      </Tag>
+      <StatusTag
+        value="未评分"
+        variantMap={{ 未评分: "neutral" }}
+        labelMap={{ 未评分: "○ 未评分" }}
+      />
     </Tooltip>
   );
 }
 
 // 新闻列表：单只读端点 + 3 个筛选器（symbol / days / sentiment）
 export default function NewsListPage() {
+  const navigate = useNavigate();
   const [filters, setFilters] = useState<NewsFilters>({ symbol: "", days: 7 });
 
-  const { data, isLoading, isError, error } = useQuery<PageResult<NewsItem>>({
+  const { data, isLoading, isError, error, refetch } = useQuery<PageResult<NewsItem>>({
     queryKey: ["news", filters],
     queryFn: async () => {
       const { data } = await apiClient.get<PageResult<NewsItem>>("/news", {
@@ -61,11 +69,14 @@ export default function NewsListPage() {
   const items = data?.items ?? [];
 
   return (
-    <Space direction="vertical" size="large" className="w-full">
-      <Typography.Title level={3}>新闻列表</Typography.Title>
+    <Space direction="vertical" size={24} className="w-full">
+      <PageHeader
+        title="新闻列表"
+        subtitle="标的关联新闻 + AI 情绪评分"
+      />
 
-      <Card size="small">
-        <Space wrap>
+      <Card size="small" className="w-full">
+        <Space wrap size="middle">
           <Input.Search
             placeholder="标的代码"
             allowClear
@@ -102,48 +113,77 @@ export default function NewsListPage() {
       {isLoading ? (
         <Skeleton active />
       ) : isError ? (
-        <Card>
-          <Typography.Text type="danger">加载失败：{extractErrorMessage(error)}</Typography.Text>
-        </Card>
+        <QueryErrorState error={error} onRetry={() => refetch()} />
       ) : items.length === 0 ? (
-        <Empty description="暂无新闻" />
+        <Card><Empty description="暂无新闻" /></Card>
       ) : (
-        <Space direction="vertical" className="w-full" size="small">
+        <Space direction="vertical" className="w-full" size="middle">
           <Typography.Text type="secondary">共 {data?.page_info.total ?? 0} 条</Typography.Text>
-          {items.map((item, idx) => (
-            <MotionCard key={item.id} delay={Math.min(idx * 0.02, 0.3)}>
-              <Card size="small" hoverable>
-                <Space direction="vertical" size={4} className="w-full">
-                  <Space wrap>
-                    <Typography.Text strong>{item.title}</Typography.Text>
-                    {item.sentiment && (
-                      <Tag color={SENTIMENT_COLORS[item.sentiment] ?? "default"}>
-                        {SENTIMENT_LABELS[item.sentiment] ?? item.sentiment}
-                      </Tag>
-                    )}
-                    <ScoredTag item={item} />
-                  </Space>
-                  <Space wrap size="small">
-                    {item.source && <Tag>{item.source}</Tag>}
-                    {item.published_at && (
-                      <Typography.Text type="secondary" className="text-xs">
-                        {dayjs(item.published_at).format("YYYY-MM-DD HH:mm")}
-                      </Typography.Text>
-                    )}
-                  </Space>
-                  {item.related_symbols && item.related_symbols.length > 0 && (
-                    <Space wrap size={4}>
-                      {item.related_symbols.map((s) => (
-                        <Tag key={s} color="blue">
-                          {s}
-                        </Tag>
-                      ))}
+          {items.map((item, idx) => {
+            const sentimentVariant =
+              item.sentiment === "positive"
+                ? "success"
+                : item.sentiment === "negative"
+                ? "error"
+                : "neutral";
+            const sentimentLabel = SENTIMENT_LABELS[item.sentiment ?? ""] ?? item.sentiment;
+            return (
+              <MotionCard key={item.id} delay={Math.min(idx * 0.02, 0.3)}>
+                <Card size="small" className="card-hoverable w-full">
+                  <Space direction="vertical" size={6} className="w-full">
+                    <Space wrap>
+                      <Typography.Text strong style={{ fontSize: 15 }}>{item.title}</Typography.Text>
+                      {item.sentiment && (
+                        <StatusTag
+                          value={sentimentLabel ?? ""}
+                          variantMap={{ [sentimentLabel ?? ""]: sentimentVariant }}
+                          labelMap={{
+                            [sentimentLabel ?? ""]:
+                              item.sentiment === "positive"
+                                ? "▲ 看多"
+                                : item.sentiment === "negative"
+                                ? "▼ 看空"
+                                : "— 中性",
+                          }}
+                        />
+                      )}
+                      <ScoredTag item={item} />
                     </Space>
-                  )}
-                </Space>
-              </Card>
-            </MotionCard>
-          ))}
+                    <Space wrap size="small">
+                      {item.source && <Tag bordered={false}>{item.source}</Tag>}
+                      {item.published_at && (
+                        <Typography.Text type="secondary" className="text-xs">
+                          {dayjs(item.published_at).format("YYYY-MM-DD HH:mm")}
+                        </Typography.Text>
+                      )}
+                    </Space>
+                    {item.related_symbols && item.related_symbols.length > 0 && (
+                      <Space wrap size={4}>
+                        {item.related_symbols.map((s) => (
+                          <span
+                            key={s}
+                            className="status-tag status-tag-info"
+                            style={{ cursor: "pointer" }}
+                            onClick={() => navigate(`/asset-detail/${s}`)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                navigate(`/asset-detail/${s}`);
+                              }
+                            }}
+                          >
+                            {s}
+                          </span>
+                        ))}
+                      </Space>
+                    )}
+                  </Space>
+                </Card>
+              </MotionCard>
+            );
+          })}
         </Space>
       )}
     </Space>

@@ -63,7 +63,27 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401) {
       useApiKeyStore.getState().clear();
       showErrorMessage("API Key 无效，请在系统配置页重新设置");
+      return Promise.reject(error);
     }
+
+    // 网络层错误：axios 给的错误码直接判断，不走 4xx/5xx 业务分支
+    if (error.code === "ECONNABORTED") {
+      showErrorMessage("请求超时，请稍后重试");
+      return Promise.reject(error);
+    }
+    if (error.code === "ERR_NETWORK") {
+      showErrorMessage("无法连接到后端");
+      return Promise.reject(error);
+    }
+
+    // 5xx 服务端异常：与 4xx 业务错误（422 validation 等）严格区分，
+    // 业务错误由各页面 extractErrorMessage 自行处理，这里只兜底"非预期"的服务端故障
+    const status = error.response?.status;
+    if (status === 502 || status === 503 || status === 504) {
+      showErrorMessage("后端服务暂不可用");
+      return Promise.reject(error);
+    }
+
     return Promise.reject(error);
   },
 );

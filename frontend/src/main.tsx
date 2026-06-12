@@ -40,10 +40,13 @@ function ThemedApp() {
   // 同步 html data-theme 属性，供 CSS 变量 + echarts 读取
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", resolvedTheme);
-    // 同步 meta theme-color
+    // 同步 meta theme-color（与 bg-base 一致）
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
-      meta.setAttribute("content", resolvedTheme === "dark" ? "#141414" : "#FFFFFF");
+      meta.setAttribute(
+        "content",
+        resolvedTheme === "dark" ? "#0A0E14" : "#FAFBFC",
+      );
     }
   }, [resolvedTheme]);
 

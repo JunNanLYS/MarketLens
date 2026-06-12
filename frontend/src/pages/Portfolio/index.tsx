@@ -1,12 +1,20 @@
-import { Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Row, Select, Skeleton, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Pagination, Row, Select, Skeleton, Space, Statistic, Table, Tabs, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import dayjs, { Dayjs } from "dayjs";
 import { apiClient, extractErrorMessage } from "@/api/client";
-import type { Account, PageResult, Position, RealizedPnlItem, Transaction } from "@/api/types";
+import type {
+  Account,
+  PageResult,
+  Position,
+  RealizedPnlResult,
+  Transaction,
+} from "@/api/types";
 import { confirmDelete } from "@/components/shared/ConfirmDelete";
+import { PageHeader } from "@/components/shared/PageHeader";
 import { PnlDisplay } from "@/components/shared/PnlDisplay";
+import { QueryErrorState } from "@/components/shared/QueryErrorState";
 import { formatNumber } from "@/utils/format";
 
 interface CreateAccountForm {
@@ -30,8 +38,11 @@ interface CreateTransactionForm {
 // 投资组合：3 个 Tab（持仓总览 / 交易记录 / 账户管理）
 export default function PortfolioPage() {
   return (
-    <Space direction="vertical" size="large" className="w-full">
-      <Typography.Title level={3}>投资组合</Typography.Title>
+    <Space direction="vertical" size={24} className="w-full">
+      <PageHeader
+        title="投资组合"
+        subtitle="多账户管理、持仓 P&L、交易历史"
+      />
       <Card>
         <Tabs
           items={[
@@ -46,15 +57,33 @@ export default function PortfolioPage() {
 }
 
 function PositionsTab() {
+  const [page, setPage] = useState(1);
+
+  const accounts = useQuery<Account[]>({
+    queryKey: ["accounts"],
+    queryFn: async () => (await apiClient.get<Account[]>("/accounts")).data,
+    staleTime: 15_000,
+  });
+
+  const accountMap = useMemo(
+    () => new Map((accounts.data ?? []).map((a) => [a.id, a])),
+    [accounts.data],
+  );
+
   const positions = useQuery<Position[]>({
     queryKey: ["positions"],
     queryFn: async () => (await apiClient.get<Position[]>("/positions")).data,
     staleTime: 15_000,
   });
 
-  const realized = useQuery<{ items: RealizedPnlItem[]; total: number }>({
-    queryKey: ["positions", "realized-pnl"],
-    queryFn: async () => (await apiClient.get("/positions/realized-pnl")).data,
+  const realized = useQuery<RealizedPnlResult>({
+    queryKey: ["positions", "realized-pnl", page],
+    queryFn: async () =>
+      (
+        await apiClient.get<RealizedPnlResult>("/positions/realized-pnl", {
+          params: { page, page_size: 20 },
+        })
+      ).data,
     staleTime: 15_000,
   });
 
@@ -62,10 +91,17 @@ function PositionsTab() {
   const totalUnrealized = (positions.data ?? []).reduce((s, p) => s + (p.unrealized_pnl ?? 0), 0);
   const totalRealized = (realized.data?.items ?? []).reduce((s, p) => s + p.realized_pnl, 0);
 
+  const accountName = (id: number) => accountMap.get(id)?.name ?? `#${id}`;
+
   const columns: ColumnsType<Position> = [
     { title: "代码", dataIndex: "symbol", key: "symbol" },
     { title: "名称", dataIndex: "name", key: "name" },
-    { title: "账户", dataIndex: "account_id", key: "account_id" },
+    {
+      title: "账户",
+      dataIndex: "account_id",
+      key: "account_id",
+      render: (id: number) => <Tag title={`id: ${id}`}>{accountName(id)}</Tag>,
+    },
     { title: "数量", dataIndex: "total_qty", key: "total_qty" },
     { title: "均价", dataIndex: "avg_cost", key: "avg_cost", render: (v: number) => formatNumber(v) },
     { title: "市值", dataIndex: "market_value", key: "market_value", render: (v?: number) => formatNumber(v) },
@@ -80,7 +116,11 @@ function PositionsTab() {
         <Col span={8}><Statistic title="总浮盈亏" value={totalUnrealized} precision={2} /></Col>
         <Col span={8}><Statistic title="总已实现盈亏" value={totalRealized} precision={2} /></Col>
       </Row>
-      {positions.isLoading ? <Skeleton active /> : (
+      {positions.isLoading ? (
+        <Skeleton active />
+      ) : positions.isError ? (
+        <QueryErrorState error={positions.error} onRetry={positions.refetch} />
+      ) : (
         <Table
           size="small"
           rowKey={(r) => `position-${r.account_id}-${r.symbol}`}
@@ -90,18 +130,38 @@ function PositionsTab() {
         />
       )}
       <Card size="small" title="已实现盈亏">
-        <Table
-          size="small"
-          rowKey={(r) => `realized-${r.account_id}-${r.symbol}`}
-          dataSource={realized.data?.items ?? []}
-          pagination={false}
-          columns={[
-            { title: "账户", dataIndex: "account_id" },
-            { title: "代码", dataIndex: "symbol" },
-            { title: "卖出数量", dataIndex: "total_sell_qty" },
-            { title: "已实现盈亏", dataIndex: "realized_pnl", render: (v: number) => <PnlDisplay value={v} /> },
-          ]}
-        />
+        {realized.isError ? (
+          <QueryErrorState error={realized.error} onRetry={realized.refetch} />
+        ) : (
+          <>
+            <Table
+              size="small"
+              rowKey={(r) => `realized-${r.account_id}-${r.symbol}`}
+              dataSource={realized.data?.items ?? []}
+              pagination={false}
+              columns={[
+                {
+                  title: "账户",
+                  dataIndex: "account_id",
+                  render: (id: number) => <Tag title={`id: ${id}`}>{accountName(id)}</Tag>,
+                },
+                { title: "代码", dataIndex: "symbol" },
+                { title: "卖出数量", dataIndex: "total_sell_qty" },
+                { title: "已实现盈亏", dataIndex: "realized_pnl", render: (v: number) => <PnlDisplay value={v} /> },
+              ]}
+            />
+            <div className="mt-2 flex justify-end">
+              <Pagination
+                current={page}
+                onChange={setPage}
+                total={realized.data?.total ?? 0}
+                pageSize={20}
+                size="small"
+                showSizeChanger={false}
+              />
+            </div>
+          </>
+        )}
       </Card>
     </Space>
   );
@@ -171,7 +231,11 @@ function TransactionsTab() {
   return (
     <Space direction="vertical" className="w-full">
       <Button type="primary" onClick={() => setAddOpen(true)}>添加交易</Button>
-      {txs.isLoading ? <Skeleton active /> : (
+      {txs.isLoading ? (
+        <Skeleton active />
+      ) : txs.isError ? (
+        <QueryErrorState error={txs.error} onRetry={txs.refetch} />
+      ) : (
         <Table size="small" rowKey="id" dataSource={txs.data?.items ?? []} columns={columns} pagination={false} />
       )}
 
@@ -182,7 +246,12 @@ function TransactionsTab() {
         onOk={() => form.submit()}
         confirmLoading={create.isPending}
       >
-        <Form form={form} layout="vertical" onFinish={(v) => create.mutate(v)} initialValues={{ type: "buy", trade_date: dayjs() }}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={(v) => create.mutate(v)}
+          initialValues={{ type: "buy", trade_date: dayjs(), account_id: accounts.data?.[0]?.id }}
+        >
           <Form.Item name="account_id" label="账户" rules={[{ required: true }]}>
             <Select options={(accounts.data ?? []).map((a) => ({ value: a.id, label: a.name }))} />
           </Form.Item>
@@ -272,7 +341,11 @@ function AccountsTab() {
   return (
     <Space direction="vertical" className="w-full">
       <Button type="primary" onClick={() => setAddOpen(true)}>添加账户</Button>
-      {accounts.isLoading ? <Skeleton active /> : (
+      {accounts.isLoading ? (
+        <Skeleton active />
+      ) : accounts.isError ? (
+        <QueryErrorState error={accounts.error} onRetry={accounts.refetch} />
+      ) : (
         <Table size="small" rowKey="id" dataSource={accounts.data ?? []} columns={columns} pagination={false} />
       )}
 

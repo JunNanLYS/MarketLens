@@ -216,6 +216,12 @@ class AssetService:
             conditions.append("ta.tags LIKE ? ESCAPE '\\'")
             params.append(f"%{escape_like(effective_filters['tag'])}%")
 
+        if "search" in effective_filters:
+            search_term = effective_filters["search"]
+            conditions.append("(ta.symbol LIKE ? ESCAPE '\\' OR ta.name LIKE ? ESCAPE '\\')")
+            escaped = escape_like(search_term)
+            params.extend([f"%{escaped}%", f"%{escaped}%"])
+
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         offset = (page - 1) * page_size
 
