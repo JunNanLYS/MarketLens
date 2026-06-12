@@ -1,0 +1,277 @@
+<mxGraphModel adaptiveColors="auto">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <!-- Title -->
+    <mxCell id="title" value="MarketLens 新闻采集与 AI 处理流程" style="text;html=1;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#1a1a2e;" vertex="1" parent="1">
+      <mxGeometry x="160" y="15" width="620" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- ==================== Phase 1: 采集触发 ==================== -->
+    <mxCell id="phase1_header" value="阶段 1：定时触发" style="text;html=1;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#4a90d9;" vertex="1" parent="1">
+      <mxGeometry x="30" y="70" width="180" height="24" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="scheduler" value="APScheduler&#10;(jobs.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="60" y="100" width="140" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="timer" value="⏰ 每 60 分钟&#10;_run_news()" style="shape=mxgraph.flowchart.ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="280" y="98" width="140" height="54" as="geometry"/>
+    </mxCell>
+    <mxCell id="manual_trigger" value="手动触发&#10;POST /api/v1/&#10;tasks/trigger/news" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="500" y="98" width="150" height="54" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="scheduler" target="timer" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e1b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#d6b656;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="manual_trigger" target="timer" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- ==================== Phase 2: 新闻采集 ==================== -->
+    <mxCell id="phase2_header" value="阶段 2：新闻采集（NewsService.collect_news）" style="text;html=1;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#e69138;" vertex="1" parent="1">
+      <mxGeometry x="30" y="175" width="380" height="24" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="news_service" value="NewsService&#10;(news_service.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="270" y="205" width="160" height="50" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="timer" target="news_service" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Providers group -->
+    <mxCell id="providers_group" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;dashPattern=5 3;" vertex="1" parent="1">
+      <mxGeometry x="30" y="280" width="920" height="90" as="geometry"/>
+    </mxCell>
+    <mxCell id="providers_label" value="NewsProvider 子类（全部硬编码 sentiment=&quot;neutral&quot;）" style="text;html=1;fontSize=10;fontStyle=2;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#999999;" vertex="1" parent="1">
+      <mxGeometry x="40" y="283" width="380" height="16" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="rss" value="RSSProvider&#10;fetch_news()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="45" y="305" width="130" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="sina_news" value="SinaNewsProvider&#10;fetch_news()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="195" y="305" width="150" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="tencent_news" value="TencentNewsProvider&#10;fetch_news()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="365" y="305" width="165" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="tencent_http" value="TencentNewsHTTP&#10;fetch_news()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="550" y="305" width="155" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="search_news" value="SearchEngineNews&#10;fetch_news()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="725" y="305" width="155" height="50" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e3a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="news_service" target="rss" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e3b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.4;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="news_service" target="sina_news" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e3c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.6;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="news_service" target="tencent_news" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e3d" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="news_service" target="tencent_http" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e3e" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.9;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="news_service" target="search_news" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Match symbols box -->
+    <mxCell id="match_symbols" value="_match_symbols_&#10;with_conn()&#10;正则匹配 title/&#10;content 关联标的" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="60" y="395" width="140" height="60" as="geometry"/>
+    </mxCell>
+
+    <!-- ==================== Phase 3: 存储 ==================== -->
+    <mxCell id="phase3_header" value="阶段 3：数据存储（_WRITE_LOCK 保护）" style="text;html=1;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#6aa84f;" vertex="1" parent="1">
+      <mxGeometry x="30" y="390" width="300" height="24" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="news_service" target="match_symbols" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="insert_or_ignore" value="INSERT OR IGNORE&#10;+ raw_data 审计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="255" y="395" width="150" height="55" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e4b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82b366;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="match_symbols" target="insert_or_ignore" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="news_items_table" value="news_items 表&#10;(title, source, url,&#10;sentiment=&quot;neutral&quot;, &#10;importance, related_symbols)" style="shape=mxgraph.flowchart.database;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=0;" vertex="1" parent="1">
+      <mxGeometry x="460" y="385" width="180" height="75" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82b366;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="insert_or_ignore" target="news_items_table" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="run_logs" value="run_logs&#10;(task_name, status,&#10;started_at, finished_at)" style="shape=mxgraph.flowchart.database;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="700" y="385" width="170" height="70" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e5b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;dashed=1;" edge="1" source="news_items_table" target="run_logs" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Sentiment callout -->
+    <mxCell id="sentiment_callout" value="⚠ 当前全部 sentiment=&quot;neutral&quot;&#10;无 AI 情感分类逻辑" style="shape=mxgraph.flowchart.annotation_2;whiteSpace=wrap;html=1;fillColor=#ffdddd;strokeColor=#cc0000;fontSize=10;fontStyle=1;labelPosition=center;verticalLabelPosition=bottom;align=center;verticalAlign=top;image=https://fonts.gstatic.com/s/i/short-term/v16/6s6iSYvN95pT5qSMAhPG4Q;imageWidth=16;imageHeight=16;" vertex="1" parent="1">
+      <mxGeometry x="680" y="280" width="200" height="55" as="geometry"/>
+    </mxCell>
+
+    <!-- ==================== Phase 4: 证据组装 ==================== -->
+    <mxCell id="phase4_header" value="阶段 4：证据组装（EvidenceBuilder.build）" style="text;html=1;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#9900ff;" vertex="1" parent="1">
+      <mxGeometry x="30" y="490" width="340" height="24" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="evidence_builder" value="EvidenceBuilder&#10;.build(symbol)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="120" y="520" width="160" height="50" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="build_news" value="_build_news()&#10;7 天窗口 → 统计&#10;positive/negative/&#10;neutral 计数" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="50" y="590" width="150" height="65" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="build_others" value="_build_quote()&#10;_build_kline()&#10;_build_fund_flow()&#10;_build_finance()&#10;_build_technical()&#10;... 共 10 维度" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="270" y="585" width="150" height="80" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e6a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="evidence_builder" target="build_news" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e6b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="evidence_builder" target="build_others" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e6_news_read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;dashed=1;" edge="1" source="build_news" target="news_items_table" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="30" y="622"/>
+          <mxPoint x="30" y="460"/>
+          <mxPoint x="550" y="460"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    <mxCell id="evidence_dict" value="evidence dict&#10;{\&#10;  &quot;news&quot;: {total, positive_count,&#10;           negative_count, neutral_count},&#10;  &quot;quote&quot;: {...},&#10;  &quot;kline&quot;: {...}, ...&#10;}" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+      <mxGeometry x="500" y="515" width="200" height="95" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="evidence_builder" target="evidence_dict" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- ==================== Phase 5: AI 评分 ==================== -->
+    <mxCell id="phase5_header" value="阶段 5：AI 规则引擎评分（AIAnalyzer）" style="text;html=1;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#cc0000;" vertex="1" parent="1">
+      <mxGeometry x="30" y="690" width="320" height="24" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="ai_analyzer" value="AIAnalyzer&#10;.analyze(evidence)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="120" y="720" width="160" height="50" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#d6b656;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="evidence_dict" target="ai_analyzer" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="600" y="680"/>
+          <mxPoint x="200" y="680"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    <mxCell id="check_news" value="_check_news()&#10;positive_pct&gt;0.6 → +0.05 牛&#10;negative_pct&gt;0.4 → +0.05 熊&#10;⚠ 当前全 neutral → 永不触发" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffdddd;strokeColor=#cc0000;fontSize=9;fontStyle=0;" vertex="1" parent="1">
+      <mxGeometry x="40" y="790" width="170" height="65" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="check_others" value="_check_quote() +0.20&#10;_check_kline() +0.15&#10;_check_fund_flow() +0.15&#10;_check_technical() +0.10&#10;... 共 10 维度" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=9;" vertex="1" parent="1">
+      <mxGeometry x="240" y="790" width="155" height="70" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e9a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#b85450;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="ai_analyzer" target="check_news" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e9b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#b85450;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="ai_analyzer" target="check_others" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Scoring result -->
+    <mxCell id="score_calc" value="合计得分&#10;score_diff = bullish - bearish&#10;confidence = |diff|/max(total,0.01)&#10;action: buy / watch / sell" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="460" y="710" width="200" height="70" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#b85450;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="ai_analyzer" target="score_calc" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- ==================== Phase 6: 报告输出 ==================== -->
+    <mxCell id="phase6_header" value="阶段 6：报告输出" style="text;html=1;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#274e13;" vertex="1" parent="1">
+      <mxGeometry x="30" y="880" width="180" height="24" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="ai_reports_table" value="ai_reports 表&#10;(symbol, action, confidence,&#10;data_used, generated_at)" style="shape=mxgraph.flowchart.database;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="460" y="810" width="200" height="70" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82b366;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="score_calc" target="ai_reports_table" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="summary_gen" value="_generate_summary()&#10;新闻偏正面/偏负面/中性&#10;⚠ 当前永远 &quot;新闻情绪中性&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffdddd;strokeColor=#cc0000;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="750" y="710" width="190" height="65" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#b85450;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" source="score_calc" target="summary_gen" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- UI output -->
+    <mxCell id="ui" value="React 前端&#10;7 页面展示" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="490" y="910" width="140" height="45" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82b366;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="ai_reports_table" target="ui" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="news_api" value="GET /api/v1/news&#10;新闻列表 + 过滤" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="760" y="520" width="140" height="40" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0;entryDx=0;entryDy=0;dashed=1;" edge="1" source="news_api" target="news_items_table" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="830" y="580"/>
+          <mxPoint x="830" y="460"/>
+          <mxPoint x="640" y="460"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    <!-- Legend -->
+    <mxCell id="legend_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#cccccc;" vertex="1" parent="1">
+      <mxGeometry x="30" y="965" width="900" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="legend_title" value="图例：" style="text;html=1;fontSize=11;fontStyle=1;align=left;verticalAlign=middle;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+      <mxGeometry x="40" y="975" width="50" height="30" as="geometry"/>
+    </mxCell>
+    <mxCell id="leg1" value="⚠ 红底 = 当前硬编码 neutral、实际无效果的环节" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fillColor=#ffdddd;strokeColor=#cc0000;rounded=1;" vertex="1" parent="1">
+      <mxGeometry x="95" y="978" width="270" height="24" as="geometry"/>
+    </mxCell>
+    <mxCell id="leg2" value="🟢 绿底 = 数据写入/读取" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fillColor=#d5e8d4;strokeColor=#82b366;rounded=1;" vertex="1" parent="1">
+      <mxGeometry x="380" y="978" width="160" height="24" as="geometry"/>
+    </mxCell>
+    <mxCell id="leg3" value="🟣 紫底 = 业务逻辑" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fillColor=#e1d5e7;strokeColor=#9673a6;rounded=1;" vertex="1" parent="1">
+      <mxGeometry x="555" y="978" width="140" height="24" as="geometry"/>
+    </mxCell>
+    <mxCell id="leg4" value="🟡 黄底 = 触发/结果" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fillColor=#fff2cc;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+      <mxGeometry x="710" y="978" width="140" height="24" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>

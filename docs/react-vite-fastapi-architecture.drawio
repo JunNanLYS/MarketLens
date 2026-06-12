@@ -1,0 +1,160 @@
+<mxfile host="app.diagrams.net" modified="2026-06-10T00:00:00.000Z" agent="Claude Code" version="24.7.17">
+  <diagram id="marketlens-react-architecture" name="MarketLens React Architecture">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="MarketLens 新项目架构&#xa;React + Vite + TypeScript + Tailwind + FastAPI" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=28;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="430" y="30" width="940" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="dev-container" value="开发与启动" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#94a3b8;dashed=1;fontSize=16;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="1720" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="launcher" value="scripts/launcher.py&#xa;一键启动器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="90" y="170" width="210" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="vite-dev" value="Vite Dev Server&#xa;localhost:5173&#xa;HMR + /api proxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#7c3aed;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="380" y="170" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="uvicorn" value="Uvicorn / FastAPI&#xa;localhost:8000&#xa;/api/v1 + /openapi.json" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="170" width="260" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="prod-static" value="生产模式&#xa;FastAPI 挂载 frontend/dist&#xa;单进程本地 Web 应用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="170" width="280" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ci" value="GitHub Actions CI&#xa;ruff + pytest&#xa;npm lint/type-check/build/test" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="170" width="280" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="frontend-container" value="frontend/ — React UI 层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#faf5ff;strokeColor=#9333ea;fontSize=18;fontStyle=1;verticalAlign=top;spacingTop=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="310" width="560" height="610" as="geometry"/>
+        </mxCell>
+        <mxCell id="react-shell" value="App Shell&#xa;React Router + Ant Design Layout&#xa;侧边栏导航 / 健康状态 / 主题" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="370" width="480" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="pages" value="页面模块&#xa;Tracked Assets / Asset Detail / AI Reports&#xa;Portfolio / News / Task Status / Settings" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#a855f7;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="480" width="480" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="components" value="共享组件&#xa;PnlDisplay / NumberFormat / StatusTag&#xa;ConfirmDelete / MotionPage / MotionCard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#a855f7;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="600" width="480" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-style-motion" value="样式与动效&#xa;Tailwind CSS：布局 / 间距 / 响应式 / 工具类&#xa;framer-motion：页面切换 / 卡片展开 / 列表进出场 / 数字过渡" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf4ff;strokeColor=#c026d3;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="685" width="480" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="frontend-state" value="前端状态&#xa;TanStack Query：服务端数据缓存/刷新&#xa;Zustand：API Key / 选中资产 / UI 状态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#a855f7;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="790" width="480" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-client" value="Typed API Client&#xa;OpenAPI Codegen + Axios&#xa;X-API-Key 拦截器 / 401 处理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="875" width="480" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="backend-container" value="backend/ — FastAPI API 层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#16a34a;fontSize=18;fontStyle=1;verticalAlign=top;spacingTop=16;" vertex="1" parent="1">
+          <mxGeometry x="650" y="310" width="520" height="610" as="geometry"/>
+        </mxCell>
+        <mxCell id="main-app" value="backend/main.py&#xa;路由注册 / CORS / 生命周期 / 异常处理&#xa;可挂载 frontend/dist" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="370" width="420" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-routes" value="API Routes (/api/v1)&#xa;assets / data / reports / portfolio&#xa;news / tasks / data-sources / neodata" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#22c55e;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="480" width="420" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="services" value="Services&#xa;AssetService / CollectionService / ReportService&#xa;PortfolioService / NewsService / EvidenceBuilder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#22c55e;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="600" width="420" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="scheduler" value="Scheduler&#xa;APScheduler jobs&#xa;quote / daily_close / news / ai_report / cleanup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#22c55e;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="720" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="collectors" value="Collectors&#xa;Provider Registry&#xa;NeoData / WeStock / Sina / RSS / Tencent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#22c55e;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="920" y="720" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="storage-api" value="Storage Access&#xa;database.py context managers&#xa;schema.py DDL / WAL / foreign keys" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="840" width="420" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-container" value="本地数据与外部来源" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;fontSize=18;fontStyle=1;verticalAlign=top;spacingTop=16;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="310" width="540" height="610" as="geometry"/>
+        </mxCell>
+        <mxCell id="sqlite" value="SQLite 本地数据库&#xa;marketlens.db&#xa;tracked_assets / quotes / klines / raw_data&#xa;portfolio / ai_reports / run_logs" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fed7aa;strokeColor=#ea580c;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="380" width="420" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="raw-data" value="raw_data 审计轨迹&#xa;保留原始响应 + normalized data&#xa;cleanup 定时清理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="530" width="420" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="external" value="外部数据源&#xa;NeoData / WeStock npx / Sina / RSS / Search&#xa;HTTP/Subprocess 均需 timeout + failure isolation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#fb923c;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="650" width="420" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai" value="Evidence-driven AI Pipeline&#xa;EvidenceBuilder → AIAnalyzer → ai_reports&#xa;data_used 必须列出真实来源与采集时间" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="780" width="420" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="boundary" value="边界约束&#xa;frontend/ 只通过 FastAPI 调用数据&#xa;不得直接访问 backend/storage 或 SQLite" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="450" y="960" width="900" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-launcher-vite" value="spawn" style="endArrow=block;html=1;rounded=0;strokeColor=#0284c7;fontSize=12;" edge="1" parent="1" source="launcher" target="vite-dev">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-launcher-uvicorn" value="spawn" style="endArrow=block;html=1;rounded=0;strokeColor=#0284c7;fontSize=12;" edge="1" parent="1" source="launcher" target="uvicorn">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-vite-uvicorn" value="/api proxy" style="endArrow=block;html=1;rounded=0;strokeColor=#7c3aed;fontSize=12;" edge="1" parent="1" source="vite-dev" target="uvicorn">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-prod-uvicorn" value="dist mounted by" style="endArrow=block;html=1;rounded=0;strokeColor=#d97706;fontSize=12;" edge="1" parent="1" source="prod-static" target="uvicorn">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-shell-pages" style="endArrow=block;html=1;rounded=0;strokeColor=#9333ea;" edge="1" parent="1" source="react-shell" target="pages">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-pages-components" style="endArrow=block;html=1;rounded=0;strokeColor=#9333ea;" edge="1" parent="1" source="pages" target="components">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-components-style-motion" style="endArrow=block;html=1;rounded=0;strokeColor=#c026d3;" edge="1" parent="1" source="components" target="ui-style-motion">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-style-motion-state" style="endArrow=block;html=1;rounded=0;strokeColor=#9333ea;" edge="1" parent="1" source="ui-style-motion" target="frontend-state">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-state-client" style="endArrow=block;html=1;rounded=0;strokeColor=#9333ea;" edge="1" parent="1" source="frontend-state" target="api-client">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-client-routes" value="HTTP JSON&#xa;X-API-Key" style="endArrow=block;html=1;rounded=0;strokeColor=#2563eb;fontSize=12;" edge="1" parent="1" source="api-client" target="api-routes">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="620" y="870" as="sourcePoint"/>
+            <mxPoint x="690" y="525" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-main-routes" style="endArrow=block;html=1;rounded=0;strokeColor=#16a34a;" edge="1" parent="1" source="main-app" target="api-routes">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-routes-services" style="endArrow=block;html=1;rounded=0;strokeColor=#16a34a;" edge="1" parent="1" source="api-routes" target="services">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-services-scheduler" style="endArrow=block;html=1;rounded=0;strokeColor=#16a34a;" edge="1" parent="1" source="services" target="scheduler">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-services-collectors" style="endArrow=block;html=1;rounded=0;strokeColor=#16a34a;" edge="1" parent="1" source="services" target="collectors">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-services-storage" style="endArrow=block;html=1;rounded=0;strokeColor=#16a34a;" edge="1" parent="1" source="services" target="storage-api">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-scheduler-storage" value="run_logs" style="endArrow=block;html=1;rounded=0;strokeColor=#16a34a;fontSize=12;" edge="1" parent="1" source="scheduler" target="storage-api">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-collectors-external" value="fetch" style="endArrow=block;html=1;rounded=0;strokeColor=#ea580c;fontSize=12;" edge="1" parent="1" source="collectors" target="external">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-storage-sqlite" value="read/write" style="endArrow=block;html=1;rounded=0;strokeColor=#ea580c;fontSize=12;" edge="1" parent="1" source="storage-api" target="sqlite">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-external-raw" value="raw + normalized" style="endArrow=block;html=1;rounded=0;strokeColor=#ea580c;fontSize=12;" edge="1" parent="1" source="external" target="raw-data">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-raw-sqlite" style="endArrow=block;html=1;rounded=0;strokeColor=#ea580c;" edge="1" parent="1" source="raw-data" target="sqlite">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-sqlite-ai" value="evidence" style="endArrow=block;html=1;rounded=0;strokeColor=#d97706;fontSize=12;" edge="1" parent="1" source="sqlite" target="ai">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-ai-sqlite" value="reports" style="endArrow=block;html=1;rounded=0;strokeColor=#d97706;fontSize=12;" edge="1" parent="1" source="ai" target="sqlite">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

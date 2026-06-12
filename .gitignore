@@ -34,3 +34,6 @@ frontend/dist/
 frontend/.eslintcache
 frontend/.vite/
 frontend/*.tsbuildinfo
+
+# Claude Code
+.claude/
