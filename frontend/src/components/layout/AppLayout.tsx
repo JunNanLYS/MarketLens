@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { Layout, Space, Tag, Typography } from "antd";
+import { Layout, Space, Typography } from "antd";
 import { Outlet } from "react-router-dom";
-import { Sidebar } from "./Sidebar";
 import { HealthIndicator } from "./HealthIndicator";
 import { ThemeToggle } from "./ThemeToggle";
 import { KpiBar } from "./KpiBar";
+import { FloatingNav } from "./FloatingNav";
 import { CommandPalette } from "@/components/shared/CommandPalette";
 
-const { Sider, Header, Content } = Layout;
+const { Header, Content } = Layout;
 
-// MarketLens 品牌 logo：SVG 折线图 icon（DESIGN.md §1 品牌定位）
+// MarketLens 品牌 logo：SVG 折线图（DESIGN.md §1 品牌定位）
 function MarketLensLogo({ size = 22 }: { size?: number }) {
   return (
     <svg
@@ -36,13 +36,13 @@ function MarketLensLogo({ size = 22 }: { size?: number }) {
   );
 }
 
-// 应用整体布局：左侧导航 + 顶部 KPI Bar + 主内容区。
-//
-// 高度策略：外/内 Layout 用 min-h-screen + h-screen 锁死为视口高度，
-// Content 自己 overflow:auto 滚动。否则 Sider 会被内容撑高（每个
-// 页面高度不同，侧边栏长度跟着变）。
+// 应用整体布局：
+//   - 顶部 Header：左 logo + 中 FloatingNav 居中悬浮 + 右 KpiBar/操作
+//   - Content：承载各 page
+// 高度策略：Layout 用 min-h-screen + h-screen 锁死为视口高度，
+// Content 自己 overflow:auto 滚动。
 export function AppLayout() {
-  // 命令面板开关状态：提升到 AppLayout，方便 Header 里的 ⌘K 提示 Tag 点击触发
+  // 命令面板开关状态：提升到 AppLayout，方便 Header 右侧的 ⌘K 按钮触发
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   // ⌘K / Ctrl+K 全局快捷键统一在 AppLayout 监听；CommandPalette 内部不再重复绑定
@@ -58,27 +58,27 @@ export function AppLayout() {
   }, []);
 
   return (
-    <Layout className="min-h-screen h-screen">
+    <Layout className="min-h-screen h-screen" style={{ background: "var(--color-bg-layout)" }}>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-      <Sider
-        width={220}
-        breakpoint="lg"
-        collapsedWidth={64}
+      <Header
         style={{
-          borderRight: "1px solid var(--color-border)",
+          borderBottom: "1px solid var(--color-border)",
+          paddingInline: 24,
+          paddingBlock: 0,
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          alignItems: "center",
           background: "var(--color-bg-container)",
+          height: 64,
+          lineHeight: "64px",
+          gap: 16,
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
         }}
       >
-        <div
-          style={{
-            padding: "16px 20px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            borderBottom: "1px solid var(--color-border)",
-            height: 56,
-          }}
-        >
+        {/* 左：品牌 logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <MarketLensLogo size={22} />
           <Typography.Title
             level={5}
@@ -93,43 +93,32 @@ export function AppLayout() {
             MarketLens
           </Typography.Title>
         </div>
-        <Sidebar />
-      </Sider>
-      <Layout className="min-h-screen h-screen" style={{ background: "var(--color-bg-layout)" }}>
-        <Header
-          style={{
-            borderBottom: "1px solid var(--color-border)",
-            paddingInline: 24,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            background: "var(--color-bg-container)",
-            height: 56,
-            lineHeight: "56px",
-          }}
-        >
+
+        {/* 中：悬浮胶囊导航（玻璃质感） */}
+        <FloatingNav />
+
+        {/* 右：KPI + 操作 */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, minWidth: 0 }}>
           <KpiBar />
           <Space size={12}>
-            <Tag
-              style={{
-                cursor: "pointer",
-                userSelect: "none",
-                background: "var(--color-bg-base)",
-                borderColor: "var(--color-border)",
-                color: "var(--color-text-secondary)",
-                padding: "2px 10px",
-                borderRadius: 6,
-                fontSize: 12,
-              }}
+            <button
+              type="button"
               onClick={() => setPaletteOpen(true)}
               title="按 ⌘K / Ctrl+K 搜索"
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setPaletteOpen(true);
-                }
+              aria-label="打开命令面板"
+              className="floating-nav-item"
+              style={{
+                background: "var(--color-bg-base)",
+                border: "1px solid var(--color-border)",
+                color: "var(--color-text-secondary)",
+                padding: "6px 12px",
+                fontSize: 12,
+                borderRadius: 10,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontFamily: "inherit",
               }}
             >
               <kbd
@@ -140,27 +129,26 @@ export function AppLayout() {
                   background: "var(--color-bg-container)",
                   border: "1px solid var(--color-border)",
                   borderRadius: 3,
-                  marginRight: 6,
                 }}
               >
                 ⌘K
               </kbd>
               搜索
-            </Tag>
+            </button>
             <HealthIndicator />
             <ThemeToggle />
           </Space>
-        </Header>
-        <Content
-          style={{
-            padding: "24px 32px",
-            overflow: "auto",
-            background: "var(--color-bg-layout)",
-          }}
-        >
-          <Outlet />
-        </Content>
-      </Layout>
+        </div>
+      </Header>
+      <Content
+        style={{
+          padding: "32px 32px",
+          overflow: "auto",
+          background: "var(--color-bg-layout)",
+        }}
+      >
+        <Outlet />
+      </Content>
     </Layout>
   );
 }
