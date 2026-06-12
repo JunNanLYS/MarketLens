@@ -132,6 +132,8 @@ TABLE_DDLS: list[str] = [
         sectors TEXT,
         importance TEXT,
         related_symbols TEXT,
+        confidence REAL,
+        sentiment_reason TEXT,
         collected_at TIMESTAMP NOT NULL
     )
     """,
@@ -704,6 +706,8 @@ async def init_db(db_path: str | None = None) -> None:
         await conn.commit()
         await _migrate_raw_data_symbol_nullable(conn)
         await _migrate_news_items_add_sectors(conn)
+        # news_items 新增 confidence + sentiment_reason
+        await _migrate_news_items_add_confidence_reason(conn)
 
 
 def init_db_sync(db_path: str | None = None) -> None:
@@ -717,6 +721,8 @@ def init_db_sync(db_path: str | None = None) -> None:
         conn.commit()
         _migrate_raw_data_symbol_nullable_sync(conn)
         _migrate_news_items_add_sectors_sync(conn)
+        # news_items 新增 confidence + sentiment_reason
+        _migrate_news_items_add_confidence_reason_sync(conn)
 
 
 def _raw_data_symbol_is_not_null_sync(conn: sqlite3.Connection) -> bool:
@@ -845,3 +851,61 @@ async def _migrate_news_items_add_sectors(conn: aiosqlite.Connection) -> None:
     await conn.execute("ALTER TABLE news_items ADD COLUMN sectors TEXT")
     await conn.commit()
     logger.info("news_items.sectors 列已添加（ALTER TABLE 完成）")
+
+
+# ---------------------------------------------------------------------------
+# 迁移：news_items 新增 confidence + sentiment_reason 列
+# confidence REAL —— 情感置信度（0~1 浮点）
+# sentiment_reason TEXT —— 情感判定理由
+# SQLite 单条 ALTER 一次只能加一列，因此拆为两条独立 ALTER
+# ---------------------------------------------------------------------------
+
+
+def _news_items_has_confidence_sync(conn: sqlite3.Connection) -> bool:
+    """检查 news_items 表是否已有 confidence 列。"""
+    rows = conn.execute("PRAGMA table_info(news_items)").fetchall()
+    return any(row["name"] == "confidence" for row in rows)
+
+
+def _news_items_has_sentiment_reason_sync(conn: sqlite3.Connection) -> bool:
+    """检查 news_items 表是否已有 sentiment_reason 列。"""
+    rows = conn.execute("PRAGMA table_info(news_items)").fetchall()
+    return any(row["name"] == "sentiment_reason" for row in rows)
+
+
+def _migrate_news_items_add_confidence_reason_sync(conn: sqlite3.Connection) -> None:
+    """迁移：为 news_items 添加 confidence 和 sentiment_reason 列（SQLite 一次一列）。"""
+    if not _news_items_has_confidence_sync(conn):
+        conn.execute("ALTER TABLE news_items ADD COLUMN confidence REAL")
+        conn.commit()
+        logger.info("news_items.confidence 列已添加（ALTER TABLE 完成）")
+    if not _news_items_has_sentiment_reason_sync(conn):
+        conn.execute("ALTER TABLE news_items ADD COLUMN sentiment_reason TEXT")
+        conn.commit()
+        logger.info("news_items.sentiment_reason 列已添加（ALTER TABLE 完成）")
+
+
+async def _news_items_has_confidence(conn: aiosqlite.Connection) -> bool:
+    """异步版：检查 news_items 表是否已有 confidence 列。"""
+    cursor = await conn.execute("PRAGMA table_info(news_items)")
+    rows = await cursor.fetchall()
+    return any(row["name"] == "confidence" for row in rows)
+
+
+async def _news_items_has_sentiment_reason(conn: aiosqlite.Connection) -> bool:
+    """异步版：检查 news_items 表是否已有 sentiment_reason 列。"""
+    cursor = await conn.execute("PRAGMA table_info(news_items)")
+    rows = await cursor.fetchall()
+    return any(row["name"] == "sentiment_reason" for row in rows)
+
+
+async def _migrate_news_items_add_confidence_reason(conn: aiosqlite.Connection) -> None:
+    """异步版迁移：为 news_items 添加 confidence 和 sentiment_reason 列。"""
+    if not await _news_items_has_confidence(conn):
+        await conn.execute("ALTER TABLE news_items ADD COLUMN confidence REAL")
+        await conn.commit()
+        logger.info("news_items.confidence 列已添加（ALTER TABLE 完成）")
+    if not await _news_items_has_sentiment_reason(conn):
+        await conn.execute("ALTER TABLE news_items ADD COLUMN sentiment_reason TEXT")
+        await conn.commit()
+        logger.info("news_items.sentiment_reason 列已添加（ALTER TABLE 完成）")

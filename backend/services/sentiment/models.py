@@ -14,7 +14,7 @@ class SentimentResult:
 
     Attributes:
         sentiment: 情感类别 — positive / negative / neutral
-        confidence: 置信度 0.0-1.0，低于 threshold 时降级为 neutral
+        confidence: 置信度 0.0-1.0，低于 0.55 时降级为 neutral
         reason: 一句话中文理由，供审计追溯
         sectors: 受影响的板块/领域列表，如 ["石油", "贵金属", "军工"]
     """
@@ -24,11 +24,14 @@ class SentimentResult:
     reason: str
     sectors: list[str] = field(default_factory=list)
 
-    def to_db_value(self, threshold: float = 0.4) -> str:
+    def to_db_value(self, threshold: float = 0.55) -> str:
         """低置信度时降级为 neutral，保证数据库中不会出现低质量的正/负面判断。
+        低于 0.55 时降级为 neutral，避免模型不确定时给出错误方向。
 
         Args:
             threshold: 置信度阈值，低于此值时降级为 neutral。
+                默认 0.55——高阈值确保写入数据库的 positive/negative
+                都有较强的 AI 确信度支撑。
 
         Returns:
             写入 news_items.sentiment 列的值。

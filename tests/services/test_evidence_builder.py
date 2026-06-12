@@ -906,3 +906,85 @@ class TestBuildMultiTruncation:
             assert len(result[sym]["kline"]) == 60, (
                 f"{sym} kline 长度异常: {len(result[sym]['kline'])}"
             )
+
+
+# ---------------------------------------------------------------------------
+# TestAggregateNews: _aggregate_news 行为测试
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateNews:
+    """EvidenceBuilder._aggregate_news 行为测试。"""
+
+    def test_empty_items_returns_none(self) -> None:
+        assert EvidenceBuilder._aggregate_news([]) is None
+
+    def test_counts_and_weighted_sums(self) -> None:
+        """raw count + weighted sum 同时正确。"""
+        items = [
+            {"sentiment": "positive", "confidence": 0.9, "sectors": '["银行"]'},
+            {"sentiment": "positive", "confidence": 0.7, "sectors": '["银行"]'},
+            {"sentiment": "negative", "confidence": 0.6, "sectors": '["石油"]'},
+            {"sentiment": "neutral", "confidence": 0.3, "sectors": None},
+        ]
+        r = EvidenceBuilder._aggregate_news(items)
+        assert r["total_count"] == 4
+        assert r["positive_count"] == 2
+        assert r["negative_count"] == 1
+        assert r["neutral_count"] == 1
+        # positive_weighted: 0.9 + 0.7 = 1.6,四舍五入 1.6
+        assert r["positive_weighted"] == 1.6
+        assert r["negative_weighted"] == 0.6
+        assert r["neutral_weighted"] == 0.3
+        # avg_confidence: (0.9+0.7+0.6+0.3)/4 = 0.625
+        assert r["avg_confidence"] == 0.625
+
+    def test_sector_exposure_aggregates_and_ranks(self) -> None:
+        items = [
+            {"sentiment": "positive", "confidence": 0.9, "sectors": '["银行", "地产"]'},
+            {"sentiment": "positive", "confidence": 0.8, "sectors": '["银行"]'},
+            {"sentiment": "negative", "confidence": 0.7, "sectors": '["石油"]'},
+        ]
+        r = EvidenceBuilder._aggregate_news(items)
+        sectors = {s["sector"]: s for s in r["sector_exposure"]}
+        assert sectors["银行"]["count"] == 2
+        assert sectors["银行"]["positive"] == 2
+        # (0.9 + 0.8) / 2 = 0.85
+        assert sectors["银行"]["avg_confidence"] == 0.85
+        assert sectors["地产"]["count"] == 1
+        assert sectors["石油"]["count"] == 1
+        assert sectors["石油"]["negative"] == 1
+        # 排序：银行 (2) > 地产 (1) = 石油 (1)，并列按字典序
+        assert [s["sector"] for s in r["sector_exposure"]] == ["银行", "地产", "石油"]
+
+    def test_backward_compat_null_confidence_treated_as_one(self) -> None:
+        """旧数据 confidence=NULL 时按 1.0 计权, weighted = raw count。"""
+        items = [
+            {"sentiment": "positive", "confidence": None, "sectors": None},
+            {"sentiment": "positive", "confidence": None, "sectors": None},
+        ]
+        r = EvidenceBuilder._aggregate_news(items)
+        assert r["positive_count"] == 2
+        # None 视为 1.0, 2 * 1.0 = 2.0
+        assert r["positive_weighted"] == 2.0
+        # 全部 NULL → avg_confidence = None
+        assert r["avg_confidence"] is None
+
+    def test_invalid_sectors_json_ignored(self) -> None:
+        """sectors 是非法 JSON 时不崩,整条 direction 仍计入。"""
+        items = [
+            {"sentiment": "positive", "confidence": 0.9, "sectors": "not-json"},
+            {"sentiment": "positive", "confidence": 0.9, "sectors": None},
+        ]
+        r = EvidenceBuilder._aggregate_news(items)
+        assert r["positive_count"] == 2
+        # sectors 字段全部解析失败 → 空列表
+        assert r["sector_exposure"] == []
+
+    def test_sectors_non_list_ignored(self) -> None:
+        """sectors 是 JSON 但非 list 时跳过。"""
+        items = [{"sentiment": "positive", "confidence": 0.9, "sectors": '"a string"'}]
+        r = EvidenceBuilder._aggregate_news(items)
+        assert r["positive_count"] == 1
+        # 解析出的是 str 而非 list → sector_buckets 不变
+        assert r["sector_exposure"] == []

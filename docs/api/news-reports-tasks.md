@@ -49,6 +49,7 @@ GET /api/v1/news?symbol=hk00700&days=7 HTTP/1.1
       "published_at": "2026-05-31T14:30:00+08:00",
       "summary": "腾讯控股发布 2026 年第一季度财报...",
       "sentiment": "positive", "importance": "high",
+      "confidence": 0.85, "sentiment_reason": "央行降息刺激市场情绪", "sectors": ["银行", "地产"],
       "related_symbols": ["hk00700"],
       "collected_at": "2026-05-31T15:00:00+08:00"
     }

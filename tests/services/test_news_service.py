@@ -7,6 +7,8 @@ import pytest
 
 from backend.collectors.base import BaseProvider
 from backend.services.news_service import NewsService
+from backend.services.sentiment.base import SentimentAnalyzer
+from backend.services.sentiment.models import SentimentResult
 from backend.storage.database import get_db, set_db_path
 from backend.storage.schema import init_db_sync as init_db
 
@@ -736,3 +738,148 @@ async def test_collect_news_no_tracked_assets_returns_success() -> None:
         f"无 tracked assets 时空采集应判定为 success,实际为 {row['status']}"
     )
     assert row["error_message"] is None
+
+
+# ============================================================
+# news_items 新增 confidence + sentiment_reason 列持久化测试
+# ============================================================
+
+
+class _StubSentimentAnalyzer(SentimentAnalyzer):
+    """测试用情感分析器桩：直接返回预设结果列表。
+
+    继承 SentimentAnalyzer ABC,确保 isinstance 检查通过,
+    进而 news_service 直接使用本桩,不通过 create_sentiment_analyzer() 创建。
+    """
+
+    def __init__(self, results: list[SentimentResult | None]) -> None:
+        self._results = results
+        self._call_count = 0
+
+    async def analyze(self, news_items: list[dict]) -> list[SentimentResult | None]:
+        self._call_count += 1
+        return list(self._results)
+
+    async def close(self) -> None:
+        pass
+
+
+class TestCollectNewsPersistsConfidenceReason:
+    """验证 sentiment 评分结果（confidence / reason）持久化到 news_items。"""
+
+    async def test_persists_confidence_and_reason_when_ai_available(self) -> None:
+        """AI 可用时，confidence 和 sentiment_reason 落库。
+
+        sentiment 阈值为 0.55，confidence=0.85 >= 0.55，
+        所以 sentiment 列保留 'positive'（未降级）。
+        """
+        news_items = [
+            _make_news_item(title="央行降息利好", url="https://example.com/conf-1"),
+        ]
+        provider = FakeRSSProvider(name="fake_rss_conf", news_items=news_items)
+        analyzer = _StubSentimentAnalyzer(
+            results=[
+                SentimentResult(
+                    sentiment="positive",
+                    confidence=0.85,
+                    reason="央行降息利好",
+                    sectors=["银行"],
+                )
+            ]
+        )
+        service = NewsService(
+            news_providers=[provider],
+            sentiment_analyzer=analyzer,
+        )
+
+        r = await service.collect_news()
+        assert r["collected"] == 1
+        assert r["skipped"] == 0
+
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT sentiment, confidence, sentiment_reason "
+                "FROM news_items WHERE url = ?",
+                ("https://example.com/conf-1",),
+            ).fetchone()
+        assert row is not None
+        # 0.85 >= 0.55 → sentiment 保留 positive
+        assert row["sentiment"] == "positive"
+        # confidence / reason 持久化
+        assert row["confidence"] == 0.85
+        assert row["sentiment_reason"] == "央行降息利好"
+
+    async def test_persists_null_when_sentiment_unavailable(self) -> None:
+        """sentiment_analyzer=False 跳过时，两列都是 NULL。"""
+        news_items = [
+            _make_news_item(title="无情感分析测试", url="https://example.com/no-sa"),
+        ]
+        provider = FakeRSSProvider(name="fake_rss_no_sa", news_items=news_items)
+        service = NewsService(
+            news_providers=[provider],
+            sentiment_analyzer=False,  # 显式禁用情感分析
+        )
+
+        r = await service.collect_news()
+        assert r["collected"] == 1
+
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT sentiment, confidence, sentiment_reason "
+                "FROM news_items WHERE url = ?",
+                ("https://example.com/no-sa",),
+            ).fetchone()
+        assert row is not None
+        # 禁用心跳 → confidence / sentiment_reason 都是 NULL
+        assert row["confidence"] is None
+        assert row["sentiment_reason"] is None
+        # sentiment 走 fallback 分支，item 中无 sentiment 字段 → neutral
+        assert row["sentiment"] == "neutral"
+
+    async def test_persists_null_when_single_failure(self) -> None:
+        """AI analyze 单条失败时，对应位置两列 NULL；成功的正常持久化。"""
+        news_items = [
+            _make_news_item(title="AI失败的那条", url="https://example.com/sa-fail"),
+            _make_news_item(title="AI成功的那条", url="https://example.com/sa-ok"),
+        ]
+        provider = FakeRSSProvider(name="fake_rss_mix", news_items=news_items)
+        analyzer = _StubSentimentAnalyzer(
+            results=[
+                None,  # 第一条 AI 失败
+                SentimentResult(
+                    sentiment="positive",
+                    confidence=0.9,
+                    reason="good",
+                    sectors=[],
+                ),
+            ]
+        )
+        service = NewsService(
+            news_providers=[provider],
+            sentiment_analyzer=analyzer,
+        )
+
+        r = await service.collect_news()
+        assert r["collected"] == 2
+
+        with get_db() as conn:
+            fail_row = conn.execute(
+                "SELECT sentiment, confidence, sentiment_reason "
+                "FROM news_items WHERE url = ?",
+                ("https://example.com/sa-fail",),
+            ).fetchone()
+            ok_row = conn.execute(
+                "SELECT sentiment, confidence, sentiment_reason "
+                "FROM news_items WHERE url = ?",
+                ("https://example.com/sa-ok",),
+            ).fetchone()
+
+        # AI 失败 → fallback 路径，confidence / reason 都是 NULL
+        assert fail_row is not None
+        assert fail_row["confidence"] is None
+        assert fail_row["sentiment_reason"] is None
+
+        # AI 成功 → 正常持久化
+        assert ok_row is not None
+        assert ok_row["confidence"] == 0.9
+        assert ok_row["sentiment_reason"] == "good"

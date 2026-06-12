@@ -1,6 +1,7 @@
 """证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
 
 import json
+from collections import defaultdict
 from contextlib import suppress
 
 from loguru import logger
@@ -207,6 +208,96 @@ class EvidenceBuilder:
                 }
             )
         return data_sources
+
+    @staticmethod
+    def _aggregate_news(items: list[dict]) -> dict | None:
+        """对单/批标的的新闻列表做方向计数 + confidence 加权 + 板块聚合。
+
+        输入 items 是从 news_items 表读出的字典列表（按 published_at DESC），
+        每条至少包含 sentiment 字段；可选 confidence (REAL) / sectors (JSON 字符串)。
+
+        Returns:
+            完整 news 段字典；items 为空时返回 None。
+        """
+        if not items:
+            return None
+
+        sentiments = [item.get("sentiment", "neutral") for item in items]
+        positive = sentiments.count("positive")
+        negative = sentiments.count("negative")
+        neutral = sentiments.count("neutral")
+
+        # confidence 加权求和；None 视为 1.0（兼容旧数据）
+        def _w(it: dict) -> float:
+            c = it.get("confidence")
+            return c if isinstance(c, (int, float)) else 1.0
+
+        positive_weighted = sum(_w(it) for it in items if it.get("sentiment") == "positive")
+        negative_weighted = sum(_w(it) for it in items if it.get("sentiment") == "negative")
+        neutral_weighted = sum(_w(it) for it in items if it.get("sentiment") == "neutral")
+
+        # 收集 confidence 非 None 的项算均值
+        conf_values = [
+            it["confidence"] for it in items
+            if isinstance(it.get("confidence"), (int, float))
+        ]
+        avg_confidence = round(sum(conf_values) / len(conf_values), 3) if conf_values else None
+
+        # 板块聚合：扫 sectors 列，JSON 字符串逐条解析
+        sector_buckets: dict = defaultdict(
+            lambda: {"count": 0, "positive": 0, "negative": 0, "neutral": 0, "_conf_sum": 0.0, "_conf_n": 0}
+        )
+        for it in items:
+            raw = it.get("sectors")
+            if not raw:
+                continue
+            try:
+                sectors = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(sectors, list):
+                continue
+            sent = it.get("sentiment", "neutral")
+            for s in sectors:
+                if not isinstance(s, str) or not s.strip():
+                    continue
+                b = sector_buckets[s]
+                b["count"] += 1
+                if sent in ("positive", "negative", "neutral"):
+                    b[sent] += 1
+                c = it.get("confidence")
+                if isinstance(c, (int, float)):
+                    b["_conf_sum"] += c
+                    b["_conf_n"] += 1
+
+        # 板块按 count DESC，并列按板块名字典序；top 10
+        sector_exposure = []
+        for s in sorted(
+            sector_buckets.keys(),
+            key=lambda k: (-sector_buckets[k]["count"], k),
+        )[:10]:
+            b = sector_buckets[s]
+            sector_exposure.append({
+                "sector": s,
+                "count": b["count"],
+                "positive": b["positive"],
+                "negative": b["negative"],
+                "neutral": b["neutral"],
+                "avg_confidence": round(b["_conf_sum"] / b["_conf_n"], 3) if b["_conf_n"] else None,
+            })
+
+        return {
+            "total_count": len(items),
+            "positive_count": positive,
+            "negative_count": negative,
+            "neutral_count": neutral,
+            "positive_weighted": round(positive_weighted, 3),
+            "negative_weighted": round(negative_weighted, 3),
+            "neutral_weighted": round(neutral_weighted, 3),
+            "avg_confidence": avg_confidence,
+            "sector_exposure": sector_exposure,
+            "latest": items[:5],
+        }
 
     @staticmethod
     async def build(symbol: str, conn=None) -> dict:
@@ -542,22 +633,7 @@ class EvidenceBuilder:
 
                 # news from pre-aggregated dict
                 news_rows = news_by_symbol.get(symbol, [])
-                news = None
-                if news_rows:
-                    sentiments = [
-                        item.get("sentiment", "neutral") for item in news_rows
-                    ]
-                    positive = sentiments.count("positive")
-                    negative = sentiments.count("negative")
-                    neutral = sentiments.count("neutral")
-                    news = {
-                        "positive_count": positive,
-                        "negative_count": negative,
-                        "neutral_count": neutral,
-                        "total_count": len(news_rows),
-                        "total": len(news_rows),
-                        "latest": news_rows[:5],
-                    }
+                news = EvidenceBuilder._aggregate_news(news_rows)
 
                 tech = tech_map.get(symbol)
                 sector_ctx = sector_ctx_shared
@@ -846,19 +922,7 @@ class EvidenceBuilder:
         )
         rows = await cursor.fetchall()
         items = [dict(row) for row in rows]
-        if not items:
-            return None
-        sentiments = [item.get("sentiment", "neutral") for item in items]
-        positive = sentiments.count("positive")
-        negative = sentiments.count("negative")
-        neutral = sentiments.count("neutral")
-        return {
-            "total_count": len(items),
-            "positive_count": positive,
-            "negative_count": negative,
-            "neutral_count": neutral,
-            "latest": items[:5],
-        }
+        return EvidenceBuilder._aggregate_news(items)
 
     @staticmethod
     async def _build_technical(conn, symbol: str) -> dict | None:

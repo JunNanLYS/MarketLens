@@ -118,10 +118,13 @@ class TestDeepSeekSentimentAnalyzer:
 
     async def test_analyze_returns_none_when_unavailable(self) -> None:
         """不可用时 analyze 返回全 None 列表。"""
-        analyzer = DeepSeekSentimentAnalyzer(api_key="", optional=True)
-        items = [{"title": "测试"}]
-        results = await analyzer.analyze(items)
-        assert results == [None]
+        # 显式屏蔽 env：env 里有 DEEPSEEK_API_KEY 时 _api_key 会被覆盖，
+        # 导致 _available 仍为 True，测试无法走降级路径。
+        with patch.dict("os.environ", {}, clear=True):
+            analyzer = DeepSeekSentimentAnalyzer(api_key="", optional=True)
+            items = [{"title": "测试"}]
+            results = await analyzer.analyze(items)
+            assert results == [None]
 
     async def test_analyze_empty_list(self) -> None:
         analyzer = DeepSeekSentimentAnalyzer(api_key="sk-test", optional=True)
