@@ -1,4 +1,4 @@
-import { Button, Card, Empty, Select, Skeleton, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { Button, Card, Empty, Select, Skeleton, Space, Statistic, Table, Tabs, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
@@ -6,9 +6,12 @@ import dayjs from "dayjs";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { apiClient, extractErrorMessage } from "@/api/client";
-import type { AssetDetail, PageResult, TrackedAsset } from "@/api/types";
+import type { AssetDetail as AssetDetailType, PageResult, TrackedAsset } from "@/api/types";
+import { PageHeader } from "@/components/shared/PageHeader";
 import { PnlDisplay } from "@/components/shared/PnlDisplay";
 import { CollectionTimeline } from "@/components/shared/CollectionTimeline";
+import { QueryErrorState } from "@/components/shared/QueryErrorState";
+import { StatusTag } from "@/components/shared/StatusTag";
 import { formatNumber, formatPercent } from "@/utils/format";
 
 // 布局持久化 key
@@ -53,9 +56,9 @@ export default function AssetDetailPage() {
     staleTime: 30_000,
   });
 
-  const detail = useQuery<AssetDetail>({
+  const detail = useQuery<AssetDetailType>({
     queryKey: ["asset", assetId],
-    queryFn: async () => (await apiClient.get<AssetDetail>(`/assets/${assetId}`)).data,
+    queryFn: async () => (await apiClient.get<AssetDetailType>(`/assets/${assetId}`)).data,
     enabled: assetId !== null,
     staleTime: 30_000,
   });
@@ -76,7 +79,7 @@ export default function AssetDetailPage() {
   ) : detail.isLoading ? (
     <Skeleton active />
   ) : detail.isError ? (
-    <Card><Typography.Text type="danger">加载失败：{extractErrorMessage(detail.error)}</Typography.Text></Card>
+    <QueryErrorState error={detail.error} onRetry={detail.refetch} />
   ) : !detail.data ? (
     <Empty />
   ) : narrow ? (
@@ -86,9 +89,12 @@ export default function AssetDetailPage() {
   );
 
   return (
-    <Space direction="vertical" size="large" className="w-full">
-      <Typography.Title level={3}>标的详情</Typography.Title>
-      <Card size="small">
+    <Space direction="vertical" size={24} className="w-full">
+      <PageHeader
+        title="标的详情"
+        subtitle="基本面 / 行情 / AI 报告 三栏联动"
+      />
+      <Card size="small" className="w-full">
         <Space wrap>
           <Select
             showSearch
@@ -109,7 +115,7 @@ export default function AssetDetailPage() {
 }
 
 // ─── 三栏可拖拽布局（≥1024px）────────────────────────────
-function WideLayout({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRefresh: () => void; refreshing: boolean }) {
+function WideLayout({ detail, onRefresh, refreshing }: { detail: AssetDetailType; onRefresh: () => void; refreshing: boolean }) {
   const defaultLayout: Layout = loadLayout() ?? { [PANEL_IDS.left]: 25, [PANEL_IDS.middle]: 50, [PANEL_IDS.right]: 25 };
 
   const handleLayoutChange = useCallback((layout: Layout) => {
@@ -117,38 +123,40 @@ function WideLayout({ detail, onRefresh, refreshing }: { detail: AssetDetail; on
   }, []);
 
   return (
-    <Group orientation="horizontal" onLayoutChanged={handleLayoutChange} defaultLayout={defaultLayout} className="h-[calc(100vh-200px)] min-h-[400px]">
-      <Panel id={PANEL_IDS.left} minSize={15} className="overflow-auto">
-        <div className="pr-2 h-full">
-          <FundamentalPanel detail={detail} />
-        </div>
-      </Panel>
-      <Separator className="w-1.5 flex items-center justify-center cursor-col-resize hover:bg-[var(--color-primary)]/20 transition-colors group" aria-label="拖拽以调整宽度">
-        <div className="w-0.5 h-8 rounded-full bg-[var(--color-border-secondary)] group-hover:bg-[var(--color-primary)] transition-colors" />
-      </Separator>
+    <div className="flex flex-col flex-1 min-h-0">
+      <Group orientation="horizontal" onLayoutChanged={handleLayoutChange} defaultLayout={defaultLayout} className="flex-1 min-h-0">
+        <Panel id={PANEL_IDS.left} minSize={15} className="overflow-auto">
+          <div className="pr-2 h-full">
+            <FundamentalPanel detail={detail} />
+          </div>
+        </Panel>
+        <Separator className="w-3 flex items-center justify-center cursor-col-resize hover:bg-[var(--color-primary)]/20 transition-colors group" aria-label="拖拽以调整宽度">
+          <div className="h-full w-0.5 bg-[var(--color-border-strong)] group-hover:bg-[var(--color-primary)] transition-colors" />
+        </Separator>
 
-      <Panel id={PANEL_IDS.middle} minSize={30} className="overflow-auto">
-        <div className="px-2 h-full">
-          <ChartPanel detail={detail} />
-        </div>
-      </Panel>
-      <Separator className="w-1.5 flex items-center justify-center cursor-col-resize hover:bg-[var(--color-primary)]/20 transition-colors group" aria-label="拖拽以调整宽度">
-        <div className="w-0.5 h-8 rounded-full bg-[var(--color-border-secondary)] group-hover:bg-[var(--color-primary)] transition-colors" />
-      </Separator>
+        <Panel id={PANEL_IDS.middle} minSize={30} className="overflow-auto">
+          <div className="px-2 h-full">
+            <ChartPanel detail={detail} />
+          </div>
+        </Panel>
+        <Separator className="w-3 flex items-center justify-center cursor-col-resize hover:bg-[var(--color-primary)]/20 transition-colors group" aria-label="拖拽以调整宽度">
+          <div className="h-full w-0.5 bg-[var(--color-border-strong)] group-hover:bg-[var(--color-primary)] transition-colors" />
+        </Separator>
 
-      <Panel id={PANEL_IDS.right} minSize={15} className="overflow-auto">
-        <div className="pl-2 h-full">
-          <AiPanel detail={detail} onRefresh={onRefresh} refreshing={refreshing} />
-        </div>
-      </Panel>
-    </Group>
+        <Panel id={PANEL_IDS.right} minSize={15} className="overflow-auto">
+          <div className="pl-2 h-full">
+            <AiPanel detail={detail} onRefresh={onRefresh} refreshing={refreshing} />
+          </div>
+        </Panel>
+      </Group>
+    </div>
   );
 }
 
 // ─── 窄屏 Tabs 布局（<1024px）────────────────────────────
-function NarrowLayout({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRefresh: () => void; refreshing: boolean }) {
+function NarrowLayout({ detail, onRefresh, refreshing }: { detail: AssetDetailType; onRefresh: () => void; refreshing: boolean }) {
   return (
-    <Card title={`${detail.symbol} ${detail.name ?? ""}`}>
+    <Card title={`${detail.symbol} ${detail.name ?? ""}`} className="w-full">
       <Tabs
         items={[
           { key: "fundamental", label: "基本面", children: <FundamentalPanel detail={detail} /> },
@@ -164,7 +172,7 @@ function NarrowLayout({ detail, onRefresh, refreshing }: { detail: AssetDetail; 
 }
 
 // ─── 面板：基本面（财务 + 资金流向）────────────────────────
-function FundamentalPanel({ detail }: { detail: AssetDetail }) {
+function FundamentalPanel({ detail }: { detail: AssetDetailType }) {
   const f = detail.finance_summary ?? {};
   const flow = detail.fund_flow_summary ?? {};
   return (
@@ -188,7 +196,7 @@ function FundamentalPanel({ detail }: { detail: AssetDetail }) {
 }
 
 // ─── 面板：行情 + K 线 ───────────────────────────────
-function ChartPanel({ detail }: { detail: AssetDetail }) {
+function ChartPanel({ detail }: { detail: AssetDetailType }) {
   const q = detail.quote ?? {};
   const k = detail.kline_summary ?? {};
   return (
@@ -219,7 +227,7 @@ function ChartPanel({ detail }: { detail: AssetDetail }) {
 }
 
 // ─── 面板：AI 报告 ──────────────────────────────────
-function AiPanel({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRefresh: () => void; refreshing: boolean }) {
+function AiPanel({ detail, onRefresh, refreshing }: { detail: AssetDetailType; onRefresh: () => void; refreshing: boolean }) {
   const r = detail.latest_report;
   if (!r) {
     return (
@@ -236,21 +244,21 @@ function AiPanel({ detail, onRefresh, refreshing }: { detail: AssetDetail; onRef
   return (
     <Space direction="vertical" className="w-full">
       <Card size="small" title="AI 报告" extra={<Button size="small" onClick={onRefresh} loading={refreshing}>刷新</Button>} className="w-full">
-        <Space direction="vertical" className="w-full">
-          <Space>
-            <Tag color="blue">{r.action}</Tag>
-            <Tag>{r.risk_level}</Tag>
-            <Typography.Text type="secondary">{dayjs(r.generated_at).format("YYYY-MM-DD HH:mm")}</Typography.Text>
+        <Space direction="vertical" className="w-full" size={10}>
+          <Space size={6}>
+            <StatusTag value={r.action} variantMap={{ [r.action]: r.action === "buy" ? "success" : r.action === "sell" ? "error" : "info" }} labelMap={{ [r.action]: r.action }} />
+            <StatusTag value={r.risk_level} variantMap={{ [r.risk_level]: r.risk_level === "high" ? "error" : r.risk_level === "medium" ? "warning" : "success" }} labelMap={{ [r.risk_level]: r.risk_level }} />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>{dayjs(r.generated_at).format("YYYY-MM-DD HH:mm")}</Typography.Text>
           </Space>
-          <Typography.Paragraph>{r.summary}</Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>{r.summary}</Typography.Paragraph>
           {r.bullish_reasons && r.bullish_reasons.length > 0 && (
-            <Card size="small" type="inner" title="看多理由">
-              {r.bullish_reasons.map((s, i) => <div key={i}>▲ {s}</div>)}
+            <Card size="small" type="inner" title="看多理由" style={{ background: "var(--color-success-soft)" }}>
+              {r.bullish_reasons.map((s, i) => <div key={i} style={{ color: "var(--color-success)" }}>▲ {s}</div>)}
             </Card>
           )}
           {r.bearish_reasons && r.bearish_reasons.length > 0 && (
-            <Card size="small" type="inner" title="看空/风险">
-              {r.bearish_reasons.map((s, i) => <div key={i}>▼ {s}</div>)}
+            <Card size="small" type="inner" title="看空/风险" style={{ background: "var(--color-error-soft)" }}>
+              {r.bearish_reasons.map((s, i) => <div key={i} style={{ color: "var(--color-error)" }}>▼ {s}</div>)}
             </Card>
           )}
         </Space>

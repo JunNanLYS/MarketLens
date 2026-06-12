@@ -1,4 +1,4 @@
-import { Button, Card, Form, Input, Modal, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Form, Input, Modal, Select, Skeleton, Space, Switch, Table, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -6,17 +6,10 @@ import { apiClient, extractErrorMessage } from "@/api/client";
 import type { PageResult, TrackedAsset } from "@/api/types";
 import { MARKET_LABELS, ASSET_TYPE_LABELS } from "@/utils/constants";
 import { confirmDelete } from "@/components/shared/ConfirmDelete";
+import { PageHeader } from "@/components/shared/PageHeader";
 import { PnlDisplay } from "@/components/shared/PnlDisplay";
+import { QueryErrorState } from "@/components/shared/QueryErrorState";
 import { formatNumber } from "@/utils/format";
-
-interface SearchResult {
-  symbol: string;
-  name: string;
-  market?: string;
-  asset_type?: string;
-  source?: string;
-  already_tracked?: boolean;
-}
 
 const ASSET_TYPES = [
   { value: "stock", label: "股票" },
@@ -104,10 +97,12 @@ export default function TrackedAssetsPage() {
     onError: (err) => message.error(`添加失败：${extractErrorMessage(err)}`),
   });
 
-  const externalSearch = useQuery<{ items: SearchResult[]; total: number }>({
-    queryKey: ["assets", "search", keyword],
+  const externalSearch = useQuery<PageResult<TrackedAsset>>({
+    queryKey: ["assets", "external-search", keyword],
     queryFn: async () => {
-      const { data } = await apiClient.get("/assets/search", { params: { keyword, market } });
+      const { data } = await apiClient.get<PageResult<TrackedAsset>>("/assets", {
+        params: { search: keyword, page: 1, page_size: 10 },
+      });
       return data;
     },
     enabled: false,
@@ -120,20 +115,23 @@ export default function TrackedAssetsPage() {
       title: "市场",
       dataIndex: "market",
       key: "market",
-      render: (m?: string) => (m ? <Tag>{MARKET_LABELS[m] ?? m}</Tag> : "-"),
+      render: (m?: string) => (m ? <Tag bordered={false}>{MARKET_LABELS[m] ?? m}</Tag> : <span className="pnl-empty">—</span>),
     },
-    { title: "类型", dataIndex: "asset_type", key: "asset_type", render: (t?: string) => (t ? ASSET_TYPE_LABELS[t] ?? t : "-") },
+    { title: "类型", dataIndex: "asset_type", key: "asset_type", render: (t?: string) => (t ? ASSET_TYPE_LABELS[t] ?? t : <span className="pnl-empty">—</span>) },
     {
       title: "最新价",
       dataIndex: "latest_price",
       key: "latest_price",
-      render: (v?: number | null) => formatNumber(v),
+      align: "right",
+      className: "tabular-nums",
+      render: (v?: number | null) => (v != null ? formatNumber(v) : <span className="pnl-empty">—</span>),
     },
     {
       title: "涨跌幅",
       dataIndex: "latest_change_pct",
       key: "latest_change_pct",
-      render: (v?: number | null) => <PnlDisplay value={v} />,
+      align: "right",
+      render: (v?: number | null) => <PnlDisplay value={v} mode="text" />,
     },
     {
       title: "启用",
@@ -149,6 +147,7 @@ export default function TrackedAssetsPage() {
     {
       title: "操作",
       key: "actions",
+      align: "center",
       render: (_, record) => (
         <Button
           danger
@@ -168,78 +167,61 @@ export default function TrackedAssetsPage() {
   ];
 
   return (
-    <Space direction="vertical" size="large" className="w-full">
-      <Typography.Title level={3}>追踪标的</Typography.Title>
+    <Space direction="vertical" size={24} className="w-full">
+      <PageHeader
+        title="追踪标的"
+        subtitle="管理本地追踪的资产清单（数据采集、AI 报告、新闻分析都基于此清单）"
+        extra={
+          <Space>
+            <Button onClick={() => setSearchOpen((v) => !v)}>🔍 外部搜索</Button>
+            <Button type="primary" onClick={() => setAddOpen(true)}>+ 添加标的</Button>
+          </Space>
+        }
+      />
 
-      <Card size="small">
-        <Space wrap>
+      <Card size="small" className="w-full">
+        <Space wrap size="middle">
           <Input.Search placeholder="代码/名称" allowClear style={{ width: 200 }} onSearch={setSearch} />
           <Select placeholder="市场" allowClear style={{ width: 120 }} onChange={setMarket} options={Object.entries(MARKET_LABELS).map(([k, v]) => ({ value: k, label: v }))} />
           <Select placeholder="类型" allowClear style={{ width: 120 }} onChange={setAssetType} options={ASSET_TYPES} />
           <Select placeholder="状态" allowClear style={{ width: 120 }} onChange={setEnabled} options={[{ value: true, label: "启用" }, { value: false, label: "禁用" }]} />
-          <Button type="primary" onClick={() => setAddOpen(true)}>添加</Button>
-          <Button onClick={() => setSearchOpen((v) => !v)}>外部搜索</Button>
         </Space>
       </Card>
 
       {searchOpen && (
-        <Card size="small" title="搜索外部标的">
+        <Card size="small" title="搜索标的">
           <Space style={{ marginBottom: 12 }}>
             <Input.Search placeholder="关键词" allowClear style={{ width: 240 }} onSearch={(v) => { setKeyword(v); externalSearch.refetch(); }} />
           </Space>
-          <Table
-            size="small"
-            loading={externalSearch.isFetching}
-            rowKey={(r) => `${r.symbol}-${r.market ?? ""}-${r.source ?? ""}`}
-            dataSource={externalSearch.data?.items ?? []}
-            pagination={false}
-            columns={[
-              { title: "代码", dataIndex: "symbol" },
-              { title: "名称", dataIndex: "name" },
-              { title: "市场", dataIndex: "market", render: (m?: string) => (m ? MARKET_LABELS[m] ?? m : "-") },
-              { title: "类型", dataIndex: "asset_type", render: (t?: string) => (t ? ASSET_TYPE_LABELS[t] ?? t : "-") },
-              {
-                title: "来源",
-                dataIndex: "source",
-                render: (s?: string) => (s ? <Tag color={s === "local" ? "default" : "blue"}>{s}</Tag> : "-"),
-              },
-              {
-                title: "状态",
-                dataIndex: "already_tracked",
-                render: (tracked?: boolean) =>
-                  tracked ? <Tag color="green">已追踪</Tag> : <Tag>未添加</Tag>,
-              },
-              {
-                title: "操作",
-                render: (_, record) =>
-                  record.already_tracked ? (
-                    <Typography.Text type="secondary">-</Typography.Text>
-                  ) : (
-                    <Button
-                      size="small"
-                      loading={create.isPending && create.variables?.symbol === record.symbol}
-                      onClick={() =>
-                        create.mutate({
-                          symbol: record.symbol,
-                          name: record.name,
-                          market: record.market ?? "us",
-                          asset_type: record.asset_type ?? "stock",
-                        })
-                      }
-                    >
-                      添加
-                    </Button>
-                  ),
-              },
-            ]}
-          />
+          {externalSearch.isError ? (
+            <QueryErrorState error={externalSearch.error} onRetry={externalSearch.refetch} />
+          ) : (
+            <Table
+              size="small"
+              loading={externalSearch.isFetching}
+              rowKey="id"
+              dataSource={externalSearch.data?.items ?? []}
+              pagination={false}
+              columns={[
+                { title: "代码", dataIndex: "symbol" },
+                { title: "名称", dataIndex: "name" },
+                { title: "市场", dataIndex: "market", render: (m?: string) => (m ? MARKET_LABELS[m] ?? m : "-") },
+                { title: "类型", dataIndex: "asset_type", render: (t?: string) => (t ? ASSET_TYPE_LABELS[t] ?? t : "-") },
+                {
+                  title: "状态",
+                  dataIndex: "enabled",
+                  render: (e?: boolean) => (e === false ? <Tag>已停用</Tag> : <Tag color="green">已追踪</Tag>),
+                },
+              ]}
+            />
+          )}
         </Card>
       )}
 
       {assets.isLoading ? (
         <Skeleton active />
       ) : assets.isError ? (
-        <Card><Typography.Text type="danger">加载失败：{extractErrorMessage(assets.error)}</Typography.Text></Card>
+        <QueryErrorState error={assets.error} onRetry={assets.refetch} />
       ) : (
         <Table size="small" rowKey="id" dataSource={assets.data?.items ?? []} columns={columns} pagination={{ total: assets.data?.page_info.total, pageSize: 50, showSizeChanger: false }} />
       )}

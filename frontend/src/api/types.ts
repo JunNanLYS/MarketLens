@@ -39,9 +39,30 @@ export interface DataSourceItem {
   timeout?: number;
 }
 
+// /api/v1/data-sources/status 端点返回的扩展字段。
+// 不同 provider 类型附加的字段不一致（NeoData 有 token_*、WeStock 有 command*、普通 HTTP 有 endpoint），
+// 所以统一用可选字段表达，避免在父类强制收敛。
+export interface DataSourceStatusItem extends DataSourceItem {
+  configured?: boolean;
+  has_token?: boolean;
+  token_source?: string | null;
+  token_expires_at?: string | null;
+  token_verified?: boolean;
+  command?: string | null;
+  executable?: string | null;
+  command_resolved?: boolean;
+  endpoint?: string | null;
+}
+
 export interface DataSourcesConfig {
   structured: DataSourceItem[];
   news: DataSourceItem[];
+}
+
+export interface DataSourcesStatus {
+  structured: DataSourceStatusItem[];
+  news: DataSourceStatusItem[];
+  hint?: string;
 }
 
 export interface TaskStatusItem {
@@ -66,6 +87,15 @@ export interface TaskLog {
   affected_assets?: number | null;
 }
 
+// 新闻重要性档位（与 backend collectors 中 importance 取值保持一致）
+export type NewsImportance = "normal" | "high" | "low";
+
+export const IMPORTANCE_LABELS: Record<string, string> = {
+  normal: "普通",
+  high: "重要",
+  low: "次要",
+};
+
 export interface NewsItem {
   id: number;
   title: string;
@@ -75,8 +105,10 @@ export interface NewsItem {
   summary?: string | null;
   published_at?: string | null;
   sentiment?: "positive" | "negative" | "neutral" | null;
-  importance?: number | null;
-  related_symbols?: string[] | null;
+  // 后端 2026-06 起将 importance 改为字符串档位（normal/high/low）
+  importance?: NewsImportance | string | null;
+  // 后端返回空列表时为 []，从不返回 null；用可选 + 默认 [] 处理
+  related_symbols?: string[];
   collected_at?: string;
   // 2026-06-12 升级：DeepSeek 情感分析完整结果透出
   ai_scored?: boolean;            // true = 走过 DeepSeek；false = 迁移前数据或本次分析失败
@@ -94,6 +126,7 @@ export interface HealthResponse {
 export interface AIReport {
   id: number;
   symbol: string;
+  // name 字段：列表端点不返回，仅详情端点（GET /ai-reports/{id} /asset/{symbol} 详情）有
   name?: string | null;
   action: "buy" | "sell" | "watch" | "avoid";
   confidence: number;
@@ -130,6 +163,7 @@ export interface Account {
   currency: string;
   notes?: string | null;
   created_at?: string;
+  updated_at?: string;
   deleted_at?: string | null;
 }
 
@@ -141,10 +175,13 @@ export interface Transaction {
   quantity: number;
   price: number;
   fee?: number;
-  currency?: string | null;
+  // 后端 CreateTransactionRequest 接受 currency?: str | None；GET 返回时为 str（默认 CNY）
+  currency: string;
   trade_date: string;
   notes?: string | null;
   created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
 }
 
 export interface Position {
@@ -163,10 +200,28 @@ export interface RealizedPnlItem {
   account_id: number;
   symbol: string;
   total_sell_qty: number;
+  // 2026-06-08 起后端在 realized-pnl 列表中额外返回 avg_cost，便于前端展示卖出均价
+  avg_cost: number;
   realized_pnl: number;
 }
 
+// 防御性类型：后端 /positions/realized-pnl 当前返回扁平 { items, total, page, page_size }
+// （不带 page_info 包装），前端在 Phase 1 阶段先容忍两种格式：
+// - 扁平格式（实际后端契约）：{ items, total?, page?, page_size? }
+// - PageResult 格式（未来对齐后）：{ items, page_info }
+// RealizedPnlResult 把两种格式的可选字段都列上，UI 层按 `items` 取数即可。
+export interface RealizedPnlResult {
+  items: RealizedPnlItem[];
+  total?: number;
+  page?: number;
+  page_size?: number;
+  page_info?: PageInfo;
+}
+
 export interface AssetDetail extends TrackedAsset {
+  // 显式重写父类字段，避免子类型在 React 表格中类型变窄
+  latest_price?: number | null;
+  latest_change_pct?: number | null;
   quote?: {
     price?: number;
     change?: number;
@@ -179,7 +234,14 @@ export interface AssetDetail extends TrackedAsset {
     amount?: number;
     collected_at?: string;
   } | null;
-  kline_summary?: { ma5?: number; ma20?: number; ma60?: number; trend?: string } | null;
+  kline_summary?: {
+    ma5?: number;
+    ma20?: number;
+    ma60?: number;
+    trend?: string;
+    // 2026-06-08 起 K 线汇总暴露最新收盘价，便于图表缺数据时用兜底
+    latest_close?: number;
+  } | null;
   finance_summary?: {
     report_period?: string;
     revenue_yoy?: number;
@@ -190,5 +252,62 @@ export interface AssetDetail extends TrackedAsset {
   latest_report?: AIReport | null;
 }
 
+// ─── Request 类型：字段名严格匹配 backend Pydantic 模型 ───
+//
+// 后端约定：
+// - POST 创建用 *Request（带 default 值的字段也必须显式传入）
+// - PATCH 更新用 *Update（所有字段 Optional，仅传需要改的）
+//
+// 调用方应在 mutationFn 里把表单值用 omit / pick 收敛到对应请求类型。
 
+export interface CreateAccountRequest {
+  name: string;          // min_length=1
+  broker?: string | null;
+  currency?: string;     // default "CNY"
+  notes?: string | null;
+}
 
+export interface UpdateAccountRequest {
+  name?: string;         // min_length=1，可选
+  broker?: string | null;
+  currency?: string | null;
+  notes?: string | null;
+}
+
+export type TransactionType = "buy" | "sell" | "dividend" | "split";
+
+export interface CreateTransactionRequest {
+  account_id: number;
+  symbol: string;        // min_length=1
+  type: TransactionType;
+  quantity: number;      // gt 0
+  price: number;         // gt 0
+  fee?: number;          // default 0
+  currency?: string | null;
+  trade_date: string;    // ISO 8601 YYYY-MM-DD
+  notes?: string | null;
+}
+
+export interface UpdateTransactionRequest {
+  quantity?: number;     // gt 0
+  price?: number;        // gt 0
+  fee?: number;
+  currency?: string | null;
+  trade_date?: string;
+  notes?: string | null;
+}
+
+export interface CreateAssetRequest {
+  symbol: string;
+  name?: string | null;
+  market?: string | null;
+  asset_type?: string;   // default "stock"
+  tags?: string[] | null;
+  notes?: string | null;
+}
+
+export interface UpdateAssetRequest {
+  enabled?: boolean;
+  tags?: string[] | null;
+  notes?: string | null;
+}

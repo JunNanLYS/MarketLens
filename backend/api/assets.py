@@ -61,6 +61,7 @@ def list_assets(
     market: str | None = Query(default=None),
     asset_type: str | None = Query(default=None),
     tag: str | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=64),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
@@ -73,6 +74,8 @@ def list_assets(
         filters["asset_type"] = asset_type
     if tag is not None:
         filters["tag"] = tag
+    if search is not None and search.strip():
+        filters["search"] = search.strip()
     return _service.get_assets(filters=filters or None, page=page, page_size=page_size)
 
 

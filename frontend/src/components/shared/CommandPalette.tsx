@@ -65,27 +65,20 @@ function saveRecent(id: string) {
   localStorage.setItem(RECENT_KEY, JSON.stringify([id, ...prev].slice(0, MAX_RECENT)));
 }
 
+interface CommandPaletteProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
 // ─── 组件 ──────────────────────────────────────────────
-export function CommandPalette() {
-  const [open, setOpen] = useState(false);
+export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const [search, setSearch] = useState("");
   const [assetResults, setAssetResults] = useState<Array<{ id: number; symbol: string; name: string | null }>>([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // Cmd/Ctrl+K 快捷键
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
+  // Cmd/Ctrl+K 快捷键在父层（AppLayout）统一监听，避免重复绑定。
   // 搜索资产（防抖 200ms）
   useEffect(() => {
     if (!open) {
@@ -126,18 +119,18 @@ export function CommandPalette() {
         // 跳到任务状态页看结果
         navigate("/task-status");
       }
-      setOpen(false);
+      onOpenChange(false);
     },
-    [navigate],
+    [navigate, onOpenChange],
   );
 
   const navigateToAsset = useCallback(
     (assetId: number) => {
       saveRecent(`asset:${assetId}`);
       navigate(`/asset-detail?assetId=${assetId}`);
-      setOpen(false);
+      onOpenChange(false);
     },
-    [navigate],
+    [navigate, onOpenChange],
   );
 
   const recentIds = loadRecent();
@@ -160,9 +153,9 @@ export function CommandPalette() {
   }
 
   return (
-    <Command.Dialog open={open} onOpenChange={setOpen} label="命令面板" className="command-palette">
+    <Command.Dialog open={open} onOpenChange={onOpenChange} label="命令面板" className="command-palette">
       {/* 遮罩 */}
-      <div className="command-palette-overlay" onClick={() => setOpen(false)} />
+      <div className="command-palette-overlay" onClick={() => onOpenChange(false)} />
 
       {/* 容器 */}
       <div className="command-palette-container">
@@ -175,8 +168,14 @@ export function CommandPalette() {
           {assetResults.length > 0 && (
             <Command.Group heading="资产搜索">
               {assetResults.map((a) => (
-                <Command.Item key={`asset:${a.id}`} onSelect={() => navigateToAsset(a.id)}>
-                  {a.symbol} {a.name ?? ""}
+                <Command.Item
+                  key={`asset:${a.id}`}
+                  onSelect={() => navigateToAsset(a.id)}
+                  value={`${a.symbol} ${a.name ?? ""} ${a.id}`}
+                >
+                  <span className="command-palette-asset-symbol">{a.symbol}</span>
+                  <span className="command-palette-asset-name">{a.name ?? ""}</span>
+                  <span className="command-palette-asset-mini-tag">跳转 →</span>
                 </Command.Item>
               ))}
             </Command.Group>
