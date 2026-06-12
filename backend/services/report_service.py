@@ -220,8 +220,9 @@ class ReportService:
         await conn.execute(
             """INSERT OR IGNORE INTO ai_reports
                (symbol, action, confidence, risk_level, summary,
-                bullish_reasons, bearish_reasons, key_risks, data_used, generated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                bullish_reasons, bearish_reasons, key_risks, data_used,
+                sector_exposure, news_ai_scored_pct, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 symbol,
                 result["action"],
@@ -232,13 +233,15 @@ class ReportService:
                 json.dumps(result["bearish_reasons"], ensure_ascii=False),
                 json.dumps(result["key_risks"], ensure_ascii=False),
                 json.dumps(result["data_used"], ensure_ascii=False),
+                json.dumps(result.get("sector_exposure") or [], ensure_ascii=False),
+                result.get("news_ai_scored_pct"),
                 generated_at,
             ),
         )
 
     @staticmethod
     def _parse_report_row(row: dict) -> dict:
-        for key in ["bullish_reasons", "bearish_reasons", "key_risks", "data_used"]:
+        for key in ["bullish_reasons", "bearish_reasons", "key_risks", "data_used", "sector_exposure"]:
             val = row.get(key)
             if isinstance(val, str):
                 try:
@@ -247,4 +250,5 @@ class ReportService:
                     row[key] = []
             elif val is None:
                 row[key] = []
+        # news_ai_scored_pct 留作原始 float / None（前端 Progress 渲染）
         return row

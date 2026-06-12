@@ -1,4 +1,4 @@
-import { Card, Col, DatePicker, Empty, Progress, Row, Select, Skeleton, Space, Tag, Typography, message, Button } from "antd";
+import { Card, Col, DatePicker, Empty, Progress, Row, Select, Skeleton, Space, Tag, Tooltip, Typography, message, Button } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import dayjs, { Dayjs } from "dayjs";
@@ -18,6 +18,64 @@ const RISK_COLORS: Record<string, string> = {
   medium: "gold",
   high: "red",
 };
+
+// 把 news_ai_scored_pct 渲染为彩色 Progress + 提示
+// 100 = 全部 AI 评过分; 0 = 全是迁移前数据; null = 无新闻证据
+function NewsAiScoredPct({ pct }: { pct: number | null | undefined }) {
+  if (pct === null || pct === undefined) {
+    return (
+      <Tooltip title="本次证据包无新闻, 无法评估 AI 评分覆盖率">
+        <Tag data-testid="ai-scored-pct-empty">无新闻证据</Tag>
+      </Tooltip>
+    );
+  }
+  const color = pct >= 80 ? "green" : pct >= 40 ? "gold" : "red";
+  return (
+    <Tooltip
+      title={`近 7 天这只票的新闻中, ${pct.toFixed(0)}% 经过 DeepSeek 评分; 其余为 Provider 原值或迁移前数据`}
+    >
+      <Space size={4} className="w-full">
+        <Typography.Text type="secondary" className="text-xs" style={{ minWidth: 96 }}>
+          AI 评分覆盖
+        </Typography.Text>
+        <Progress
+          percent={pct}
+          size="small"
+          strokeColor={color}
+          showInfo
+          format={(p) => `${p?.toFixed(0) ?? 0}%`}
+          style={{ flex: 1, margin: 0 }}
+        />
+      </Space>
+    </Tooltip>
+  );
+}
+
+// 渲染 sector_exposure top 3 板块, 用颜色编码方向
+function SectorExposureChips({ sectors }: { sectors: AIReport["sector_exposure"] }) {
+  if (!sectors || sectors.length === 0) return null;
+  return (
+    <Space wrap size={4}>
+      {sectors.slice(0, 3).map((s) => {
+        const total = s.positive + s.negative + s.neutral;
+        const color =
+          s.positive > s.negative && s.positive >= total * 0.5
+            ? "green"
+            : s.negative > s.positive && s.negative >= total * 0.5
+            ? "red"
+            : "default";
+        const tip = `${s.sector}: 共 ${s.count} 条, 正${s.positive}/负${s.negative}/中${s.neutral}, 平均置信 ${s.avg_confidence?.toFixed(2) ?? "-"}`;
+        return (
+          <Tooltip key={s.sector} title={tip}>
+            <Tag color={color} data-testid="sector-exposure-tag">
+              {s.sector} · {s.count}
+            </Tag>
+          </Tooltip>
+        );
+      })}
+    </Space>
+  );
+}
 
 interface ReportsFilter {
   date?: Dayjs;
@@ -134,6 +192,10 @@ export default function AiReportsPage() {
                       <Tag color={RISK_COLORS[r.risk_level] ?? "default"}>{r.risk_level}</Tag>
                     </Space>
                     <Progress percent={Math.round(r.confidence * 100)} size="small" showInfo />
+                    <NewsAiScoredPct pct={r.news_ai_scored_pct} />
+                    {r.sector_exposure && r.sector_exposure.length > 0 && (
+                      <SectorExposureChips sectors={r.sector_exposure} />
+                    )}
                     <Typography.Paragraph style={{ marginBottom: 0 }} ellipsis={{ rows: 2 }}>
                       {r.summary}
                     </Typography.Paragraph>

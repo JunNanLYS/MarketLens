@@ -149,6 +149,8 @@ TABLE_DDLS: list[str] = [
         bearish_reasons TEXT,
         key_risks TEXT,
         data_used TEXT,
+        sector_exposure TEXT,
+        news_ai_scored_pct REAL,
         generated_at TIMESTAMP NOT NULL
     )
     """,
@@ -708,6 +710,8 @@ async def init_db(db_path: str | None = None) -> None:
         await _migrate_news_items_add_sectors(conn)
         # news_items 新增 confidence + sentiment_reason
         await _migrate_news_items_add_confidence_reason(conn)
+        # ai_reports 新增 sector_exposure + news_ai_scored_pct
+        await _migrate_ai_reports_add_sector_exposure(conn)
 
 
 def init_db_sync(db_path: str | None = None) -> None:
@@ -723,6 +727,8 @@ def init_db_sync(db_path: str | None = None) -> None:
         _migrate_news_items_add_sectors_sync(conn)
         # news_items 新增 confidence + sentiment_reason
         _migrate_news_items_add_confidence_reason_sync(conn)
+        # ai_reports 新增 sector_exposure + news_ai_scored_pct
+        _migrate_ai_reports_add_sector_exposure_sync(conn)
 
 
 def _raw_data_symbol_is_not_null_sync(conn: sqlite3.Connection) -> bool:
@@ -909,3 +915,63 @@ async def _migrate_news_items_add_confidence_reason(conn: aiosqlite.Connection) 
         await conn.execute("ALTER TABLE news_items ADD COLUMN sentiment_reason TEXT")
         await conn.commit()
         logger.info("news_items.sentiment_reason 列已添加（ALTER TABLE 完成）")
+
+
+# ---------------------------------------------------------------------------
+# 迁移：ai_reports 新增 sector_exposure + news_ai_scored_pct 列
+# sector_exposure TEXT —— JSON 数组, 来自 evidence_builder 的 top 3 板块聚合
+# news_ai_scored_pct REAL —— 0~100, "AI 评过分"的新闻占比
+# ---------------------------------------------------------------------------
+
+
+def _ai_reports_has_sector_exposure_sync(conn: sqlite3.Connection) -> bool:
+    """检查 ai_reports 是否已有 sector_exposure 列。"""
+    rows = conn.execute("PRAGMA table_info(ai_reports)").fetchall()
+    return any(row["name"] == "sector_exposure" for row in rows)
+
+
+def _ai_reports_has_news_ai_scored_pct_sync(conn: sqlite3.Connection) -> bool:
+    """检查 ai_reports 是否已有 news_ai_scored_pct 列。"""
+    rows = conn.execute("PRAGMA table_info(ai_reports)").fetchall()
+    return any(row["name"] == "news_ai_scored_pct" for row in rows)
+
+
+def _migrate_ai_reports_add_sector_exposure_sync(conn: sqlite3.Connection) -> None:
+    """迁移：为 ai_reports 添加 sector_exposure 和 news_ai_scored_pct 列。
+
+    SQLite ALTER TABLE 一次只能加一列，分两次执行。
+    """
+    if not _ai_reports_has_sector_exposure_sync(conn):
+        conn.execute("ALTER TABLE ai_reports ADD COLUMN sector_exposure TEXT")
+        conn.commit()
+        logger.info("ai_reports.sector_exposure 列已添加（ALTER TABLE 完成）")
+    if not _ai_reports_has_news_ai_scored_pct_sync(conn):
+        conn.execute("ALTER TABLE ai_reports ADD COLUMN news_ai_scored_pct REAL")
+        conn.commit()
+        logger.info("ai_reports.news_ai_scored_pct 列已添加（ALTER TABLE 完成）")
+
+
+async def _ai_reports_has_sector_exposure(conn: aiosqlite.Connection) -> bool:
+    """异步版：检查 ai_reports 是否已有 sector_exposure 列。"""
+    cursor = await conn.execute("PRAGMA table_info(ai_reports)")
+    rows = await cursor.fetchall()
+    return any(row["name"] == "sector_exposure" for row in rows)
+
+
+async def _ai_reports_has_news_ai_scored_pct(conn: aiosqlite.Connection) -> bool:
+    """异步版：检查 ai_reports 是否已有 news_ai_scored_pct 列。"""
+    cursor = await conn.execute("PRAGMA table_info(ai_reports)")
+    rows = await cursor.fetchall()
+    return any(row["name"] == "news_ai_scored_pct" for row in rows)
+
+
+async def _migrate_ai_reports_add_sector_exposure(conn: aiosqlite.Connection) -> None:
+    """异步版迁移：为 ai_reports 添加 sector_exposure 和 news_ai_scored_pct 列。"""
+    if not await _ai_reports_has_sector_exposure(conn):
+        await conn.execute("ALTER TABLE ai_reports ADD COLUMN sector_exposure TEXT")
+        await conn.commit()
+        logger.info("ai_reports.sector_exposure 列已添加（ALTER TABLE 完成）")
+    if not await _ai_reports_has_news_ai_scored_pct(conn):
+        await conn.execute("ALTER TABLE ai_reports ADD COLUMN news_ai_scored_pct REAL")
+        await conn.commit()
+        logger.info("ai_reports.news_ai_scored_pct 列已添加（ALTER TABLE 完成）")

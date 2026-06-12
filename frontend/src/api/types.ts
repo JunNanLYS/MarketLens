@@ -103,6 +103,17 @@ export interface AIReport {
   bearish_reasons?: string[] | null;
   key_risks?: string[] | null;
   data_used?: Array<{ source: string; data_type?: string; collected_at?: string }>;
+  // 2026-06-12 升级: sector_exposure / news_ai_scored_pct 从 ai_analyzer.analyze 透出
+  sector_exposure?: Array<{
+    sector: string;
+    count: number;
+    positive: number;
+    negative: number;
+    neutral: number;
+    avg_confidence: number | null;
+  }> | null;
+  // 0~100 浮点; null = 无新闻证据或全部未评分
+  news_ai_scored_pct?: number | null;
   generated_at: string;
 }
 
