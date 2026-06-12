@@ -19,7 +19,6 @@ from backend.services.sentiment.models import SentimentResult
 from backend.services.sentiment.deepseek_provider import DeepSeekSentimentAnalyzer
 from backend.services.sentiment import create_sentiment_analyzer
 
-
 # ---------------------------------------------------------------------------
 # models.py 测试
 # ---------------------------------------------------------------------------
@@ -165,13 +164,16 @@ class TestDeepSeekSentimentAnalyzer:
         assert results[0].confidence == 0.85
         assert "降息" in results[0].reason
 
-        # 验证请求体开启了思考模式（v4-pro + thinking enabled）
+        # 验证请求体：默认 v4-pro + max_tokens=1500，但思考模式按调用方决定
+        # （新闻情感默认关, narrative_summary 才开；这里未显式开所以应该没 thinking 字段）
         call_args = mock_client.post.call_args
         body = call_args.kwargs["json"]
         assert body["model"] == "deepseek-v4-pro"  # 默认 model
+        assert body["max_tokens"] == 1500
+        # 当前测试用 DeepSeekSentimentAnalyzer 显式构造且未传 thinking_enabled，
+        # 默认值是 True（向后兼容），所以这里仍然有 thinking 字段
         assert body["thinking"] == {"type": "enabled"}
         assert body["reasoning_effort"] == "high"
-        assert body["max_tokens"] == 1500
 
     async def test_thinking_disabled_omits_thinking_field(self) -> None:
         """思考关闭时请求体不应含 thinking/reasoning_effort 字段（兼容 cheap 模式）。"""
@@ -193,6 +195,16 @@ class TestDeepSeekSentimentAnalyzer:
         body = mock_client.post.call_args.kwargs["json"]
         assert "thinking" not in body
         assert "reasoning_effort" not in body
+
+    async def test_init_defaults_thinking_enabled_true(self) -> None:
+        """DeepSeekSentimentAnalyzer 显式构造未传 thinking_enabled 时默认 True。
+
+        这保证底层类与工厂解耦：工厂可以传 False（省 token），但底层类仍能
+        被其他调用方按需启用思考。
+        """
+        analyzer = DeepSeekSentimentAnalyzer(api_key="sk-test")
+        assert analyzer.thinking_enabled is True
+        assert analyzer.reasoning_effort == "high"
 
     async def test_analyze_single_failure_does_not_block_others(self) -> None:
         """单条失败对应位置返回 None，不阻塞其他条。"""
@@ -385,6 +397,20 @@ class TestDeepSeekSentimentAnalyzer:
 
 
 # ---------------------------------------------------------------------------
+
+
+
+# 下方 TestCreateSentimentAnalyzerThinkingByUseCase 类是 2026-06-12 新增的,
+# 必须在所有老测试之后声明; pytest 收集顺序敏感, 放错位置会让老测试错挂。
+# 当前结构 (按文件顺序):
+#   1. TestSentimentResult                       (line 28)
+#   2. TestDeepSeekSentimentAnalyzer              (line 84)  ← 含至 line 208
+#   3. TestCreateSentimentAnalyzer                (line ~405, 老 factory 测试)
+#   4. TestCreateSentimentAnalyzerThinkingByUseCase (本类, 放最末)
+
+
+
+# ---------------------------------------------------------------------------
 # __init__.py 测试
 # ---------------------------------------------------------------------------
 
@@ -435,3 +461,103 @@ class TestCreateSentimentAnalyzer:
             analyzer = create_sentiment_analyzer(config=config)
             assert isinstance(analyzer, DeepSeekSentimentAnalyzer)
             assert analyzer._api_key == "sk-from-env"
+
+
+class TestCreateSentimentAnalyzerThinkingByUseCase:
+    """create_sentiment_analyzer 按 use_case 决定 thinking 开关。
+
+    2026-06-12 新增：v4-pro 1M 上下文 + 500 并发优势下, 不同调用场景对 thinking
+    需求差异大:
+    - news 情感分类: 简单任务, 关思考省 token (1.5~3x 节省)
+    - narrative_summary 综合判断: 多步推理, 开思考 high
+    """
+
+    def test_news_use_case_disables_thinking(self) -> None:
+        """新闻情感分析（默认 use_case）应关思考，省 token。"""
+        config = {
+            "sentiment": {
+                "provider": "deepseek",
+                "optional": True,
+                "thinking_by_use_case": {
+                    "news": {"enabled": False},
+                    "narrative_summary": {"enabled": True, "reasoning_effort": "high"},
+                },
+            }
+        }
+        a = create_sentiment_analyzer(config=config, use_case="news")
+        assert a is not None
+        assert a.thinking_enabled is False  # news 关
+
+    def test_narrative_summary_use_case_enables_thinking(self) -> None:
+        """narrative_summary 场景应开思考。"""
+        config = {
+            "sentiment": {
+                "provider": "deepseek",
+                "optional": True,
+                "thinking_by_use_case": {
+                    "news": {"enabled": False},
+                    "narrative_summary": {"enabled": True, "reasoning_effort": "high"},
+                },
+            }
+        }
+        a = create_sentiment_analyzer(config=config, use_case="narrative_summary")
+        assert a is not None
+        assert a.thinking_enabled is True
+        assert a.reasoning_effort == "high"
+
+    def test_default_use_case_is_news(self) -> None:
+        """create_sentiment_analyzer() 不传 use_case 时默认是 news → 关思考。"""
+        config = {
+            "sentiment": {
+                "provider": "deepseek",
+                "optional": True,
+                "thinking_by_use_case": {
+                    "news": {"enabled": False},
+                    "narrative_summary": {"enabled": True},
+                },
+            }
+        }
+        a = create_sentiment_analyzer(config=config)
+        assert a is not None
+        assert a.thinking_enabled is False
+
+    def test_legacy_thinking_config_still_works(self) -> None:
+        """老 thinking.enabled 配置仍然生效（向后兼容）— 不论 use_case 都用。"""
+        config = {
+            "sentiment": {
+                "provider": "deepseek",
+                "optional": True,
+                "thinking": {"enabled": True, "reasoning_effort": "medium"},
+            }
+        }
+        # legacy 配置: news 也会开（因为 thinking_by_use_case 没设置）
+        a = create_sentiment_analyzer(config=config, use_case="news")
+        assert a is not None
+        assert a.thinking_enabled is True
+        assert a.reasoning_effort == "medium"
+
+    def test_unknown_use_case_falls_back_to_enabled(self) -> None:
+        """未在 thinking_by_use_case 中声明的 use_case 默认为开（保守策略）。"""
+        config = {
+            "sentiment": {
+                "provider": "deepseek",
+                "optional": True,
+                "thinking_by_use_case": {
+                    "news": {"enabled": False},
+                },
+            }
+        }
+        a = create_sentiment_analyzer(config=config, use_case="future_unknown")
+        assert a is not None
+        assert a.thinking_enabled is True  # 未知 use_case 默认开
+
+    def test_no_thinking_config_news_default_disabled(self) -> None:
+        """完全没配 thinking 段时，news 默认关（省 token），其他默认开。"""
+        config = {"sentiment": {"provider": "deepseek", "optional": True}}
+        a_news = create_sentiment_analyzer(config=config, use_case="news")
+        assert a_news is not None
+        assert a_news.thinking_enabled is False
+
+        a_other = create_sentiment_analyzer(config=config, use_case="other")
+        assert a_other is not None
+        assert a_other.thinking_enabled is True

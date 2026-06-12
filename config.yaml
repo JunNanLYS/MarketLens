@@ -224,15 +224,20 @@ security:
 #           不阻断采集流程。
 # api_key: 也可通过环境变量 DEEPSEEK_API_KEY 注入，优先级高于本文件。
 # model: deepseek-v4-pro（2026-07-24 起官方推荐; 替代 deepseek-chat/reasoner）
-# thinking: 开启推理模式, reasoning_effort=high 适合金融情感分析多步推断
+# thinking: 按 use_case 分别控制 — 简单分类任务（如新闻情感）可关思考省 token，
+#   综合判断 / narrative summary 类任务才开思考。
+#   v4-pro 支持 1M 上下文 + 500 并发，但思考链会占 1.5~3x 输出 token。
 sentiment:
   provider: deepseek
   api_key: ''                # 兜底占位；优先读取 DEEPSEEK_API_KEY 环境变量
   base_url: 'https://api.deepseek.com'  # v4-pro 官方 base，无 /v1 后缀
   model: 'deepseek-v4-pro'   # 2026-07-24 起官方推荐; 替代 deepseek-chat / deepseek-reasoner
-  thinking:
-    enabled: true            # 开启 reasoning, 适合金融情感分析多步推断
-    reasoning_effort: high   # high = 深度思考; 备选 medium / low
+  thinking_by_use_case:
+    news:                    # 新闻情感分析：单条 1k token 足以分类，关思考省 token
+      enabled: false
+    narrative_summary:       # 未来 AI 综合判断（待实现）：开思考做多步推理
+      enabled: true
+      reasoning_effort: high
   timeout: 60                # 思考模式单次推理更长, 30s 可能超时
   optional: true
 
