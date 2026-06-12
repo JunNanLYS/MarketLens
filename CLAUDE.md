@@ -139,14 +139,7 @@ MarketLens is a **local-first, evidence-driven AI financial research assistant**
 
 ### Layered design (top to bottom)
 
-```
-React + Vite UI (frontend/)  — display only; never touches DB directly, communicates via FastAPI API
-FastAPI routes (api/)       — validate params, call services, return JSON
-Services (services/)        — business logic orchestration
-Collectors (collectors/)    — ONLY module that calls external data sources
-Storage (storage/)          — ONLY module that runs CREATE TABLE / ALTER TABLE
-Scheduler (scheduler/)      — ONLY module that registers APScheduler jobs
-```
+见下方 [Module boundaries (enforced)](#module-boundaries-enforced)。
 
 ### Data source Provider pattern
 
@@ -255,23 +248,13 @@ Every APScheduler job MUST:
 
 ## Skills
 
-> When working on this project, invoke the following skills as appropriate:
-
-| Skill | When to use |
-|---|---|
-| `code-review` | Review code changes for bugs, simplifications, and efficiency |
-| `fastapi-backend-tester` | Write and run FastAPI backend tests |
-| `fastapi-pro-expert` | FastAPI best practices (Pydantic v2, DI, async DB, auto-docs) |
-| `skill-fastapi` | FastAPI + SQLModel coding conventions (project structure, routing, services, testing) |
-| `restful-api-design` | RESTful API design standards |
-| `git-commit` | Conventional commit messages with intelligent staging |
-| `verify` | Verify changes work by running the app |
+Claude Code 自动从可用 skills 列表加载,无需在此登记。需要时调用即可。
 
 ## Known issues
 
-See `ISSUES.md` for a comprehensive audit covering correctness, performance, and maintainability findings.
+See `ISSUES.md` for the comprehensive audit covering correctness, performance, and maintainability findings.
 
-下方 4 条 **截至 2026-06-06 已通过代码验证实际解决**，保留以追踪决策历史；新增问题请追加到本节末尾。
+下方 5 条 **截至 2026-06-06 已通过代码验证实际解决**，保留以追踪决策历史；新增问题请追加到本节末尾。
 
 - ✅ ~~`BaseProvider` defines 6 abstract methods but news/RSS providers only implement `search()` — the rest return empty stubs~~ → 拆分为 `StructuredProvider` + `NewsProvider` 两个 ABC（[base.py:22,71,102](backend/collectors/base.py)）；新闻类 Provider 改为继承 `NewsProvider` 并删去 6 个空 stub；MRO 兼容性由 [test_base_abcs.py](tests/collectors/test_base_abcs.py) 11 个单测守护。
 - ✅ ~~`ai_reports` table uses an index rather than a UNIQUE constraint on `(symbol, date(generated_at))`, risking duplicate reports~~ → 已升级为 `CREATE UNIQUE INDEX`（[schema.py:271-272](backend/storage/schema.py)）。
@@ -353,12 +336,7 @@ Commit all changes with a conventional commit message (use `git-commit` skill):
 
 ### 资金主线 CRITICAL 状态
 
-**8 / 8 已修**（资金 5 + 写锁 3），逐条复验见 `ISSUES.md` 第 8 轮复验记录（2026-06-07）：
-
-- 资金主线 5 条：`portfolio_service` 的 `update_transaction` 写锁 / `delete_transaction` 写锁 / split 校验 / WAC 幻股 / WAC fee
-- 写锁 3 条：`news_service` 写锁 / `_run_cleanup` 写锁 / 第 6 轮补登 `report_service.generate_reports` 写锁
-
-项目当前已无资金/写锁类 P0 阻断性 bug。
+**8 / 8 已修**（资金 5 + 写锁 3），逐条复验见 `ISSUES.md` 第 8 轮复验记录（2026-06-07）。项目当前已无资金/写锁类 P0 阻断性 bug。
 
 ### 基础设施
 
@@ -371,89 +349,9 @@ Commit all changes with a conventional commit message (use `git-commit` skill):
   - pytest fast（`pre-push` 阶段，`-x` 遇首个失败即停）
 - 安装命令：`uv run pre-commit install --hook-type pre-commit --hook-type pre-push`
 
-### 8 轮修复历史摘要
+### 配套文档（按需扫读）
 
-- **第 4-7 轮审查** — 4-Agent 并行深度复审，发现 70+ 条（CRITICAL 8 / MAJOR 12 / MINOR 19 / NIT 10 = 48 登记条目，外加 5 轮 26 条附加项）
-- **第 8 轮** — 资金主线 8 个 CRITICAL 全部修复 + 复验记录入库
-- **第 9 轮** — 5 条收尾（quotes CTE MAJOR / naive datetime MAJOR / realized-pnl 翻页 doc MINOR / lifespan 资源清理 NIT / westock 贪婪匹配 NIT）
-- **第 10 轮** — 7 doc 校准 + 30 个 client 方法补全（72 端点全覆盖）+ realized-pnl wrapper 同构
-- **第 11 轮** — 收尾：`git mv` 清理错位文件 / pre-commit 钩子补全 / CI workflow 落地
-- **第 12 轮** — Streamlit → React + Vite 完整迁移：7 页面全部实现 / Streamlit 删除 / 启动器重构 / CI 增加 frontend job / 文档同步
-
-> 详细逐条复验表 + 决策追踪见 `ISSUES.md` 第 8-11 轮复验记录（行 117-200）。
-
-### 关键设计决策（经验沉淀）
-
-CLAUDE.md 已有 "Architecture" 段描述分层与 Provider 模式；以下是 **实操经验**（不在任何其他文档，复用时务必遵守）：
-
-1. **`_WRITE_LOCK` 必须包裹所有 SQLite 写路径**（CLAUDE.md 硬约束，第 209-213 行）
-   - 同步 `sqlite3` 不支持多协程并发写；所有写路径必须 `with _WRITE_LOCK:`，读路径可并发
-   - 历史教训：第 4 轮 5 个 portfolio 写端点全部漏锁 → 用户 P&L 串号；第 6/8 轮补登 `report_service` / `news_service` / `_run_cleanup` 3 处
-   - 新增 Service / 新增写端点 → 第一件事就是加 `with _WRITE_LOCK:`
-
-2. **`frontend/` 严禁 import `backend/storage/`**（Module boundaries，第 197-207 行）
-   - UI 必须走 FastAPI（`frontend/src/api/client.ts`），绝不能直接碰 SQLite
-   - 跨层 import 是部署期地雷：UI 与 backend 用不同的 venv/进程时会立即炸
-
-3. **文档同步 = 后端代码改必动 `docs/api/*.md`**（Task Completion Checklist 第 3 步）
-   - 端点签名、状态码、字段名 3 处任一变动 → 同步更新 `docs/api/*.md`
-   - 过去教训：第 4-7 轮发现 30+ 处 doc/code drift；第 10 轮 Agent 3 专门 7 doc 校准 + 30+ 处状态码修正
-
-4. **evidence-driven AI：每条采集数据必须被 `_check_*` 消费**（Architecture 第 149-161 行）
-   - `EvidenceBuilder.build(symbol)` 只组装**真实采集**的证据；AI 输出必须含 `data_used` 字段列出每个引用源 + 采集时间
-   - 不允许 hallucinate 分析；这条是项目"证据驱动"价值主张的底线
-
-## Issue tracker 迁移（CODE_REVIEW.md → ISSUES.md）
-
-> **新会话接手时务必知道的"文件重命名"事实**，避免误以为仓库里没有 issue tracker。
-
-**事实**：
-- **2026-06-08（第 11 轮）**：`git mv CODE_REVIEW.md ISSUES.md`
-- 决策依据：10 轮审查+修复后，`CODE_REVIEW.md` 主体已无活跃问题登记（仅保留决策历史/复验记录），文件名"Code Review"暗示"审查动作"已与实际角色（issue tracker + 决策归档）不匹配
-- `git mv` 保留完整 history 审计追踪链（rename 79% 匹配）
-
-**当前 `ISSUES.md` 角色**（**根目录 active tracker**）：
-- 发现新 bug → 在根 `ISSUES.md` **"已知问题登记"**章节追加条目
-- 修复后从根 `ISSUES.md` 删除该条目
-- **项目状态稳定后（主体清零）** → `git mv` 整个 `ISSUES.md` 到 `docs/dev/issues_<归档日期>.md` → 在根创建新空 `ISSUES.md` 模板
-- 这样根 `ISSUES.md` 永远反映"当前活跃问题"，归档文件保留决策历史
-- `docs/dev/issues_2026-06-08.md` —— 第 4-11 轮审查 70+ 条 + 9 轮修复决策历史（首次归档）
-
-**所有引用迁移完成**（11 轮一次性同步）：
-- `CLAUDE.md` line 261（"Known issues" 章节曾引导到 `See ISSUES.md`——第 10 轮删除 Known issues 章节时此引导句仍保留；第 11 轮 git mv 时已同步引用）
-- `docs/architecture.md` 4 处
-- `ui/app.py` 1 处注释
-- `ui/pages/portfolio.py` 1 处 docstring
-- `tests/collectors/test_sina.py` 1 处测试注释
-
-**禁止行为**：
-- 不要 `git rm ISSUES.md` + `git add docs/dev/issues_*.md`（会断 history，应 `git mv`）
-- 不要新建 `CODE_REVIEW.md` 文件（git history 已保留）
-- 不要在 git commit message 中用 `CODE_REVIEW.md`（用 `ISSUES.md`）
-- 不要在 `docs/dev/issues_*.md` 文件**追加**新内容（归档文件只读，新内容去根 `ISSUES.md`）
-
-## 经验速查（lessons_learned.md）
-
-> **新会话接手第 1 件事**：扫读 [`docs/dev/lessons_learned.md`](docs/dev/lessons_learned.md)（5 分钟速查版）
->
-> 该文件集中归档了 4-12 轮审查/修复中所有"踩过的坑"与"实操最佳实践"，
-> 避免散落在 CLAUDE.md / ISSUES.md / 归档文件各处反复探索。
->
-> **覆盖主题**：
-> 1. `_WRITE_LOCK` 写锁包裹所有 SQLite 写路径（含 4 轮历史教训）
-> 2. `ui/` 严禁 import `backend/storage/`
-> 3. 改后端必动 `docs/api/*.md`
-> 4. evidence-driven AI：`_check_*` 必须与 symbol 强相关
-> 5. `Provider.close()` MRO 陷阱（含 `_HttpClientMixin` 叶子节点说明）
-> 6. 锁测试 `_ObservableLock` 范式 + 双向 patch
-> 7. loguru `caplog` 桥接缺失 → 用 `logger.add(lambda)`
-> 8. sync 改 async 时旧测试 `RuntimeWarning`
-> 9. 多 Agent 文件零交叉可完全并行
-> 10. 静默 `LIMIT` 必须截断探测
-
-**与本文件关系**：
-- **CLAUDE.md** —— 项目硬约束、架构、命令（必读）
-- **lessons_learned.md** —— 历次踩坑 + 实操经验（必读）
-- **ISSUES.md** —— 当前活跃 issue tracker（修完即删）
-- **docs/dev/issues_*.md** —— 历史归档（只读）
+- **[`docs/dev/lessons_learned.md`](docs/dev/lessons_learned.md)** — 11 项实操经验(写锁/分层/文档同步/evidence/Provider MRO/锁测试/loguru/sync→async/多 Agent/截断探测/依赖声明)。**新会话第 1 件必读。**
+- **`ISSUES.md`** — 当前活跃问题登记(修完即删)。
+- **`docs/dev/issues_*.md`** — 历史归档(只读,记录 4-12 轮 70+ 条审查+修复决策)。第 11 轮 `git mv` `CODE_REVIEW.md` → `ISSUES.md` 保留 history。
 
