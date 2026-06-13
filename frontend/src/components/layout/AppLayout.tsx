@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Layout, Space, Typography } from "antd";
 import { Outlet, useLocation } from "react-router-dom";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { HealthIndicator } from "./HealthIndicator";
 import { ThemeToggle } from "./ThemeToggle";
 import { KpiBar } from "./KpiBar";
@@ -127,19 +127,15 @@ export function AppLayout() {
         <div style={{ marginBottom: 24 }}>
           <KpiBar />
         </div>
-        {/* 路由切换：AnimatePresence 用 wait 模式避免新旧页面同时占布局空间。 */}
-        <AnimatePresence initial={false} mode="wait">
-          <motion.div
-            key={location.pathname}
-            initial={reduceMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={reduceMotion ? undefined : { opacity: 0 }}
-            transition={{ duration: 0.12, ease: "linear" }}
-            style={{ willChange: "opacity" }}
-          >
-            <Outlet />
-          </motion.div>
-        </AnimatePresence>
+        <motion.div
+          key={location.pathname}
+          initial={reduceMotion ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.08, ease: "linear" }}
+          style={{ willChange: "opacity" }}
+        >
+          <Outlet />
+        </motion.div>
       </Content>
     </Layout>
   );
