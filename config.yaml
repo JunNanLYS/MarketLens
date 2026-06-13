@@ -12,7 +12,9 @@ data_sources:
     name: westock_hot
     optional: true
     params:
-      command: npx -y westock-data-clawhub@1.0.4
+      # 需先 `npm i -g westock-data-clawhub@1.0.4` 本地安装,直接调全局 CLI
+      # 避免 npx 每次冷启动引发的 Node CSPRNG 断言崩溃(2026-06-13 验证)。
+      command: westock-data-clawhub
     provider: WeStockProvider
     timeout: 30
   - enabled: true
@@ -93,7 +95,9 @@ data_sources:
   - enabled: true
     name: westock
     params:
-      command: npx -y westock-data-clawhub@1.0.4
+      # 需先 `npm i -g westock-data-clawhub@1.0.4` 本地安装,直接调全局 CLI
+      # 避免 npx 每次冷启动引发的 Node CSPRNG 断言崩溃(2026-06-13 验证)。
+      command: westock-data-clawhub
     provider: WeStockProvider
     timeout: 30
   - enabled: true

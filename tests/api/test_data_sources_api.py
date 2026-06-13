@@ -85,20 +85,25 @@ def test_neodata_without_token_reports_has_token_false_with_error_hint() -> None
 
 
 def test_westock_command_resolved_true_when_executable_exists() -> None:
+    # westock 的 command 字段是 `westock-data-clawhub`(2026-06-13 改:不再
+    # 走 npx)。mock shutil.which 返回该 wrapper 的绝对路径,验证:
+    # - executable = 返回路径的 basename = "westock-data-clawhub"
+    # - command = 配置文件原始值
     with patch(
         "backend.api.data_sources.NeoDataClient",
         side_effect=_neo_client_factory(True),
     ):
         with patch(
-            "backend.api.data_sources.shutil.which", return_value="/usr/local/bin/npx"
+            "backend.api.data_sources.shutil.which",
+            return_value="C:/Users/xxx/AppData/Roaming/npm/westock-data-clawhub",
         ):
             client = TestClient(app)
             resp = client.get("/api/v1/data-sources/status")
     body = resp.json()
     westock = next(s for s in body["structured"] if s["provider"] == "WeStockProvider")
-    assert westock["executable"] == "npx"
+    assert westock["executable"] == "westock-data-clawhub"
     assert westock["command_resolved"] is True
-    assert westock["command"] == "npx -y westock-data-clawhub@1.0.4"
+    assert westock["command"] == "westock-data-clawhub"
 
 
 def test_westock_command_resolved_false_when_executable_missing() -> None:

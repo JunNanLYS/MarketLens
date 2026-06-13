@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 from datetime import datetime
@@ -69,6 +68,10 @@ WESTOCK_QUERY_FAILED: str = "WESTOCK_QUERY_FAILED"
 WESTOCK_EXEC_FAILED: str = "WESTOCK_EXEC_FAILED"
 WESTOCK_CHANNEL_UNSUPPORTED: str = "WESTOCK_CHANNEL_UNSUPPORTED"
 WESTOCK_UNKNOWN_SUBCMD: str = "WESTOCK_UNKNOWN_SUBCMD"
+# Node.js 运行时偶发崩溃（CSPRNG 断言失败、InitializeOncePerProcess abort）。
+# 与 EMPTY_OUTPUT 区分:Node 崩了 stdout 真空是「副作用」,EMPTY_OUTPUT 仅描述
+# stdout 为空的事实；崩了本身需要重试 1-2 次（重启 Node 通常可恢复）。
+WESTOCK_NODE_ABORT: str = "WESTOCK_NODE_ABORT"
 
 # (正则, 错误码) 元组列表。**顺序就是匹配优先级**——更具体/更长的模式
 # 必须排在更宽泛/更短的前面,避免被截胡。
@@ -83,6 +86,15 @@ WESTOCK_ERROR_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (re.compile(r"未知子命令\s*[\"「'](.+?)[\"」']"), WESTOCK_UNKNOWN_SUBCMD),
     (re.compile(r"数据为空"), WESTOCK_NO_DATA),
+]
+
+# Node.js 运行时崩溃堆栈特征（stderr 通道，Node 偶发崩溃如 CSPRNG 断言失败、
+# InitializeOncePerProcess abort）。与上面业务错误码分开:Node 崩了时 stdout
+# 真空,会被误判为 EMPTY_OUTPUT,所以单独识别后走重试路径。
+WESTOCK_NODE_ABORT_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"Assertion failed:.*CSPRNG", re.IGNORECASE),
+    re.compile(r"node::InitializeOncePerProcessInternal", re.IGNORECASE),
+    re.compile(r"Native stack trace"),
 ]
 
 
@@ -101,6 +113,22 @@ def _detect_error(text: str) -> tuple[str, str] | None:
         if m:
             context = m.group(0).strip()
             return (code, context)
+    return None
+
+
+def _detect_node_abort(stderr: str) -> str | None:
+    """检测 Node.js 运行时崩溃（CSPRNG 断言失败 / InitializeOncePerProcess abort）。
+
+    Node 偶发崩溃时 stdout 真空、stderr 是英文 native stack trace,既不会被
+    WESTOCK_ERROR_PATTERNS 命中,也不该被当 EMPTY_OUTPUT 吞掉。匹配到时
+    返回第一行触发短语,供日志/UI 区分。
+    """
+    if not stderr or not isinstance(stderr, str):
+        return None
+    for pattern in WESTOCK_NODE_ABORT_PATTERNS:
+        m = pattern.search(stderr)
+        if m:
+            return m.group(0).strip()
     return None
 
 
@@ -132,46 +160,60 @@ class WeStockProvider(BaseProvider):
         optional: bool = False,
     ) -> None:
         super().__init__(name=name, timeout=timeout, params=params, optional=optional)
-        self.command: str = self.params.get(
-            "command", "npx -y westock-data-clawhub@1.0.4"
+        # 2026-06-13 变更：从 `npx -y westock-data-clawhub@1.0.4` 改为通过
+        # PowerShell 调用 `npm i -g` 全局装的 wrapper。绕开两个问题：
+        # 1) npx 每次冷启动新 Node 进程，Windows + Node 24 偶发 ncrypto::CSPRNG
+        #    断言失败（rc=134）；
+        # 2) Python `subprocess.run` 在 MSYS 启动的 Python 下直接调 `node.exe`，
+        #    同样 100% 撞 CSPRNG 断言（Node 进程父进程栈被 MSYS 干扰）。
+        # 验证：PowerShell 调 westock-data-clawhub 10/10 稳定。PowerShell 自带
+        # PATHEXT、npm 全局 PATH 解析，不依赖 git-bash。
+        self.command: str = self.params.get("command", "westock-data-clawhub")
+        # 探测 PowerShell（PowerShell 7 优先于 Windows PowerShell 5.1）和
+        # npm 全局装的 westock wrapper。两者都拿到才走 PowerShell 模式；
+        # 缺一则仅打 warning,后续 _run_cli 会发现 self._westock_wrapper 是
+        # None,直接返回空。
+        # 兜底：探测失败时回退到 self.command 字面值（测试环境无全局 westock
+        # 但仍可 mock subprocess.run 验证业务逻辑；生产环境探测成功优先）。
+        self._powershell_exe: str | None = (
+            shutil.which("pwsh") or shutil.which("powershell")
         )
-        # 在初始化时解析 npx 绝对路径并构建最小化 env，避免：
-        # 1) PATH 中存在多个 npx 时版本漂移
-        # 2) 父进程 env 泄漏给子进程（不必要的环境变量可见性）
-        # 保留 PATH（子进程需要 PATH 定位 node 等二进制）+ HOME（部分 CLI 读 HOME 定位配置）
-        # 其他 env var 显式列入白名单后才透传
-        cmd_parts = shlex.split(self.command)
-        npx_exe = shutil.which(cmd_parts[0])
-        if npx_exe:
-            self._npx_path: str = npx_exe
-            npx_dir = os.path.dirname(npx_exe)
-        else:
-            # shutil.which 失败时回落 command 原值（兜底，避免 __init__ 崩溃）
-            self._npx_path = cmd_parts[0]
-            npx_dir = ""
-        self._subprocess_env: dict[str, str] = {
-            "PATH": npx_dir,
-            "HOME": os.environ.get("HOME", ""),
-        }
+        self._westock_wrapper: str | None = (
+            shutil.which(self.command) or self.command
+        )
+        if not (self._powershell_exe and self._westock_wrapper):
+            logger.warning(
+                "WeStock 找不到 PowerShell 或全局 wrapper (powershell=%r, wrapper=%r);"
+                "quote/kline 等数据采集将失败。建议: 1) 装 PowerShell 7 "
+                "(`winget install Microsoft.PowerShell`)  2) `npm i -g westock-data-clawhub@1.0.4`",
+                self._powershell_exe,
+                self._westock_wrapper,
+            )
 
     async def _run_cli(
         self, args: str
     ) -> tuple[list[list[dict[str, str]]], str | None]:
-        # 使用 shlex 解析 self.command，正确处理带引号/空格的复杂命令
-        # cmd_parts[0] 用 __init__ 时已解析的绝对路径替代，避免运行时 PATH 变化导致版本漂移
-        cmd_parts = shlex.split(self.command)
-        cmd_parts[0] = self._npx_path
-        cmd_parts = cmd_parts + args.split()
+        # 走 PowerShell 调全局 westock wrapper:
+        # `powershell.exe -NoProfile -Command "& '<wrapper>' <args>"`
+        if not (self._powershell_exe and self._westock_wrapper):
+            # __init__ 探测失败时已 warning,业务调用静默返回空结果
+            return [], "WeStock 未配置（缺 PowerShell 或全局 wrapper）"
+        # -NoProfile 避免加载用户 profile 拖慢启动;
+        # 单引号包 wrapper 路径防空格；args 直接拼（westock 参数是
+        # `--k=v` 风格不会被 PowerShell 解释）
+        ps_command = f"& '{self._westock_wrapper}' {args}"
+        cmd_parts: list[str] = [self._powershell_exe, "-NoProfile", "-Command", ps_command]
 
         # SKILL_006 是 westock CLI 的冷启动失败——首次调用偶发返回，
         # 重试 1-2 次即恢复。TimeoutExpired 同理（CLI 冷启动慢）。
         # 其它错误（参数错 / 数据源无数据）立即返回，避免无谓重试。
+        # env 透传父进程:PowerShell 需要 PATHEXT、PATH 等解析 wrapper,
+        # 裁剪会破坏 npm 全局 PATH 解析。本工具是单用户本地进程,
+        # 父 env 泄漏风险可接受。
         last_err: str | None = None
         for attempt in range(_MAX_RETRIES + 1):
             # 通过 subprocess.run（模块级引用，便于测试 mock）调用 CLI，
             # 并用 asyncio.to_thread 避免阻塞事件循环。
-            # env= 显式传入最小化环境变量（__init__ 时构建的 _subprocess_env），
-            # 避免父进程 env 泄漏到子进程。
             try:
                 proc = await asyncio.to_thread(
                     subprocess.run,
@@ -179,7 +221,7 @@ class WeStockProvider(BaseProvider):
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
-                    env=self._subprocess_env,
+                    env=os.environ.copy(),
                 )
             except subprocess.TimeoutExpired:
                 last_err = f"CLI 超时 ({self.timeout}s)"
@@ -200,6 +242,31 @@ class WeStockProvider(BaseProvider):
 
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
+
+            # Node.js 运行时崩溃（CSPRNG 断言 / InitializeOncePerProcess abort）
+            # 比业务错误优先:崩溃时 stdout 真空,会被 _detect_error 误判为
+            # EMPTY_OUTPUT,语义上不对（EMPTY_OUTPUT 描述 stdout 真空的事实,
+            # 崩了是另一回事）。统一在 _detect_error 之前识别,然后走重试。
+            node_abort = _detect_node_abort(stderr)
+            if node_abort and attempt < _MAX_RETRIES:
+                last_err = f"{WESTOCK_NODE_ABORT}: {node_abort}"
+                logger.warning(
+                    "WeStock Node 运行时崩溃 [attempt {}/{}]: cmd={}, error={}",
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    cmd_parts,
+                    last_err,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+                continue
+            if node_abort:
+                last_err = f"{WESTOCK_NODE_ABORT}: {node_abort}"
+                logger.warning(
+                    "WeStock Node 运行时崩溃（重试耗尽）: cmd={}, error={}",
+                    cmd_parts,
+                    last_err,
+                )
+                return [], last_err
 
             error = _detect_error(stdout)
             if error:
@@ -225,7 +292,8 @@ class WeStockProvider(BaseProvider):
                 return [], last_err
 
             if proc.returncode != 0:
-                # 非零退出码立即返回，不重试（重试也无法修复 CLI bug）
+                # 非零退出码立即返回，不重试（重试也无法修复 CLI bug；
+                # Node 偶发崩溃的情况已在前面的 _detect_node_abort 处理）
                 msg = (
                     stderr.strip()
                     or stdout.strip()[:200]

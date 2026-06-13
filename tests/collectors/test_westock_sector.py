@@ -14,7 +14,7 @@ async def provider() -> WeStockProvider:
     return WeStockProvider(
         name="westock",
         timeout=30,
-        params={"command": "npx -y westock-data-clawhub@1.0.4"},
+        params={"command": "westock-data-clawhub"},
     )
 
 

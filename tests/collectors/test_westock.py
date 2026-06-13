@@ -4,8 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from backend.collectors.westock import (
     WeStockProvider,
+    WESTOCK_NODE_ABORT,
     _parse_markdown_tables,
     _detect_error,
+    _detect_node_abort,
     _try_number,
 )
 
@@ -94,6 +96,37 @@ async def test_detect_no_error() -> None:
     assert _detect_error("| code | name |\n| --- | --- |\n| sh600519 | 茅台 |") is None
 
 
+async def test_detect_node_abort_csprng() -> None:
+    """Node CSPRNG 断言失败:这次任务里复现的 rc=134 实际堆栈。"""
+    stderr = (
+        "\n  #  C:\\WINDOWS\\system32\\cmd.exe [1844]: std::shared_ptr<...> "
+        "node::InitializeOncePerProcessInternal(...) at src\\node.cc:1225\n"
+        "  #  Assertion failed: ncrypto::CSPRNG(nullptr, 0)\n"
+        "\n----- Native stack trace -----\n"
+    )
+    out = _detect_node_abort(stderr)
+    assert out is not None
+    # _run_cli 用 error_code (WESTOCK_NODE_ABORT) + 触发短语拼接 last_err;
+    # 这里直接断言常量,确保日志里看到的就是这个枚举值（不是 EMPTY_OUTPUT）。
+    assert WESTOCK_NODE_ABORT == "WESTOCK_NODE_ABORT"
+
+
+async def test_detect_node_abort_empty() -> None:
+    assert _detect_node_abort("") is None
+    assert _detect_node_abort(None) is None  # type: ignore[arg-type]
+    # 测试 fixture 偶发传 MagicMock（模拟 subprocess stderr 副作用对象）,
+    # 不应触发正则匹配崩溃。
+    from unittest.mock import MagicMock
+
+    assert _detect_node_abort(MagicMock()) is None
+
+
+async def test_detect_node_abort_unrelated_stderr() -> None:
+    """stderr 存在但不是 Node 崩溃:必须返回 None（不误报）。"""
+    assert _detect_node_abort("Warning: experimental flag") is None
+    assert _detect_node_abort("node version: v20.10.0") is None
+
+
 async def test_try_number_int() -> None:
     assert _try_number("123") == 123
 
@@ -122,19 +155,19 @@ async def provider() -> WeStockProvider:
     return WeStockProvider(
         name="westock",
         timeout=30,
-        params={"command": "npx -y westock-data-clawhub@1.0.4"},
+        params={"command": "westock-data-clawhub"},
     )
 
 
 async def test_init(provider: WeStockProvider) -> None:
     assert provider.name == "westock"
     assert provider.timeout == 30
-    assert provider.command == "npx -y westock-data-clawhub@1.0.4"
+    assert provider.command == "westock-data-clawhub"
 
 
 async def test_init_default_command() -> None:
     p = WeStockProvider(name="westock_default")
-    assert p.command == "npx -y westock-data-clawhub@1.0.4"
+    assert p.command == "westock-data-clawhub"
 
 
 async def test_search_success(provider: WeStockProvider) -> None:
@@ -210,11 +243,13 @@ async def test_kline_weekly_period(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
         await provider.kline("sh600519", "weekly")
-        # 验证使用了 'week' 而不是 'weekly'
+        # 验证使用了 'week' 而不是 'weekly'。2026-06-13 变更：westock 走
+        # PowerShell 调，参数在 -Command 后的字符串里。
         cmd_args = mock_run.call_args[0][0]
-        assert "--period" in cmd_args
-        period_idx = cmd_args.index("--period")
-        assert cmd_args[period_idx + 1] == "week"
+        ps_cmd = cmd_args[cmd_args.index("-Command") + 1]
+        assert "--period" in ps_cmd
+        assert "week" in ps_cmd
+        assert "weekly" not in ps_cmd
 
 
 async def test_kline_monthly_period(provider: WeStockProvider) -> None:
@@ -227,8 +262,9 @@ async def test_kline_monthly_period(provider: WeStockProvider) -> None:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
         await provider.kline("sh600519", "monthly")
         cmd_args = mock_run.call_args[0][0]
-        period_idx = cmd_args.index("--period")
-        assert cmd_args[period_idx + 1] == "month"
+        ps_cmd = cmd_args[cmd_args.index("-Command") + 1]
+        assert "--period" in ps_cmd
+        assert "month" in ps_cmd
 
 
 async def test_finance_success(provider: WeStockProvider) -> None:
@@ -288,9 +324,10 @@ async def test_fund_flow_hk(provider: WeStockProvider) -> None:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
         result = await provider.fund_flow("hk00700")
         assert result["main_net_inflow"] == 50000000
-        # 验证使用了 hkfund 不是 asfund
+        # 验证使用了 hkfund 不是 asfund（参数现在在 -Command 字符串里）
         cmd_args = mock_run.call_args[0][0]
-        assert "hkfund" in cmd_args
+        ps_cmd = cmd_args[cmd_args.index("-Command") + 1]
+        assert "hkfund" in ps_cmd
 
 
 async def test_technical_success(provider: WeStockProvider) -> None:

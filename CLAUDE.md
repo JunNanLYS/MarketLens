@@ -282,6 +282,11 @@ See `ISSUES.md` for the comprehensive audit covering correctness, performance, a
   不会阻塞其他数据源。详见 `backend/collectors/neodata_client.py::TokenManager`。
   若需 UI 提示用户"该去 workbuddy 刷新 token",使用 `GET /api/v1/data-sources/status` 的 `neodata` 字段。
 
+- `WeStockProvider` 依赖 `westock-data-clawhub` CLI；`config.yaml` 中 `command: westock-data-clawhub`（`westock.py` 通过 `powershell.exe -Command "& '<wrapper>' ..."` 调用全局装的 wrapper，PowerShell 7 优先于 Windows PowerShell 5.1）。
+  首次部署需手动 `npm i -g westock-data-clawhub@1.0.4`（Windows 默认装到 `%AppData%\Roaming\npm\`，`npm root -g` 可查全局 root）。
+  改用 PowerShell 调 wrapper 的原因：① npx 每次冷启动新 Node 进程，在 Windows + Node 24 偶发 `ncrypto::CSPRNG` 断言失败（rc=134）；② Python `subprocess.run` 在 MSYS 启动的 Python 下直接调 `node.exe`，同样 100% 撞 CSPRNG 断言（Node 父进程栈被 MSYS 干扰）；③ npm 全局装的 sh wrapper 用 `sed`/`dirname`/`uname`，在精简 PATH 下 exit 1。绕开三路径后实测 10/10 稳定（2026-06-13 验证）。`env` 透传父进程（不裁剪）—— PowerShell 自身需要 PATHEXT/PATH 解析 wrapper，裁剪会破坏 node/npm 全局 PATH 解析。本工具是单用户本地进程，父 env 泄漏可接受。
+  升级到新版本时改 `config.yaml` 的 `package_name` 字段即可（默认 `westock-data-clawhub`），不需要再改 Python 代码。
+
 ## Task Completion Checklist
 
 After **every** task, execute these steps in order:
