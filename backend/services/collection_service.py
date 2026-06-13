@@ -43,6 +43,26 @@ class CollectionService:
             except Exception:
                 logger.exception("关闭 Provider 失败: {}", provider.name)
 
+    async def reload_providers(self, config: dict) -> None:
+        """运行时重建 Provider 列表（用于配置变更后立即生效）。
+
+        Args:
+            config: 完整配置 dict（来自 ConfigStore.snapshot()）
+
+        步骤：
+        1. 先关掉旧 Provider 的 httpx 客户端 / 子进程，避免泄漏
+        2. 用新配置 create_providers 重建
+        3. 同步替换 _asset_service 持有的 provider 列表（共享内存对象）
+        """
+        await self.close_providers()
+        self._providers = create_providers(config)
+        # AssetService 与本服务共享 provider map，同步替换
+        self._asset_service._providers = self._providers
+        logger.info(
+            "CollectionService Provider 已重建：structured={} 个",
+            len(self._get_structured_providers()),
+        )
+
     @staticmethod
     def _is_westock_only(provider) -> bool:
         """判断 provider 是否为 WeStockProvider（用于按数据域白名单 westock 唯一来源）。

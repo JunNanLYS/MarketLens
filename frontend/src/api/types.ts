@@ -306,8 +306,45 @@ export interface CreateAssetRequest {
   notes?: string | null;
 }
 
+// /api/v1/assets/search 端点返回的候选标的。
+// 字段对齐 backend.api.assets.search_assets → AssetService.search_assets。
+// 缺失字段统一用 `string | null` 表达（外部 Provider 返回不一定齐全）。
+export interface AssetSearchResult {
+  symbol: string;
+  name?: string | null;
+  market?: string | null;
+  asset_type?: string | null;
+  source?: string;          // neodata / sina / westock / local
+  already_tracked?: boolean; // true = 已在本地追踪表，避免重复添加
+}
+
 export interface UpdateAssetRequest {
   enabled?: boolean;
   tags?: string[] | null;
   notes?: string | null;
+}
+
+// /api/v1/settings 返回的可编辑配置
+// 字段对齐 backend.api.settings._list_editable
+export interface EditableSource {
+  group: "structured" | "news";
+  name: string;
+  provider: string;
+  enabled: boolean;
+  optional: boolean;
+  timeout: number;
+}
+
+export interface EditableTask {
+  interval: number | null;
+  cron: string | null;
+}
+
+export interface EditableSettings {
+  sources: EditableSource[];
+  scheduler: { tasks: Record<string, EditableTask> };
+}
+
+export interface SettingsResponse {
+  editable: EditableSettings;
 }

@@ -64,6 +64,23 @@ class NewsService:
             except Exception:
                 logger.exception("关闭情感分析器失败")
 
+    async def reload_providers(self, config: dict) -> None:
+        """运行时重建新闻 Provider 列表（用于配置变更后立即生效）。
+
+        与 close_providers 不同：close_providers 关掉所有资源（含情感分析器），
+        reload_providers 只重建数据源 Provider，sentiment_analyzer 保持不变。
+        """
+        # 仅关数据源 Provider，sentiment 保留
+        for provider in self._providers:
+            try:
+                await provider.close()
+            except Exception:
+                logger.exception("关闭 Provider 失败: {}", provider.name)
+        providers_map = create_providers(config)
+        self._providers = providers_map.get("news", [])
+        # 旧 symbol pattern 缓存对新源仍有效（同 symbol→同 pattern），不需清空
+        logger.info("NewsService Provider 已重建：news={} 个", len(self._providers))
+
     async def collect_news(self) -> dict[str, int]:
         """采集新闻并写入 news_items / raw_data，同时记录 run_logs 审计行。
 

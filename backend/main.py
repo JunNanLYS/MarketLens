@@ -17,9 +17,11 @@ from backend.api.neodata import router as neodata_router
 from backend.api.news import router as news_router
 from backend.api.portfolio import router as portfolio_router
 from backend.api.reports import router as reports_router
+from backend.api.settings import router as settings_router
 from backend.api.tasks import router as tasks_router
 from backend.api.tasks import _set_scheduler
 from backend.config import get_config
+from backend.config_runtime import get_config_store
 from backend.scheduler.jobs import SchedulerManager
 from backend.storage.schema import init_db
 
@@ -56,6 +58,28 @@ _db_ready = False
 _scheduler_ready = False
 
 
+def _provider_reload_hook(new_cfg: dict) -> None:
+    """ConfigStore reload 钩子：让 CollectionService / NewsService 用新配置重建 Provider。
+
+    钩子在 ConfigStore.update 内调用，是同步上下文；Service.reload_providers 是
+    async（要 close httpx 客户端），用 asyncio.run 启临时 loop 执行。
+
+    任意 Service 失败都只 log，不抛——避免一个钩子崩了整个 PATCH 回滚。
+    """
+    import asyncio
+
+    from backend.scheduler.jobs import _get_collection_service, _get_news_service
+
+    for label, getter in (
+        ("CollectionService", _get_collection_service),
+        ("NewsService", _get_news_service),
+    ):
+        try:
+            asyncio.run(getter().reload_providers(new_cfg))
+        except Exception:
+            logger.exception("{} reload_providers 失败", label)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _scheduler_manager, _db_ready, _scheduler_ready
@@ -71,6 +95,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await _scheduler_manager.start()
         _scheduler_ready = True
         _set_scheduler(_scheduler_manager)
+        # 注册 ConfigStore reload 钩子：
+        # 1) Scheduler reload —— scheduler.tasks.*.interval 变更立即生效
+        # 2) Service Provider reload —— data_sources.*.enabled / .timeout 变更立即生效
+        store = get_config_store()
+        store.register_reload_hook(_scheduler_manager.reload)
+        store.register_reload_hook(_provider_reload_hook)
         logger.info("MarketLens 应用已启动")
     except Exception:
         logger.exception("调度器启动失败")
@@ -135,6 +165,7 @@ app.include_router(news_router)
 app.include_router(reports_router)
 app.include_router(portfolio_router)
 app.include_router(tasks_router)
+app.include_router(settings_router)
 
 
 @app.exception_handler(HTTPException)
