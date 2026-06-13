@@ -25,6 +25,7 @@ import asyncio
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import webbrowser
@@ -77,11 +78,6 @@ def _resolve_project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _frontend_dist_exists(project_root: Path) -> bool:
-    """检查 frontend/dist 是否存在（生产构建产物）。"""
-    return (project_root / "frontend" / "dist" / "index.html").is_file()
-
-
 def _spawn_vite_child(project_root: Path, port: int) -> tuple[subprocess.Popen, TextIO]:
     """派生 Vite dev server 子进程，并把输出落到日志文件。"""
     npm = shutil.which("npm")
@@ -124,6 +120,26 @@ def _spawn_vite_child(project_root: Path, port: int) -> tuple[subprocess.Popen, 
         vite_log.close()
         raise
     return proc, vite_log
+
+
+def _is_port_available(host: str, port: int) -> bool:
+    """检查端口是否可绑定。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _ensure_port_available(host: str, port: int, service_name: str) -> None:
+    """端口被占用时给出明确错误,避免半启动后再退出。"""
+    if _is_port_available(host, port):
+        return
+    raise RuntimeError(
+        f"{service_name} 端口 {host}:{port} 已被占用。"
+        "请关闭已有 MarketLens/uvicorn/Vite 进程后重试。"
+    )
 
 
 async def _wait_for_url(url: str, timeout: float = 20.0) -> bool:
@@ -190,6 +206,10 @@ async def _run(stop_event: asyncio.Event | None = None) -> None:
     browser_task: asyncio.Task[None] | None = None
     watch_task: asyncio.Task[None] | None = None
     frontend_url: str
+
+    _ensure_port_available("127.0.0.1", 8000, "FastAPI 后端")
+    if not is_prod:
+        _ensure_port_available("127.0.0.1", 5173, "Vite 前端")
 
     if is_prod:
         # 生产模式：FastAPI 挂载 frontend/dist，单进程单端口（8000）
