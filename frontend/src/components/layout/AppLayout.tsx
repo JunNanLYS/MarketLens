@@ -127,17 +127,8 @@ export function AppLayout() {
         <div style={{ marginBottom: 24 }}>
           <KpiBar />
         </div>
-        {/* 路由切换：AnimatePresence 做极短 fade-in/out。
-            性能优化：
-            1. 时长 0.22s → 0.12s（视觉差异不可察觉，但"新旧 page 双树"窗口减半）
-            2. 退场 motion.div 强制 pointerEvents:none + visibility:hidden
-               旧 page 仍然在树里但不再响应事件 + 不可见，避免 0.12s 内
-               视觉上看到两个 page 叠加；同时也不再触发额外 reflow
-            3. 不再使用 position: absolute——这样新 page 直接顶替布局，
-               旧 page 是 fixed 视口位置 + 不响应事件，不会和 KpiBar 抢 reflow
-            4. 页面 useQuery 自带 staleTime（30s+），切回时不会重新打接口
-        */}
-        <AnimatePresence initial={false}>
+        {/* 路由切换：AnimatePresence 用 wait 模式避免新旧页面同时占布局空间。 */}
+        <AnimatePresence initial={false} mode="wait">
           <motion.div
             key={location.pathname}
             initial={reduceMotion ? false : { opacity: 0 }}
