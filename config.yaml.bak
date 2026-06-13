@@ -1,0 +1,188 @@
+data_sources:
+  news:
+  - enabled: true
+    name: neodata
+    optional: true
+    params:
+      endpoint: https://copilot.tencent.com/agenttool/v1/neodata
+      token: ''
+    provider: NeoDataProvider
+    timeout: 30
+  - enabled: true
+    name: westock_hot
+    optional: true
+    params:
+      command: npx -y westock-data-clawhub@1.0.4
+    provider: WeStockProvider
+    timeout: 30
+  - enabled: true
+    name: sina_rss
+    params:
+      max_items: 50
+      url: https://feed.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=50
+    provider: SinaNewsProvider
+    timeout: 15
+  - enabled: true
+    name: bbc_world
+    optional: true
+    params:
+      url: https://feeds.bbci.co.uk/news/world/rss.xml
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: bbc_business
+    optional: true
+    params:
+      url: https://feeds.bbci.co.uk/news/business/rss.xml
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: bbc_top
+    optional: true
+    params:
+      url: https://feeds.bbci.co.uk/news/rss.xml
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: bbc_technology
+    optional: true
+    params:
+      url: https://feeds.bbci.co.uk/news/technology/rss.xml
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: reuters_world
+    optional: true
+    params:
+      url: https://news.google.com/rss/search?q=reuters+world&hl=en-US&gl=US&ceid=US:en
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: npr_news
+    optional: true
+    params:
+      url: https://feeds.npr.org/1001/rss.xml
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: aljazeera
+    optional: true
+    params:
+      url: https://feeds.aljazeera.net/xml/rss/all.xml
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: tencent_news
+    optional: true
+    params:
+      max_items: 50
+    provider: TencentNewsHTTPProvider
+    timeout: 30
+  - enabled: true
+    name: multi_search
+    optional: true
+    params:
+      keywords:
+      - 宏观
+      - 政策
+      max_items: 30
+      primary_engine: duckduckgo
+    provider: SearchEngineNewsProvider
+    timeout: 15
+  structured:
+  - enabled: true
+    name: westock
+    params:
+      command: npx -y westock-data-clawhub@1.0.4
+    provider: WeStockProvider
+    timeout: 30
+  - enabled: false
+    name: sina
+    params:
+      quote_url: https://hq.sinajs.cn/list={codes}
+    provider: SinaProvider
+    timeout: 15
+  - enabled: true
+    name: neodata
+    optional: true
+    params:
+      endpoint: https://copilot.tencent.com/agenttool/v1/neodata
+      token: ''
+    provider: NeoDataProvider
+    timeout: 30
+database:
+  echo: false
+  path: marketlens.db
+evidence:
+  finance_limit: 4
+  fund_flow_limit: 5
+  kline_limit: 60
+  news_days: 7
+markets:
+  fut:
+    asset_types:
+    - future
+    note: 期货代码不含市场前缀，如 rb2501、IF2506、sc2401
+    prefix: fut
+  hf:
+    asset_types:
+    - commodity
+    note: 国际商品（如 hf_XAU 伦敦金、hf_XAG 伦敦银）
+    prefix: hf
+  hk:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: hk
+  nf:
+    asset_types:
+    - future
+    note: 国内商品期货（如 nf_AU0 沪金连续、nf_SC0 原油连续）
+    prefix: nf
+  sh:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: sh
+  sz:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: sz
+  us:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: us
+scheduler:
+  tasks:
+    ai_report:
+      cron: 0 20 * * *
+    daily_close:
+      cron: 0 16 * * 1-5
+    news:
+      interval: 60
+    quote:
+      interval: 1
+  timezone: Asia/Shanghai
+security:
+  api_key: marketlens-local
+  cors_origins:
+  - '*'
+sentiment:
+  api_key: ''
+  base_url: https://api.deepseek.com
+  model: deepseek-v4-pro
+  optional: true
+  provider: deepseek
+  thinking_by_use_case:
+    narrative_summary:
+      enabled: true
+      reasoning_effort: high
+    news:
+      enabled: false
+  timeout: 60
