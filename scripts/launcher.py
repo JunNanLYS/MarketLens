@@ -28,6 +28,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 import webbrowser
 from pathlib import Path
 from typing import TextIO
@@ -132,13 +133,102 @@ def _is_port_available(host: str, port: int) -> bool:
     return True
 
 
-def _ensure_port_available(host: str, port: int, service_name: str) -> None:
-    """端口被占用时给出明确错误,避免半启动后再退出。"""
+def _port_pids_windows(port: int) -> set[int]:
+    """查询 Windows 上监听指定端口的 PID。"""
+    result = subprocess.run(
+        ["netstat", "-ano", "-p", "tcp"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    pids: set[int] = set()
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0].upper() != "TCP":
+            continue
+        local_address = parts[1]
+        state = parts[3].upper()
+        pid_text = parts[4]
+        if state != "LISTENING" or not local_address.endswith(f":{port}"):
+            continue
+        try:
+            pids.add(int(pid_text))
+        except ValueError:
+            continue
+    return pids
+
+
+def _port_pids_unix(port: int) -> set[int]:
+    """查询 Unix 上监听指定端口的 PID。"""
+    lsof = shutil.which("lsof")
+    if lsof is None:
+        return set()
+    result = subprocess.run(
+        [lsof, "-ti", f"tcp:{port}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    pids: set[int] = set()
+    for line in result.stdout.splitlines():
+        try:
+            pids.add(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
+def _port_pids(port: int) -> set[int]:
+    """查询监听指定端口的 PID。"""
+    if sys.platform == "win32":
+        return _port_pids_windows(port)
+    return _port_pids_unix(port)
+
+
+def _terminate_pid(pid: int, service_name: str) -> None:
+    """终止占用端口的进程。"""
+    if pid == os.getpid():
+        raise RuntimeError(f"{service_name} 端口被当前启动器进程占用,无法自动清理")
+    logger.warning("{} 端口被 PID={} 占用,正在自动清理", service_name, pid)
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    else:
+        os.kill(pid, signal.SIGTERM)
+
+
+def _release_port(host: str, port: int, service_name: str) -> None:
+    """自动清理端口占用并等待端口释放。"""
     if _is_port_available(host, port):
         return
+
+    pids = _port_pids(port)
+    if not pids:
+        raise RuntimeError(
+            f"{service_name} 端口 {host}:{port} 已被占用,但未找到监听进程。"
+            "请手动关闭占用该端口的服务后重试。"
+        )
+
+    for pid in sorted(pids):
+        _terminate_pid(pid, service_name)
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if _is_port_available(host, port):
+            logger.info("{} 端口 {}:{} 已释放", service_name, host, port)
+            return
+        time.sleep(0.2)
+
     raise RuntimeError(
-        f"{service_name} 端口 {host}:{port} 已被占用。"
-        "请关闭已有 MarketLens/uvicorn/Vite 进程后重试。"
+        f"{service_name} 端口 {host}:{port} 自动清理后仍被占用。"
+        "请手动关闭占用该端口的服务后重试。"
     )
 
 
@@ -207,9 +297,9 @@ async def _run(stop_event: asyncio.Event | None = None) -> None:
     watch_task: asyncio.Task[None] | None = None
     frontend_url: str
 
-    _ensure_port_available("127.0.0.1", 8000, "FastAPI 后端")
+    _release_port("127.0.0.1", 8000, "FastAPI 后端")
     if not is_prod:
-        _ensure_port_available("127.0.0.1", 5173, "Vite 前端")
+        _release_port("127.0.0.1", 5173, "Vite 前端")
 
     if is_prod:
         # 生产模式：FastAPI 挂载 frontend/dist，单进程单端口（8000）
