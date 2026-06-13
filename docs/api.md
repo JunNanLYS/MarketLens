@@ -1,7 +1,7 @@
 # MarketLens API 文档
 
 > 版本: v2 | 基准路径: `http://localhost:8000/api/v1` | 协议: HTTP / HTTPS | 内容类型: `application/json; charset=utf-8`
-> 文档校验基准: `backend/api/*.py` + `backend/main.py`（共 8 个资源组 + 根路径 `/` + `/api/v1/health`，下表按资源组合计）
+> 文档校验基准: `backend/api/*.py` + `backend/main.py`（共 9 个资源组 + 根路径 `/` + `/api/v1/health`，下表按资源组合计）
 
 ---
 
@@ -17,11 +17,12 @@
 | ⏰ 任务管理 | [news / reports / tasks](api/news-reports-tasks.md#任务管理) | 3 |
 | 🔑 NeoData Token | [neodata](api/neodata.md) | 2 |
 | 💼 投资组合 | [portfolio](api/portfolio.md) | 12 |
+| ⚙️ 可编辑配置 | [settings](api/settings.md) | 3 |
 | 🩺 系统 | `GET /api/v1/health` · `GET /` | 2 |
 
-> 业务接口合计 72 个 + 系统 2 个 = 74 个路由。
+> 业务接口合计 75 个 + 系统 2 个 = 77 个路由。
 
-## 一页速览（74 个接口）
+## 一页速览（77 个接口）
 
 | 方法 | 路径 | 鉴权 | 用途 | 主要状态码 |
 |---|---|---|---|---|
@@ -99,6 +100,9 @@
 | `DELETE` | `/transactions/{transaction_id}` | 🔑 | 删除交易（软删除） | 204 / 400 / 401 / 404 |
 | `GET` | `/positions` | — | 持仓总览 | 200 |
 | `GET` | `/positions/realized-pnl` | — | 已实现盈亏 | 200 / 422 |
+| `GET` | `/settings` | — | 可编辑配置快照 | 200 |
+| `PATCH` | `/settings` | 🔑 | 应用 diff（白名单 key） | 200 / 400 / 401 |
+| `POST` | `/settings/rollback` | 🔑 | 从 `.bak` 恢复 | 200 / 400 / 401 |
 
 > 🔑 = 写端点，需要 `X-API-Key` 请求头，详见下文「鉴权」章节。
 
@@ -127,6 +131,7 @@
 | AI 报告 | `POST /reports/generate` |
 | 任务管理 | `POST /tasks/trigger/{name}` |
 | NeoData | `POST /neodata/token` |
+| 可编辑配置 | `PATCH /settings`、`POST /settings/rollback` |
 | 市场数据 | `POST /data/quotes/{symbol}/refresh`、`POST /data/intraday/{symbol}`、`POST /data/shareholder/{symbol}`、`POST /data/dividend/{symbol}`、`POST /data/reserve/{symbol}`、`POST /data/dividend/{symbol}/refresh`、`POST /data/shareholder/{symbol}/refresh`、`POST /data/reserve/{symbol}/refresh`、`POST /data/minute/{symbol}/refresh`、`POST /data/etf-refresh/{symbol}`、`POST /data/sectors/refresh`、`POST /data/finance-refresh/{symbol}`、`POST /data/calendar-refresh`、`POST /data/chip-refresh/{symbol}`、`POST /data/blocktrade-refresh/{symbol}`、`POST /data/lhb-refresh/{symbol}` |
 
 > 所有 `GET` 端点（除 `/api/v1/health` 外的读操作）均无需鉴权。

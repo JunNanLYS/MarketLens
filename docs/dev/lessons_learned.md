@@ -567,6 +567,156 @@ for row in cursor.fetchall():
 
 ---
 
+## 12. 端口自动清理（fail-loud + 自残保护）
+
+### 教训来源
+
+第 13 轮（2026-06-13）—— `scripts/launcher.py` 第二次启动时，前一次未退干净导致 8000 端口被占，**用户被迫手动打开任务管理器**。
+
+### 经验
+
+1. **探测 → 查 PID → kill → 轮询等待**，四步串行，缺一不可
+2. **自残保护**：PID == 启动器自身时拒绝清理（`os.getpid()` 比较），避免自杀
+3. **超时硬约束**：200ms 轮询 × 50 次 = 10s 上限，超时抛 `RuntimeError`（**禁止 silent 启动**——用户看到错误才知道手动关进程）
+4. **平台分支**：Windows `netstat -ano -p tcp` + `taskkill /PID <pid> /T /F`（/T 杀子进程）；Unix `lsof -ti tcp:<port>` + `os.kill(pid, SIGTERM)`。**lsof 不存在时返回空 set**，让上层抛错而不是猜（猜错会误杀无关进程）
+5. **测试 patch 隔离**：mock `_port_pids` / `_is_port_available` / `_terminate_pid` 三个边界点，避免真实占用端口
+
+### 范式（参考 `tests/scripts/test_launcher.py`）
+
+```python
+with patch("scripts.launcher._port_pids", return_value={1234}), \
+     patch("scripts.launcher._terminate_pid") as mock_terminate, \
+     patch("scripts.launcher._is_port_available", side_effect=[False, True]):
+    _release_port("127.0.0.1", port, "FastAPI 后端")
+mock_terminate.assert_called_once_with(1234, "FastAPI 后端")
+```
+
+### 自我检查清单
+
+- [ ] 自残保护（PID == `os.getpid()`）
+- [ ] 10s 硬超时 + `RuntimeError` 而非静默继续
+- [ ] `/T` 杀子进程（Windows）
+- [ ] `lsof` 不存在时优雅降级为"查不到 PID → 抛错"
+- [ ] 测试 mock 三个边界点，不真占用端口
+
+---
+
+## 13. AnimatePresence 退出动画的"空白陷阱"
+
+### 教训来源
+
+第 13 轮（2026-06-13）—— `AppLayout.tsx` 用 `AnimatePresence` + `mode="wait"` 给路由切换加淡入淡出。**快速点击导航时**：
+- v1：无 `mode="wait"` → 旧页 + 新页纵向堆叠（视觉上"内容跑到底下"）
+- v2：加 `mode="wait"` → 退出动画未完成时点击下一路由 → 新页挂起等待 → 全部空白
+
+### 经验
+
+1. **AnimatePresence 的退出动画 = DOM 状态机**：`mode="wait"` 让旧元素 exit 完再 mount 新元素；快速切换时排队卡死
+2. **路由切换的"内容永远在" 优先于"好看"**：用 `key={location.pathname}` 的单 `motion.div` + **仅入场动画**（`initial` + `animate`，无 `AnimatePresence` 包裹），DOM 切换是原子的
+3. **HMR 假错误**：删 `AnimatePresence` 导入时，Vite HMR 偶发报 `AnimatePresence is not defined`，**reload 页面**后正常（不要去 code 找 bug）
+
+### 范式
+
+```tsx
+// 错误：AnimatePresence + mode="wait" 快速切换会空白
+<AnimatePresence mode="wait">
+  <motion.div key={path} exit={{ opacity: 0 }}>...</motion.div>
+</AnimatePresence>
+
+// 正确：单 keyed motion.div + 仅入场
+<motion.div
+  key={location.pathname}
+  initial={reduceMotion ? false : { opacity: 0 }}
+  animate={{ opacity: 1 }}
+  transition={{ duration: 0.08, ease: "linear" }}
+>
+  <Outlet />
+</motion.div>
+```
+
+### 自我检查清单
+
+- [ ] 路由级动画只用入场（`initial` + `animate`），不用 `exit`
+- [ ] 不依赖 `AnimatePresence` 串行化（key 改变就是原子替换）
+- [ ] 删除 import 后 reload 验证（避免 HMR 假错）
+
+---
+
+## 14. WeStock 调子进程：Node CSPRNG 的三路径绕开
+
+### 教训来源
+
+第 13 轮（2026-06-13）—— `westock-data-clawhub` CLI 在 Windows + Node 24 上偶发 `ncrypto::CSPRNG` 断言失败（rc=134），100% 撞到。
+
+### 经验
+
+**三种调用路径都会失败，必须全避开**：
+
+1. ❌ `npx -y westock-data-clawhub@1.0.4` —— 每次冷启动新 Node 进程，触发 CSPRNG 初始化
+2. ❌ Python `subprocess.run(["node", ...])`（MSYS 环境下的 Python）—— MSYS 干扰 Node 父进程栈
+3. ❌ npm 全局装的 sh wrapper（用 `sed`/`dirname`/`uname`）—— 精简 PATH 下 exit 1
+
+**唯一稳的路径**：先 `npm i -g westock-data-clawhub@1.0.4`，然后 `backend/collectors/westock.py::_run_cli` 走：
+
+```python
+subprocess.run(
+    ["powershell.exe", "-NoProfile", "-Command",
+     f"& '{wrapper_path}' {subcommand} {args}"],
+    capture_output=True, text=True, timeout=..., check=False,
+)
+```
+
+- PowerShell 7 优先于 Windows PowerShell 5.1
+- `env` 透传父进程（**不裁剪**）—— PowerShell 需要 PATHEXT/PATH 解析 wrapper
+- `package_name` 进 `config.yaml` 字段，升级改 yaml 不改 code
+
+### 自我检查清单
+
+- [ ] WeStock 不走 `npx` / 裸 `node` / sh wrapper
+- [ ] 走 PowerShell 调全局 wrapper
+- [ ] `env` 透传不裁剪
+- [ ] `package_name` 字段在 yaml 而非硬编码
+
+---
+
+## 15. ConfigStore 白名单：避免误改 security/api_key
+
+### 教训来源
+
+第 12 轮（2026-06-11）—— `Settings` PATCH 端点开放任意 key 改写能力，理论可改 `security.api_key`，**单用户工具也会自伤**（改错后所有写端点鉴权全挂）。
+
+### 经验
+
+1. **白名单 > 黑名单**：明确列出可改 key（`data_sources.*` / `scheduler.tasks.*`），其他 key 全部 400 拒绝
+2. **保留字段强制覆盖**：`name` / `provider` / `optional` 在 PATCH 时被服务端强制保留，不接受前端覆盖（避免破坏 Provider 类路由）
+3. **原子写回 + 备份**：先 `tempfile + os.replace`，写前 `shutil.copy2(yaml, yaml.bak)`（不是 `copy` —— 保留 mtime）
+4. **回滚端点独立**：`POST /settings/rollback` 必须存在，作为改错的逃生通道
+5. **reload 钩子单向同步**：ConfigStore 改 → 触发 Provider 链 / APScheduler reschedule，**不要反向**（Provider 内部状态变化不应写回 yaml）
+
+### 范式（参考 `backend/config_runtime.py`）
+
+```python
+ALLOWED_KEYS = re.compile(r"^(data_sources\.(structured|news)\.[a-z0-9_]+|scheduler\.tasks\.[a-z_]+\.(interval|cron))$")
+PRESERVE_KEYS = {"name", "provider", "optional"}
+
+def update_with_special_handling(self, updates: dict) -> dict:
+    for key in updates:
+        if not ALLOWED_KEYS.match(key):
+            raise ConfigStoreError(f"key '{key}' 不在白名单内")
+    # ... atomic write + backup + reload hook
+```
+
+### 自我检查清单
+
+- [ ] PATCH 端点有白名单（不允许任意 key）
+- [ ] `name` / `provider` / `optional` 不接受 PATCH 覆盖
+- [ ] 写前 `shutil.copy2` 备份到 `.bak`（保 mtime）
+- [ ] `tempfile + os.replace` 原子写回
+- [ ] 存在独立的 rollback 端点
+- [ ] reload 钩子单向（yaml → runtime，**不**反向）
+
+---
+
 ## 附录 A：经验索引（按发现轮次）
 
 | 轮次 | 经验 | 归档位置 |
@@ -586,6 +736,10 @@ for row in cursor.fetchall():
 | 第 12 轮 | 锁测试需 patch 双向 | 本文件 §6 |
 | 第 12 轮 | 多 Agent 文件零交叉可完全并行 | 本文件 §9 |
 | 第 12 轮 | `pyproject.toml` 漏声明 `feedparser` → CI 跑挂(本地能跑过是假象) | 本文件 §11 |
+| 第 13 轮 | 启动器端口自动清理（fail-loud + 自残保护） | 本文件 §12 |
+| 第 13 轮 | AnimatePresence 退出动画的"空白陷阱" → 单 keyed motion.div | 本文件 §13 |
+| 第 13 轮 | WeStock Node CSPRNG 三路径绕开（PowerShell + 全局 wrapper） | 本文件 §14 |
+| 第 12 轮 | ConfigStore 白名单：避免误改 security / api_key | 本文件 §15 |
 
 ---
 
@@ -598,3 +752,5 @@ for row in cursor.fetchall():
 - **docs/dev/pre-commit.md** — pre-commit 钩子使用指南
 - **docs/architecture.md** — 架构文档（与本文件互补）
 - **docs/api/*.md** — 端点 API 文档（7 份）
+
+---

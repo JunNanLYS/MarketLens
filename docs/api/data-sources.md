@@ -71,8 +71,8 @@
       "provider": "WeStockProvider",
       "configured": true,
       "optional": false,
-      "command": "npx -y westock-data-clawhub@1.0.4",
-      "executable": "npx",
+      "command": "westock-data-clawhub",
+      "executable": "westock-data-clawhub",
       "command_resolved": true
     },
     {
@@ -116,8 +116,8 @@
 | `configured` | bool | 全部 | 是否启用(`enabled: true`) |
 | `optional` | bool | 全部 | 失败时是否静默降级 |
 | `endpoint` | string \| null | Sina / NeoData / RSS 等 | HTTP/RSS 源的 URL |
-| `command` | string \| null | WeStock | 完整命令行 |
-| `executable` | string \| null | WeStock | 命令首项(实际可执行文件名) |
+| `command` | string \| null | WeStock | 完整命令行（实际为全局 npm 包装脚本名） |
+| `executable` | string \| null | WeStock | 命令首项（实际可执行文件名；`shutil.which` 解析） |
 | `command_resolved` | bool | WeStock | `shutil.which` 是否能找到该可执行文件 |
 | `has_token` | bool | NeoData | 是否有可用 token(本地缓存 + config + env 优先级) |
 | `token_source` | string \| null | NeoData | `cache` / `config` / `env` / `none` |

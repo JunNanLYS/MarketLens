@@ -66,6 +66,10 @@ MarketLens
 | 40 | 📡 数据采集 | 股东结构采集 | P1 | 已完成 |
 | 41 | 📡 数据采集 | 业绩预告采集 | P1 | 已完成 |
 | 42 | 📡 数据采集 | 分红记录采集 | P1 | 已完成 |
+| 43 | 🏷️ 标的管理 | 外部搜索标的（多源聚合） | P2 | 已完成 |
+| 44 | ⚙️ 系统配置 | 在线编辑 config.yaml（ConfigStore 持久化） | P1 | 已完成 |
+| 45 | ⚙️ 系统配置 | 配置回滚（`config.yaml.bak` 恢复） | P1 | 已完成 |
+| 46 | 🛠 启动器 | 启动前自动清理端口占用 | P1 | 已完成 |
 
 ---
 
@@ -468,8 +472,37 @@ MarketLens
 
 | 功能 | 说明 |
 |---|---|
-| 数据源管理 | 查看/启停数据源，修改 config.yaml 重启生效 |
-| 调度频率 | 调整各任务间隔或 cron，修改 config.yaml 重启生效 |
+| 数据源管理 | 查看/启停数据源，通过 Settings 页面行内编辑，**立即生效**（无需重启） |
+| 调度频率 | 调整各任务 interval/cron，通过 Settings 页面行内编辑，**立即生效**（APScheduler reschedule） |
+
+#### F-44: 在线编辑 config.yaml（ConfigStore 持久化）
+
+| 属性 | 内容 |
+|---|---|
+| **用户故事** | 作为开发者，我想在 Settings 页面直接开关数据源、改 `timeout`、调任务间隔，立即看到生效，避免手工改 yaml + 重启 |
+| **入口** | UI 端 `frontend/src/pages/Settings/index.tsx` + API `GET/PATCH /api/v1/settings` |
+| **存储** | 后端 `backend/config_runtime.py::ConfigStore` 单例，原子写回 `config.yaml`（tempfile + `os.replace`），写前自动备份 `config.yaml.bak` |
+| **生效** | `data_sources.*` 改动 → Provider 链 reload 钩子；`scheduler.tasks.*` 改动 → APScheduler `reschedule_job` 立刻生效 |
+| **白名单** | 仅 `data_sources.*` 和 `scheduler.tasks.*` 路径可改；`security.api_key` / `cleanup.retention_days` 等不允许通过 PATCH 改 |
+
+#### F-45: 配置回滚
+
+| 属性 | 内容 |
+|---|---|
+| **用户故事** | 作为开发者，我改了配置后想恢复到上次正常状态，避免手工 git diff |
+| **入口** | API `POST /api/v1/settings/rollback` |
+| **行为** | 把 `config.yaml.bak` 复制回 `config.yaml`，触发 ConfigStore reload 钩子 |
+| **失败条件** | `.bak` 不存在时返回 `400 ROLLBACK_FAILED`（首次 PATCH 之前） |
+
+#### F-46: 启动器自动清理端口占用
+
+| 属性 | 内容 |
+|---|---|
+| **用户故事** | 作为开发者，我第二次启动 launcher 时，前一次退得不干净导致 8000/5173 端口被占，**不想再手动打开任务管理器** |
+| **入口** | `scripts/launcher.py` 启动 `_run()` 入口处 |
+| **行为** | 启动 uvicorn / Vite 之前调用 `_release_port(host, port, service_name)`：socket bind 探测 → `netstat` / `lsof` 查 PID → `taskkill /T /F` (Win) / `os.kill(SIGTERM)` (Unix) → 200ms 轮询等端口释放（最长 10s） |
+| **失败条件** | 10s 后端口仍被占，抛 `RuntimeError` 提示用户手动关闭（避免 silent 启动） |
+| **守卫** | 占用端口的 PID == 启动器自身时拒绝清理（自残保护） |
 
 ---
 
