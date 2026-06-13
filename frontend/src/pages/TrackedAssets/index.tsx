@@ -198,6 +198,7 @@ export default function TrackedAssetsPage() {
   const [enabled, setEnabled] = useState<boolean | undefined>();
   const [addOpen, setAddOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [externalInput, setExternalInput] = useState("");
   const [keyword, setKeyword] = useState("");
   const [form] = Form.useForm<AddAssetForm>();
 
@@ -288,14 +289,16 @@ export default function TrackedAssetsPage() {
   // 旧实现误用了 /assets，导致"外部搜索"实际只搜本地已追踪列表。
   const externalSearch = useQuery<{ items: AssetSearchResult[]; total: number }>({
     queryKey: ["assets", "external-search", keyword],
-    queryFn: async () => {
+    queryFn: async ({ queryKey }) => {
+      const currentKeyword = String(queryKey[2] ?? "").trim();
+      if (!currentKeyword) return { items: [], total: 0 };
       const { data } = await apiClient.get<{ items: AssetSearchResult[]; total: number }>(
         "/assets/search",
-        { params: { keyword, include_local: true } },
+        { params: { keyword: currentKeyword, include_local: true } },
       );
       return data;
     },
-    enabled: false,
+    enabled: searchOpen && keyword.trim().length > 0,
   });
 
   const columns: ColumnsType<TrackedAsset> = [
@@ -398,9 +401,12 @@ export default function TrackedAssetsPage() {
               placeholder="输入名称或代码，如 宁德时代 / 300750 / 比亚迪"
               allowClear
               style={{ width: 360 }}
+              value={externalInput}
+              onChange={(e) => setExternalInput(e.target.value)}
               onSearch={(v) => {
-                setKeyword(v);
-                externalSearch.refetch();
+                const trimmed = v.trim();
+                setExternalInput(trimmed);
+                setKeyword(trimmed);
               }}
             />
             <Tooltip title={"数据源：新浪 + NeoData + WeStock；未追踪的标的可直接点右侧『添加』一键加入。"}>
