@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Layout, Space, Typography } from "antd";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { HealthIndicator } from "./HealthIndicator";
 import { ThemeToggle } from "./ThemeToggle";
 import { KpiBar } from "./KpiBar";
 import { FloatingNav } from "./FloatingNav";
 import { CommandPalette } from "@/components/shared/CommandPalette";
 
-const { Header, Content } = Layout;
+const { Content } = Layout;
 
 // MarketLens 品牌 logo：SVG 折线图（DESIGN.md §1 品牌定位）
 function MarketLensLogo({ size = 22 }: { size?: number }) {
@@ -44,6 +45,8 @@ function MarketLensLogo({ size = 22 }: { size?: number }) {
 export function AppLayout() {
   // 命令面板开关状态：提升到 AppLayout，方便 Header 右侧的 ⌘K 按钮触发
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const location = useLocation();
+  const reduceMotion = useReducedMotion();
 
   // ⌘K / Ctrl+K 全局快捷键统一在 AppLayout 监听；CommandPalette 内部不再重复绑定
   useEffect(() => {
@@ -60,34 +63,29 @@ export function AppLayout() {
   return (
     <Layout className="min-h-screen h-screen" style={{ background: "var(--color-bg-layout)" }}>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-      <Header
+      <header
+        className="app-header-glass"
         style={{
-          borderBottom: "1px solid var(--color-border)",
-          paddingInline: 24,
-          paddingBlock: 0,
+          paddingInline: 20,
           display: "grid",
           gridTemplateColumns: "1fr auto 1fr",
           alignItems: "center",
-          background: "var(--color-bg-container)",
-          height: 64,
-          lineHeight: "64px",
-          gap: 16,
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
+          height: 52,
+          gap: 12,
         }}
       >
         {/* 左：品牌 logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <MarketLensLogo size={22} />
+          <MarketLensLogo size={20} />
           <Typography.Title
             level={5}
             style={{
               margin: 0,
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: 700,
               letterSpacing: "-0.02em",
               color: "var(--color-text-primary)",
+              whiteSpace: "nowrap",
             }}
           >
             MarketLens
@@ -97,57 +95,60 @@ export function AppLayout() {
         {/* 中：悬浮胶囊导航（玻璃质感） */}
         <FloatingNav />
 
-        {/* 右：KPI + 操作 */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, minWidth: 0 }}>
-          <KpiBar />
-          <Space size={12}>
+        {/* 右：搜索 + 健康指示 + 主题切换 */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, minWidth: 0 }}>
+          <Space size={10}>
             <button
               type="button"
               onClick={() => setPaletteOpen(true)}
               title="按 ⌘K / Ctrl+K 搜索"
               aria-label="打开命令面板"
-              className="floating-nav-item"
-              style={{
-                background: "var(--color-bg-base)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text-secondary)",
-                padding: "6px 12px",
-                fontSize: 12,
-                borderRadius: 10,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                fontFamily: "inherit",
-              }}
+              className="app-search-pill"
             >
-              <kbd
-                style={{
-                  fontFamily: "inherit",
-                  fontSize: 11,
-                  padding: "1px 5px",
-                  background: "var(--color-bg-container)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 3,
-                }}
-              >
-                ⌘K
-              </kbd>
+              <kbd>⌘K</kbd>
               搜索
             </button>
             <HealthIndicator />
             <ThemeToggle />
           </Space>
         </div>
-      </Header>
+      </header>
       <Content
         style={{
-          padding: "32px 32px",
+          padding: "72px 32px 32px",
+          // 保持 overflow:auto 让长页面整体可滚动。
+          // NewsList 等"内部滑动视窗"组件用 overscroll-behavior:contain
+          // 阻止滚轮事件冒泡到外层，避免双滚动冲突。
           overflow: "auto",
           background: "var(--color-bg-layout)",
         }}
       >
-        <Outlet />
+        {/* 二级 KPI 条：贴在 Header 下方，作为每页通用顶栏 */}
+        <div style={{ marginBottom: 24 }}>
+          <KpiBar />
+        </div>
+        {/* 路由切换：AnimatePresence 做极短 fade-in/out。
+            性能优化：
+            1. 时长 0.22s → 0.12s（视觉差异不可察觉，但"新旧 page 双树"窗口减半）
+            2. 退场 motion.div 强制 pointerEvents:none + visibility:hidden
+               旧 page 仍然在树里但不再响应事件 + 不可见，避免 0.12s 内
+               视觉上看到两个 page 叠加；同时也不再触发额外 reflow
+            3. 不再使用 position: absolute——这样新 page 直接顶替布局，
+               旧 page 是 fixed 视口位置 + 不响应事件，不会和 KpiBar 抢 reflow
+            4. 页面 useQuery 自带 staleTime（30s+），切回时不会重新打接口
+        */}
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={location.pathname}
+            initial={reduceMotion ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={reduceMotion ? undefined : { opacity: 0 }}
+            transition={{ duration: 0.12, ease: "linear" }}
+            style={{ willChange: "opacity" }}
+          >
+            <Outlet />
+          </motion.div>
+        </AnimatePresence>
       </Content>
     </Layout>
   );

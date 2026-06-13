@@ -1,4 +1,10 @@
-import { forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
+import {
+  forwardRef,
+  memo,
+  useImperativeHandle,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
 import type { Position, RealizedPnlResult, HealthResponse } from "@/api/types";
@@ -75,7 +81,10 @@ function KpiChip({
 }
 
 // 顶部全局 KPI 条（DESIGN.md §4.7）：4 个 chip，1px 分隔线
-export const KpiBar = forwardRef<KpiBarHandle>(function KpiBar(_props, ref) {
+// memo 包装：让 AppLayout 父级 re-render 时（路由切换/主题切换），
+// KpiBar 不重新渲染（内部 useQuery 引用变化也不影响 props 比较），
+// 节省 4 个 chip + NumberFormat + PnlDisplay 的重绘开销。
+export const KpiBar = memo(forwardRef<KpiBarHandle>(function KpiBar(_props, ref) {
   const { data, refetchAll } = useKpiData();
   const { totalValue, realizedPnl, unrealizedPnl, healthOk } = data;
   const refetchRef = useRef(refetchAll);
@@ -118,4 +127,4 @@ export const KpiBar = forwardRef<KpiBarHandle>(function KpiBar(_props, ref) {
       />
     </div>
   );
-});
+}));

@@ -3,7 +3,6 @@ import { App as AntdApp, Spin } from "antd";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { bindAppMessageApi } from "@/api/client";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { MotionPage } from "@/components/shared/MotionPage";
 import { RouteErrorBoundary } from "@/components/shared/RouteErrorBoundary";
 
 // 路由级懒加载：避免单页面错误导致整站空白。
@@ -26,12 +25,12 @@ function AppMessageBridge() {
   return null;
 }
 
+// 页面进出场动画已统一移到 AppLayout 的 AnimatePresence，
+// 这里只负责 Suspense fallback，避免双层动画叠加。
 function withSuspense(Page: ComponentType) {
   return (
     <Suspense fallback={<Spin tip="加载市场数据中…" />}>
-      <MotionPage>
-        <Page />
-      </MotionPage>
+      <Page />
     </Suspense>
   );
 }

@@ -1,7 +1,7 @@
 import { Button, Card, Empty, Skeleton, Timeline, Typography } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/api/client";
 import type { TaskLog, PageResult } from "@/api/types";
 import { TASK_LABELS } from "@/utils/constants";
@@ -11,12 +11,9 @@ import { QueryErrorState } from "@/components/shared/QueryErrorState";
 const { Text } = Typography;
 
 interface CollectionTimelineProps {
-  /** 可选 symbol，暂用于标题展示；API 不支持按 symbol 过滤 */
   symbol?: string;
-  /** 加载更多回调（由父组件传入） */
-  loadMore?: () => void;
-  /** 是否还有更多数据可加载 */
-  hasMore?: boolean;
+  // 单页大小：默认 20 条。视窗高度按 symbol 卡片宽度自动容纳 ~10 条 + 滚动加载。
+  pageSize?: number;
 }
 
 // Task log status → Timeline 节点颜色（token 名）
@@ -33,20 +30,63 @@ function getTimelineNodeColor(status: string): string {
   return "var(--color-text-tertiary)";
 }
 
-// 采集事件时间轴：展示任务运行日志，失败事件标红 + 展开错误摘要
-export function CollectionTimeline({ symbol, loadMore, hasMore }: CollectionTimelineProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+// 采集事件时间轴：滑动视窗 + 触底加载
+//
+// 设计要点：
+// - useInfiniteQuery 维护 pages 数组；UI 渲染时把 pages 扁平展平。
+// - IntersectionObserver 监控底部 sentinel，触底自动 fetchNextPage。
+// - 容器设 max-height + overflow:auto，用户感知是"卡片在长但可滚动"，
+//   而非"页面一直往下长"——解决截图中 Timeline 顶到屏幕外的问题。
+// - 错误事件额外展开错误摘要，点击行即可折叠。
+export function CollectionTimeline({ symbol, pageSize = 20 }: CollectionTimelineProps) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  const logs = useQuery<PageResult<TaskLog>>({
-    queryKey: ["tasks", "logs", { page: 1, page_size: 100 }],
-    queryFn: async () => {
+  const logs = useInfiniteQuery<PageResult<TaskLog>>({
+    queryKey: ["tasks", "logs", "infinite", { page_size: pageSize }],
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }) => {
       const { data } = await apiClient.get<PageResult<TaskLog>>("/tasks/logs", {
-        params: { page: 1, page_size: 100 },
+        params: { page: pageParam, page_size: pageSize },
       });
       return data;
     },
-    staleTime: 60_000,
+    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+      // 后端 page_info.total 已知；超出则停
+      const total = lastPage.page_info?.total ?? 0;
+      const last = typeof lastPageParam === "number" ? lastPageParam : 1;
+      const loaded = last * pageSize;
+      return loaded < total ? last + 1 : undefined;
+    },
+    staleTime: 30_000,
   });
+
+  // 触底加载：监控 sentinel，进入视口时 fetchNextPage
+  // ref 模式：IntersectionObserver 只挂一次，避免 deps 含整个对象导致重连
+  const fetchNextRef = useRef(logs.fetchNextPage);
+  const hasNextRef = useRef(logs.hasNextPage);
+  const fetchingRef = useRef(logs.isFetchingNextPage);
+  fetchNextRef.current = logs.fetchNextPage;
+  hasNextRef.current = logs.hasNextPage;
+  fetchingRef.current = logs.isFetchingNextPage;
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (e.isIntersecting && hasNextRef.current && !fetchingRef.current) {
+          fetchNextRef.current();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // 展开的错误 id 用 Set 维护（保持原行为）
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
   const toggleExpand = (id: number) => {
     setExpandedIds((prev) => {
@@ -57,12 +97,17 @@ export function CollectionTimeline({ symbol, loadMore, hasMore }: CollectionTime
     });
   };
 
+  // 扁平展平所有已加载的 pages
+  const items = useMemo(
+    () => (logs.data?.pages ?? []).flatMap((p) => p.items ?? []),
+    [logs.data],
+  );
+
   if (logs.isLoading) return <Skeleton active />;
   if (logs.isError) {
     return <QueryErrorState error={logs.error} onRetry={logs.refetch} />;
   }
 
-  const items = logs.data?.items ?? [];
   if (items.length === 0) {
     return (
       <Card size="small" title={symbol ? `${symbol} 采集历史` : "采集历史"}>
@@ -76,24 +121,28 @@ export function CollectionTimeline({ symbol, loadMore, hasMore }: CollectionTime
       size="small"
       title={symbol ? `${symbol} 采集历史` : "采集历史"}
       className="w-full"
-      extra={
-        hasMore && loadMore ? (
-          <Button type="link" size="small" onClick={loadMore}>
-            加载更多
-          </Button>
-        ) : null
-      }
+      // 卡片 body 改为可滚动容器，限制最大高度为视口的 60%（约 540px）。
+      // Timeline 内容超出后内部滚动，不再顶到屏幕外。
+      styles={{
+        body: {
+          maxHeight: "60vh",
+          overflowY: "auto",
+          paddingRight: 8,
+        },
+      }}
     >
       <Timeline
         items={items.map((log) => {
           const meta = getTaskStatusMeta(log.status);
-          const isFailure = log.status === "failure" || log.status === "error" || log.status === "failed";
+          const isFailure =
+            log.status === "failure" || log.status === "error" || log.status === "failed";
           const label = TASK_LABELS[log.task_name] ?? log.task_name;
           const time = log.started_at ? dayjs(log.started_at).format("MM-DD HH:mm") : "-";
           const expanded = expandedIds.has(log.id);
-          const duration = log.started_at && log.finished_at
-            ? dayjs(log.finished_at).diff(dayjs(log.started_at), "second")
-            : null;
+          const duration =
+            log.started_at && log.finished_at
+              ? dayjs(log.finished_at).diff(dayjs(log.started_at), "second")
+              : null;
 
           const children = (
             <div>
@@ -158,6 +207,20 @@ export function CollectionTimeline({ symbol, loadMore, hasMore }: CollectionTime
           };
         })}
       />
+
+      {/* 触底 sentinel + 加载状态 */}
+      <div ref={sentinelRef} style={{ height: 1 }} />
+      <div className="text-center py-2">
+        {logs.isFetchingNextPage ? (
+          <Text type="secondary" className="text-xs">加载中…</Text>
+        ) : logs.hasNextPage ? (
+          <Button type="link" size="small" onClick={() => logs.fetchNextPage()}>
+            加载更多
+          </Button>
+        ) : (
+          <Text type="secondary" className="text-xs">已加载全部 {items.length} 条</Text>
+        )}
+      </div>
     </Card>
   );
 }

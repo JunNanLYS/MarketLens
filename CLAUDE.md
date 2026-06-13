@@ -197,6 +197,19 @@ Positions are computed in real-time (not persisted). `portfolio_service.py` aggr
 - Data processing prefers `pandas`; file paths use `pathlib`; PEP8 compliance
 - Every collection must persist **both raw response and normalized data** (audit-traceability)
 
+### Configuration discipline — no hardcoded tunables
+
+任何**用户可调**的值(超时、阈值、间隔、路径、限制、cron、市场前缀、清理规则、API 端点、retry 次数等)必须声明在 `config.yaml`;在代码里硬编码这些值 = bug。改 YAML 必须下次读取生效,不应需要重启/编译。
+
+**Why:** 单用户本地工具,自己维护自己改;硬编码默默破坏 "config-driven" 承诺(2026-06-08 审计一次抓出 6+ 处:`markets` 前缀字面量散落、证据包 `60`/`5` 限制、token 24h 禁用、清理规则表写死、`cleanup.retention` 段缺失等)。审查时 **Config-driven vs hardcoded** 是 Maintainability 第一条;本节把它升级为硬约束。
+
+**How to apply:**
+- 引入任何可调值 → **先**在 `config.yaml` 加字段,代码用 `get_config()` / `ConfigStore` 读取。
+- YAML 缺失/类型错误 → 用 `_FALLBACK_*` 常量兜底 + `logger.warning(...)`,**不**静默用魔法值(已建立的模式见 `evidence_builder.py` / `asset_service.py` / `scheduler/jobs.py`)。
+- **不适用本规则**(代码层不变量,非用户可调):hash 桶大小、retry 指数、正则字符类内部细节;以及"用户愿意改源码"的一次性常量(如 `_CLEAR_CACHE_DISABLE_SECONDS = 30` —— token 锁定时长,2026-06-13 通过源码编辑 3 次而非 YAML)。判断标准:**用户会想改它吗?会 → 进 config;不会 → 代码常量。**
+- 新增 config 字段:同步 `docs/api/*.md`(如有 API 暴露)+ Settings 页面(如有 UI 暴露)+ commit message。
+- code review 时,凡看到裸 `re.compile(r"^(sh|sz|hk|...)"\\w+)$` / `if x > 60` / `time.sleep(24*3600)` 这类"看起来能改"的常量,必须问"为啥不放 config.yaml?"。
+
 ### Module boundaries (enforced)
 
 ```

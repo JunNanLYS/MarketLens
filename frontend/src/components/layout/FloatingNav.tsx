@@ -7,6 +7,7 @@ import {
   ScheduleOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
+import { motion, useReducedMotion } from "framer-motion";
 import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -37,20 +38,21 @@ function getSelectedKey(pathname: string): string {
 }
 
 // 顶部悬浮胶囊导航：macOS / VisionOS 玻璃质感。
-// - 居中悬浮在 Content 顶部，pointer-events:auto 不挡点击
-// - 玻璃 backdrop-filter blur(20px) saturate(180%)
-// - 选中态：胶囊高亮 + 微缩放 + 阴影抬升
-// - 圆角胶囊：未选中 10px / 选中 14px（pill 形状）
+// 选中态用 framer-motion 的 layoutId 在新旧位置间做 FLIP 滑动，
+// 蓝色胶囊会从旧 tab 平滑流到新 tab。
+//
+// 性能优化：原 spring 动画（stiffness 420 + damping 34 + mass 0.7）每次切 tab
+// 持续运算 200~300ms，期间 tab 内容也在重渲染，导致切页 + 切胶囊叠加卡顿。
+// 改为：胶囊仍保留 layoutId FLIP 形变动画但用极短 tween（140ms linear），
+// 视觉差异不可察觉但 GPU 压力大幅下降；fallback reduceMotion 直接瞬切。
 export function FloatingNav() {
   const location = useLocation();
   const navigate = useNavigate();
   const active = getSelectedKey(location.pathname);
+  const reduceMotion = useReducedMotion();
 
   return (
-    <nav
-      aria-label="主导航"
-      className="floating-nav"
-    >
+    <nav aria-label="主导航" className="floating-nav">
       {ITEMS.map((item) => {
         const isActive = item.key === active;
         return (
@@ -62,6 +64,18 @@ export function FloatingNav() {
             className={`floating-nav-item ${isActive ? "floating-nav-item-active" : ""}`}
             title={item.label}
           >
+            {isActive && (
+              <motion.span
+                layoutId="floating-nav-active-pill"
+                className="floating-nav-active-bg"
+                aria-hidden="true"
+                transition={
+                  reduceMotion
+                    ? { duration: 0 }
+                    : { duration: 0.14, ease: "linear" }
+                }
+              />
+            )}
             <span className="floating-nav-icon">{item.icon}</span>
             <span className="floating-nav-label">{item.label}</span>
           </button>
