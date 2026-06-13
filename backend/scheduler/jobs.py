@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -215,7 +216,10 @@ def _run_ai_report() -> None:
         logger.exception("定时任务执行异常: ai_report")
 
 
-# 过期数据清理注册表：表名 → (时间列名, 保留天数)
+# 过期数据清理注册表：从 config.yaml 的 ``cleanup.retention`` 段读取。
+# 之所以不再在代码里硬编码：用户调 retention 应该是运维/合规动作，
+# 改 YAML 比改 Python 风险低、可见、可回滚（rollback 由 ConfigStore 兜底）。
+#
 # 时间列名语义：
 #   - collected_at: 采集时间戳，按"采集时间"滚动保留（适合 etf_basic/etf_holdings/us_financials
 #     等因 UNIQUE(code/symbol, date, source) 每日 upsert 的表，保留 N 天采集快照即可）
@@ -224,46 +228,86 @@ def _run_ai_report() -> None:
 # 保留天数原则：
 #   - 行情/榜单/事件类（每日增量、价值随时间衰减）：365 天
 #   - 财报/净值/历史/大单/龙虎榜（业务分析价值高）：1825 天（5 年）
-# 调整策略：仅修改本字典即可，无需改清理逻辑。
-CLEANUP_RULES: dict[str, tuple[str, int]] = {
-    "raw_data": ("collected_at", 30),
-    "news_items": ("collected_at", 90),  # 用 collected_at 而非 published_at：避免历史新闻同步时 published_at 太老被立刻清掉
-    "etf_basic": ("collected_at", 365),
-    "etf_holdings": ("collected_at", 365),
-    "etf_nav_history": ("date", 1825),
-    "etf_holders": ("report_date", 365),  # 表内业务日期列名为 report_date，非 date
-    "etf_financial": ("date", 1825),
-    "sector_daily_quote": ("date", 365),
-    "us_financials": ("collected_at", 1825),
-    "ipo_exdiv_calendar": ("event_date", 1825),
-    "chip_distribution": ("date", 365),
-    "margintrade_data": ("date", 365),
-    "blocktrade_data": ("date", 1825),
-    "lhb_data": ("date", 1825),
-    "profit_forecasts": ("report_period", 1825),
+# 调整策略：编辑 config.yaml 的 ``cleanup.retention`` 即可，无需改代码。
+#
+# ``_FALLBACK_CLEANUP_RULES`` 在 YAML 缺失 / 为空时兜底，保证不回归旧行为。
+_FALLBACK_CLEANUP_RULES: dict[str, dict[str, Any]] = {
+    "raw_data": {"time_col": "collected_at", "days": 30},
+    "news_items": {"time_col": "collected_at", "days": 90},  # 用 collected_at 而非 published_at：避免历史新闻同步时 published_at 太老被立刻清掉
+    "etf_basic": {"time_col": "collected_at", "days": 365},
+    "etf_holdings": {"time_col": "collected_at", "days": 365},
+    "etf_nav_history": {"time_col": "date", "days": 1825},
+    "etf_holders": {"time_col": "report_date", "days": 365},  # 表内业务日期列名为 report_date，非 date
+    "etf_financial": {"time_col": "date", "days": 1825},
+    "sector_daily_quote": {"time_col": "date", "days": 365},
+    "us_financials": {"time_col": "collected_at", "days": 1825},
+    "ipo_exdiv_calendar": {"time_col": "event_date", "days": 1825},
+    "chip_distribution": {"time_col": "date", "days": 365},
+    "margintrade_data": {"time_col": "date", "days": 365},
+    "blocktrade_data": {"time_col": "date", "days": 1825},
+    "lhb_data": {"time_col": "date", "days": 1825},
+    "profit_forecasts": {"time_col": "report_period", "days": 1825},
 }
 
 
+def _load_cleanup_rules() -> dict[str, tuple[str, int]]:
+    """从 config.yaml 读 ``cleanup.retention`` 并规范化为 ``(time_col, days)``。
+
+    防御：YAML 错填（time_col 不是字符串、days 不是正整数）→ 静默跳过该条
+    并 logger.warning，避免单条脏数据把整个清理任务拖崩。
+    """
+    config = get_config()
+    retention_cfg: dict = (config.get("cleanup") or {}).get("retention") or {}
+    if not retention_cfg:
+        return {
+            name: (rule["time_col"], rule["days"])
+            for name, rule in _FALLBACK_CLEANUP_RULES.items()
+        }
+
+    rules: dict[str, tuple[str, int]] = {}
+    for table, rule in retention_cfg.items():
+        if not isinstance(rule, dict):
+            logger.warning("cleanup.retention.{} 格式错误（非 dict），已跳过", table)
+            continue
+        time_col = rule.get("time_col")
+        days = rule.get("days")
+        if not isinstance(time_col, str) or not isinstance(days, int) or days <= 0:
+            logger.warning(
+                "cleanup.retention.{} 字段非法（time_col={!r}, days={!r}），已跳过",
+                table,
+                time_col,
+                days,
+            )
+            continue
+        rules[table] = (time_col, days)
+    # 配置为空（被白名单全过滤掉）→ 兜底
+    return rules or {
+        name: (rule["time_col"], rule["days"])
+        for name, rule in _FALLBACK_CLEANUP_RULES.items()
+    }
+
+
 def _run_cleanup() -> None:
-    """按 CLEANUP_RULES 注册表清理 13 张新表 + raw_data 的过期数据。
+    """按 cleanup.retention 注册表清理 15 张表（14 张业务表 + raw_data）的过期数据。
 
     策略：
-      - 注册表驱动：新增/调整保留策略仅需改 CLEANUP_RULES
+      - 注册表驱动：新增/调整保留策略仅需改 config.yaml 的 ``cleanup.retention``
       - 单表失败不影响其他表（每个 DELETE 独立 try/except）
       - 时间列名/保留天数均通过参数化绑定传入，避免 SQL 注入
-      - 表名/列名取自模块级常量 CLEANUP_RULES，安全
+      - 表名来自 config key（运维控制），列名 / 天数走参数化绑定
     """
     try:
         logger.info("定时任务触发: cleanup")
         total_deleted: int = 0
+        cleanup_rules = _load_cleanup_rules()
         with _WRITE_LOCK:
             conn = get_connection_sync()
             try:
-                for table, (time_col, days) in CLEANUP_RULES.items():
+                for table, (time_col, days) in cleanup_rules.items():
                     try:
                         cursor = conn.execute(
-                            f"DELETE FROM {table} "  # 表名来自模块级常量，安全
-                            f"WHERE {time_col} < datetime('now', ?)",  # 同上
+                            f"DELETE FROM {table} "  # 表名来自 YAML cleanup.retention 的 key
+                            f"WHERE {time_col} < datetime('now', ?)",  # time_col 也来自 YAML（运维可控），走 ? 绑定 days
                             (f"-{days} days",),
                         )
                         deleted: int = cursor.rowcount
@@ -307,6 +351,21 @@ class SchedulerManager:
         tz: str = scheduler_cfg.get("timezone", "Asia/Shanghai")
         self._scheduler = BackgroundScheduler(timezone=tz)
         self._tasks_cfg: dict = scheduler_cfg.get("tasks", {})
+
+    def reload(self, full_config: dict | None = None) -> None:
+        """运行时重载 scheduler 任务配置（来自 ConfigStore 钩子）。
+
+        Args:
+            full_config: 完整配置 dict；若为 None 则从 self._tasks_cfg 重读。
+                         钩子调用时传新配置更可靠，避免再调 get_config 拿旧值。
+        """
+        if full_config is not None:
+            scheduler_cfg: dict = full_config.get("scheduler", {})
+            self._tasks_cfg = scheduler_cfg.get("tasks", {})
+        # add_job with replace_existing=True 已经处理"已存在则替换"的逻辑
+        # 间隔变更后 next_run_at 由 APScheduler 按新 trigger 自动重算
+        self.register_jobs()
+        logger.info("Scheduler 已重载任务配置（interval/cron 变更立即生效）")
 
     def register_jobs(self) -> None:
         """从配置注册 quote / daily_close / news / ai_report / cleanup 等所有定时任务。"""

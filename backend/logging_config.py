@@ -3,8 +3,8 @@
 设计目标:
 - 默认 INFO 级别(可 env `MARKETLENS_LOG_LEVEL` 调)
 - 按天轮转 + 50 MB 单文件上限,保留 30 天
-- 日志目录:``%APPDATA%\\MarketLens\\logs\\`` (Windows) / ``~/.local/share/MarketLens/logs/`` (Linux/Mac)
-  与 ``backend.config.get_data_dir()`` 一致,env ``MARKETLENS_DATA_DIR`` 仍可覆盖
+- 日志目录:``<项目根目录>/logs/``(与 ``backend/`` 同级的 ``logs/`` 子目录),
+  不再走 ``%APPDATA%``/XDG,方便 dev 态直接 ``tail -f logs/marketlens-*.log`` 排查
 - 终端输出保留颜色,方便 dev 态排查
 - 落盘去掉 ANSI 颜色码,避免 cat 看时满屏乱码
 - logger.add() 返回 handler_id,允许调用方后续 remove
@@ -22,7 +22,11 @@ from pathlib import Path
 
 from loguru import logger
 
-from backend.config import get_data_dir
+# 项目根目录 = ``backend/logging_config.py`` 的上两级目录。
+# ``Path(__file__).resolve()`` 拿到绝对路径后 ``.parent.parent`` 就是
+# pyproject.toml/CLAUDE.md 所在的项目根;不依赖 ``os.getcwd()`` 避免
+# 在 ``scripts/launcher.py`` / pytest / uvicorn 等不同入口下路径漂移。
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 
 _DEFAULT_LEVEL: str = "INFO"
 _LEVEL_ENV_VAR: str = "MARKETLENS_LOG_LEVEL"
@@ -42,11 +46,12 @@ def _resolve_log_level() -> str:
 
 
 def _log_dir() -> Path:
-    """日志目录:``<data_dir>/logs/``。
+    """日志目录:``<项目根目录>/logs/``。
 
-    ``get_data_dir()`` 已经 mkdir(exist_ok=True),这里只追加 logs/ 子目录。
+    ``PROJECT_ROOT`` 由模块加载时基于 ``__file__`` 解析,稳健不受 cwd 影响;
+    ``mkdir(parents=True, exist_ok=True)`` 保证首次启动时自动创建。
     """
-    log_dir = get_data_dir() / "logs"
+    log_dir = PROJECT_ROOT / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 

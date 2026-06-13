@@ -367,6 +367,12 @@ class EvidenceBuilder:
             return {}
         from backend.storage.database import aget_connection
 
+        # 关键：build_multi 与 build() 必须共享同一份 limits，
+        # 否则 evidence.yaml 改了 kline_limit/fund_flow_limit 仍只在单标路径生效。
+        limits = EvidenceBuilder._evidence_limits()
+        kline_limit = limits["kline_limit"]
+        fund_flow_limit = limits["fund_flow_limit"]
+
         conn = await aget_connection()
         try:
             result: dict[str, dict] = {}
@@ -401,7 +407,7 @@ class EvidenceBuilder:
                 r = dict(row)
                 sym = r["symbol"]
                 bucket = klines_by_symbol.setdefault(sym, [])
-                if len(bucket) >= 60:
+                if len(bucket) >= kline_limit:
                     continue
                 bucket.append(r)
 
@@ -417,7 +423,7 @@ class EvidenceBuilder:
                 r = dict(row)
                 sym = r["symbol"]
                 bucket = flows_by_symbol.setdefault(sym, [])
-                if len(bucket) >= 5:
+                if len(bucket) >= fund_flow_limit:
                     continue
                 bucket.append(r)
 
@@ -580,7 +586,7 @@ class EvidenceBuilder:
             # Assemble per symbol
             for symbol in symbols:
                 quote = quotes_map.get(symbol)
-                klines = list(reversed(klines_by_symbol.get(symbol, [])[:60]))
+                klines = list(reversed(klines_by_symbol.get(symbol, [])[:kline_limit]))
                 # 计算移动平均线（滑动窗口 O(n)）
                 closes_k = [item["close"] for item in klines]
                 ma_windows = (5, 10, 20, 60)
@@ -595,7 +601,7 @@ class EvidenceBuilder:
                             item[f"ma{w}"] = round(running_sums[w] / w, 4)
                         else:
                             item[f"ma{w}"] = None
-                flows = list(reversed(flows_by_symbol.get(symbol, [])[:5]))
+                flows = list(reversed(flows_by_symbol.get(symbol, [])[:fund_flow_limit]))
                 # 财务：复用单标的 _derive_finance_yoy 保证语义一致
                 finance = EvidenceBuilder._derive_finance_yoy(
                     fin_by_symbol.get(symbol, [])

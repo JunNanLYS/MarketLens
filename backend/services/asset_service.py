@@ -10,10 +10,41 @@ from backend.config import get_config
 from backend.storage.database import get_db
 from backend.utils import build_fund_flow_summary, escape_like
 
-SYMBOL_PATTERN = re.compile(r"^(sh|sz|hk|us|fut|hf|nf)(\w+)$")
+# 内置回退：config.yaml 的 markets section 缺失/为空时使用。
+# 与 CLAUDE.md 硬约束一致——所有 SQLite 写路径必须持写锁串行化
+_FALLBACK_MARKET_PREFIXES: tuple[str, ...] = ("sh", "sz", "hk", "us", "fut", "hf", "nf")
 
-# CLAUDE.md 硬约束：所有 SQLite 写路径必须持写锁串行化
 _WRITE_LOCK: threading.Lock = threading.Lock()
+
+
+def _load_market_prefixes() -> tuple[str, ...]:
+    """从 config.yaml 的 ``markets`` section 读取有效 market 前缀。
+
+    判定规则：``markets.<name>.prefix == name``（保证 key 与 value 自洽，
+    防止运维误填 ``markets.sh: {prefix: sz}`` 这类自相矛盾项）。
+
+    配置缺失 / 为空时回退到内置 ``_FALLBACK_MARKET_PREFIXES``，
+    保证旧版本 YAML 与紧急修复场景下 symbol 校验仍能工作。
+    """
+    config = get_config()
+    markets_cfg = config.get("markets") or {}
+    prefixes = sorted(
+        name
+        for name, cfg in markets_cfg.items()
+        if isinstance(cfg, dict) and cfg.get("prefix") == name
+    )
+    return tuple(prefixes) or _FALLBACK_MARKET_PREFIXES
+
+
+def _build_symbol_pattern() -> re.Pattern[str]:
+    """根据当前 ``markets`` 注册表动态生成 SYMBOL_PATTERN。
+
+    返回的正则等价于 ``^(p1|p2|...)(\\w+)$``，其中 ``p*`` 是
+    ``_load_market_prefixes()`` 的结果。
+    """
+    prefixes = _load_market_prefixes()
+    alternation = "|".join(re.escape(p) for p in prefixes)
+    return re.compile(rf"^({alternation})(\w+)$")
 
 
 class AssetExistsError(ValueError):
@@ -39,7 +70,7 @@ class AssetService:
 
     @staticmethod
     def _parse_symbol(symbol: str) -> tuple[str, str] | None:
-        match = SYMBOL_PATTERN.match(symbol)
+        match = _build_symbol_pattern().match(symbol)
         if not match:
             return None
         prefix = match.group(1)
@@ -82,7 +113,10 @@ class AssetService:
         # 如果 symbol 不带市场前缀但传入了 market，自动拼接前缀
         # （前端表单 symbol 和 market 是分开填的，用户可能只填 `300750` + 选 `sz`）
         supplied_market = data.get("market") or ""
-        if self._parse_symbol(raw_symbol) is None and supplied_market in ("sh", "sz", "hk", "us", "fut", "hf", "nf"):
+        if (
+            self._parse_symbol(raw_symbol) is None
+            and supplied_market in _load_market_prefixes()
+        ):
             raw_symbol = f"{supplied_market}{raw_symbol}"
 
         parsed = self._parse_symbol(raw_symbol)

@@ -7,6 +7,7 @@ import httpx
 from loguru import logger
 
 from backend.collectors.base import StructuredProvider, _HttpClientMixin
+from backend.utils import try_parse_float
 
 
 class SinaProvider(StructuredProvider, _HttpClientMixin):
@@ -94,16 +95,8 @@ class SinaProvider(StructuredProvider, _HttpClientMixin):
 
     @staticmethod
     def _safe_float(value: object) -> float | None:
-        """安全转为 float，支持逗号分隔的数字字符串。"""
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        cleaned = re.sub(r"[,\s]", "", str(value))
-        try:
-            return float(cleaned)
-        except (ValueError, TypeError):
-            return None
+        """薄包装，逻辑统一在 ``backend.utils.try_parse_float``。"""
+        return try_parse_float(value)
 
     # ------------------------------------------------------------------
     # Provider 接口实现（异步版）

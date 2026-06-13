@@ -44,6 +44,13 @@ class TokenManager:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return None, "none"
+        # 优先检查"禁用截止时间"：clear_cache 不再 unlink 文件，而是写入
+        # disabled_until；本函数在禁用期内直接返回 None，避免用户新写的
+        # token 被静默自删（之前的 unlink 实现是 bug：一旦 auth 错误就
+        # 删除用户手写的 token，运维必须反复重写）。
+        disabled_until = data.get("disabled_until", 0)
+        if isinstance(disabled_until, (int, float)) and time.time() < disabled_until:
+            return None, "none"
         saved_at = data.get("saved_at", 0)
         credential = data.get("token", "")
         if not credential:
@@ -89,10 +96,29 @@ class TokenManager:
         except OSError:
             pass
 
+    # 30 秒:服务端压力导致的偶发 401,30s 内大概率能恢复;不锁一整天。
+    _CLEAR_CACHE_DISABLE_SECONDS = 30
+
     def clear_cache(self) -> None:
+        """把当前缓存 token 标记为禁用 30 秒（不删文件）。
+
+        30s 后 _read_cache 会重新尝试；用户手动重写文件 + 删除
+        disabled_until 字段可立即恢复。
+        """
         try:
-            _TOKEN_FILE.unlink()
-        except FileNotFoundError:
+            raw = _TOKEN_FILE.read_text(encoding="utf-8").strip()
+            data = json.loads(raw) if raw else {}
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError, TypeError):
+            return
+        data["disabled_until"] = int(time.time()) + self._CLEAR_CACHE_DISABLE_SECONDS
+        try:
+            _TOKEN_FILE.write_text(json.dumps(data), encoding="utf-8")
+            logger.warning(
+                "NeoData token 已被禁用 {}s,期间所有请求将跳过 NeoData 源 "
+                "(可手改 ~/.workbuddy/.neodata_token 删除 disabled_until 字段立即恢复)",
+                self._CLEAR_CACHE_DISABLE_SECONDS,
+            )
+        except OSError:
             pass
 
     def get_status(self) -> dict[str, Any]:

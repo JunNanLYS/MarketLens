@@ -6,6 +6,7 @@ from loguru import logger
 
 from backend.collectors.base import BaseProvider
 from backend.collectors.neodata_client import NeoDataClient
+from backend.utils import try_parse_float
 
 
 class NeoDataProvider(BaseProvider):
@@ -198,15 +199,8 @@ class NeoDataProvider(BaseProvider):
 
     @staticmethod
     def _try_float(value: str | int | float | None) -> float | None:
-        if value is None:
-            return None
-        try:
-            cleaned = re.sub(r"[,%亿万元]", "", str(value))
-            if not cleaned or cleaned == "-":
-                return None
-            return float(cleaned)
-        except (ValueError, TypeError):
-            return None
+        """薄包装，逻辑统一在 ``backend.utils.try_parse_float``。"""
+        return try_parse_float(value, extra_strip="%亿万元")
 
     # ------------------------------------------------------------------
     # Structured data methods（异步版）

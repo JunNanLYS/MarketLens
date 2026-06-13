@@ -1,254 +1,231 @@
-# ============================================================================
-# MarketLens 配置文件 — 顺序决定优先级（从上到下递减）
-# ============================================================================
-# config.yaml 只管"声明"（有哪些源、优先级、参数），具体获取逻辑由 Provider 类实现
-
-# --------------------------------------------------------------------------
-# 数据源
-# --------------------------------------------------------------------------
-# structured: 结构化数据源（行情/K线/财报/资金流/技术指标）
-#   - provider: 对应 backend/collectors/ 下的 Provider 类名
-#   - enabled: 是否启用
-#   - optional: 为 true 时，数据源不可用不会阻断其他源
-#   - timeout: 超时时间（秒）
-# 新闻源同理
-# --------------------------------------------------------------------------
 data_sources:
-  structured:
-  - name: westock
-    provider: WeStockProvider
-    enabled: true
-    timeout: 30
-    params:
-      command: npx -y westock-data-clawhub@1.0.4
-  - name: sina
-    provider: SinaProvider
-    enabled: true
-    timeout: 15
-    params:
-      quote_url: https://hq.sinajs.cn/list={codes}
-  - name: neodata
-    provider: NeoDataProvider
-    enabled: true
-    optional: true        # token 缺失/过期时静默降级,不影响其他源
-    timeout: 30
-    params:
-      endpoint: https://copilot.tencent.com/agenttool/v1/neodata
-      token: ''            # 兜底占位;实际凭证由外部 workbuddy 工具
-                            # 写入 ~/.workbuddy/.neodata_token,本项目只读不写。
-                            # 详情见 backend/collectors/neodata_client.py。
-  # ----------------------------------------------------------------------
-  # 新闻源（news sources）
-  # ----------------------------------------------------------------------
   news:
-  - name: neodata
-    provider: NeoDataProvider
-    enabled: true
+  - enabled: true
+    name: neodata
     optional: true
-    timeout: 30
     params:
       endpoint: https://copilot.tencent.com/agenttool/v1/neodata
       token: ''
-  - name: westock_hot
-    provider: WeStockProvider
-    enabled: true
-    optional: true
+    provider: NeoDataProvider
     timeout: 30
+  - enabled: true
+    name: westock_hot
+    optional: true
     params:
       command: npx -y westock-data-clawhub@1.0.4
-  - name: sina_rss
-    provider: SinaNewsProvider
-    enabled: true
-    timeout: 15
+    provider: WeStockProvider
+    timeout: 30
+  - enabled: true
+    name: sina_rss
     params:
-      url: https://feed.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=50
       max_items: 50
-  - name: bbc_world
-    provider: RSSProvider
-    enabled: true
-    optional: true
+      url: https://feed.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=50
+    provider: SinaNewsProvider
     timeout: 15
+  - enabled: true
+    name: bbc_world
+    optional: true
     params:
       url: https://feeds.bbci.co.uk/news/world/rss.xml
-  - name: bbc_business
     provider: RSSProvider
-    enabled: true
-    optional: true
     timeout: 15
+  - enabled: true
+    name: bbc_business
+    optional: true
     params:
       url: https://feeds.bbci.co.uk/news/business/rss.xml
-  - name: bbc_top
     provider: RSSProvider
-    enabled: true
-    optional: true
     timeout: 15
+  - enabled: true
+    name: bbc_top
+    optional: true
     params:
       url: https://feeds.bbci.co.uk/news/rss.xml
-  - name: bbc_technology
     provider: RSSProvider
-    enabled: true
-    optional: true
     timeout: 15
+  - enabled: true
+    name: bbc_technology
+    optional: true
     params:
       url: https://feeds.bbci.co.uk/news/technology/rss.xml
-  - name: reuters_world
     provider: RSSProvider
-    enabled: true
-    optional: true
     timeout: 15
+  - enabled: true
+    name: reuters_world
+    optional: true
     params:
       url: https://news.google.com/rss/search?q=reuters+world&hl=en-US&gl=US&ceid=US:en
-  - name: npr_news
     provider: RSSProvider
-    enabled: true
-    optional: true
     timeout: 15
+  - enabled: true
+    name: npr_news
+    optional: true
     params:
       url: https://feeds.npr.org/1001/rss.xml
-  - name: aljazeera
     provider: RSSProvider
-    enabled: true
-    optional: true
     timeout: 15
+  - enabled: true
+    name: aljazeera
+    optional: true
     params:
       url: https://feeds.aljazeera.net/xml/rss/all.xml
-  - name: tencent_news
-    provider: TencentNewsHTTPProvider
-    enabled: true
+    provider: RSSProvider
+    timeout: 15
+  - enabled: true
+    name: tencent_news
     optional: true
-    timeout: 30
     params:
       max_items: 50
-  - name: multi_search
-    provider: SearchEngineNewsProvider
-    enabled: true
+    provider: TencentNewsHTTPProvider
+    timeout: 30
+  - enabled: true
+    name: multi_search
     optional: true
-    timeout: 15
     params:
-      primary_engine: duckduckgo
-      max_items: 30
       keywords:
       - 宏观
       - 政策
-
-# --------------------------------------------------------------------------
-# 市场与资产类型
-# --------------------------------------------------------------------------
-# 配置项说明：
-#   - prefix: 代码前缀，如 hk00700 的前缀是 "hk"
-#   - asset_types: 支持的资产类型（stock / etf / index / future / commodity）
-#   - note: 备注
+      max_items: 30
+      primary_engine: duckduckgo
+    provider: SearchEngineNewsProvider
+    timeout: 15
+  structured:
+  - enabled: true
+    name: westock
+    params:
+      command: npx -y westock-data-clawhub@1.0.4
+    provider: WeStockProvider
+    timeout: 30
+  - enabled: true
+    name: sina
+    params:
+      quote_url: https://hq.sinajs.cn/list={codes}
+    provider: SinaProvider
+    timeout: 15
+  - enabled: true
+    name: neodata
+    optional: true
+    params:
+      endpoint: https://copilot.tencent.com/agenttool/v1/neodata
+      token: ''
+    provider: NeoDataProvider
+    timeout: 30
+database:
+  path: marketlens.db
+evidence:
+  finance_limit: 4
+  fund_flow_limit: 5
+  kline_limit: 60
+  news_days: 7
 markets:
-  sh:        # 上海 A 股
-    prefix: sh
-    asset_types:
-    - stock
-    - etf
-    - index
-  sz:        # 深圳 A 股
-    prefix: sz
-    asset_types:
-    - stock
-    - etf
-    - index
-  hk:        # 港股
-    prefix: hk
-    asset_types:
-    - stock
-    - etf
-    - index
-  us:        # 美股
-    prefix: us
-    asset_types:
-    - stock
-    - etf
-    - index
-  fut:       # 国内期货（上期所/大商所/郑商所/中金所/上能源）
-    prefix: fut
+  fut:
     asset_types:
     - future
     note: 期货代码不含市场前缀，如 rb2501、IF2506、sc2401
-
-  hf:        # 国际商品（伦敦金/银等）
-    prefix: hf
+    prefix: fut
+  hf:
     asset_types:
     - commodity
     note: 国际商品（如 hf_XAU 伦敦金、hf_XAG 伦敦银）
-  nf:        # 国内商品期货（沪金/原油等）
-    prefix: nf
+    prefix: hf
+  hk:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: hk
+  nf:
     asset_types:
     - future
     note: 国内商品期货（如 nf_AU0 沪金连续、nf_SC0 原油连续）
-
-# --------------------------------------------------------------------------
-# 数据库
-# --------------------------------------------------------------------------
-# path: SQLite 数据库文件路径
-# echo: 是否打印 SQL 语句（调试用）
-database:
-  path: marketlens.db
-  echo: false
-
-# --------------------------------------------------------------------------
-# 证据配置
-# --------------------------------------------------------------------------
-# 供 EvidenceBuilder 和 AI 分析器使用的默认参数
-evidence:
-  kline_limit: 60      # 取最近 N 根日 K 线
-  fund_flow_limit: 5   # 取最近 N 天资金流
-  finance_limit: 4     # 取最近 N 期（多期+YoY 派生）
-  news_days: 7          # 取最近 N 天新闻
-
-# --------------------------------------------------------------------------
-# 安全
-# --------------------------------------------------------------------------
-# cors_origins: 允许的跨域来源，设为["*"]允许所有
-# api_key: 本地访问密钥
+    prefix: nf
+  sh:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: sh
+  sz:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: sz
+  us:
+    asset_types:
+    - stock
+    - etf
+    - index
+    prefix: us
+scheduler:
+  tasks:
+    ai_report:
+      cron: 0 20 * * *
+    daily_close:
+      cron: 0 16 * * 1-5
+    news:
+      interval: 60
+    quote:
+      interval: 1
+    cleanup:
+      cron: 30 3 * * *
+  timezone: Asia/Shanghai
+cleanup:
+  # 过期数据清理注册表：表名 → (时间列名, 保留天数)
+  # 时间列名语义：
+  #   - collected_at: 采集时间戳，按"采集时间"滚动保留（适合 etf_basic/etf_holdings/us_financials
+  #     等因 UNIQUE(code/symbol, date, source) 每日 upsert 的表，保留 N 天采集快照即可）
+  #   - date / report_date / event_date / report_period: 数据所属业务日期，按"业务日期"滚动保留
+  #     （适合按日增量写入的行情/榜单/事件类表）
+  # 保留天数原则：
+  #   - 行情/榜单/事件类（每日增量、价值随时间衰减）：365 天
+  #   - 财报/净值/历史/大单/龙虎榜（业务分析价值高）：1825 天（5 年）
+  # raw_data 仅 30 天（占空间大），news_items 90 天（要兼顾时效与可回溯）。
+  retention:
+    raw_data: {time_col: collected_at, days: 30}
+    news_items: {time_col: collected_at, days: 90}
+    etf_basic: {time_col: collected_at, days: 365}
+    etf_holdings: {time_col: collected_at, days: 365}
+    etf_nav_history: {time_col: date, days: 1825}
+    etf_holders: {time_col: report_date, days: 365}
+    etf_financial: {time_col: date, days: 1825}
+    sector_daily_quote: {time_col: date, days: 365}
+    us_financials: {time_col: collected_at, days: 1825}
+    ipo_exdiv_calendar: {time_col: event_date, days: 1825}
+    chip_distribution: {time_col: date, days: 365}
+    margintrade_data: {time_col: date, days: 365}
+    blocktrade_data: {time_col: date, days: 1825}
+    lhb_data: {time_col: date, days: 1825}
+    profit_forecasts: {time_col: report_period, days: 1825}
 security:
-  api_key: "marketlens-local"
+  api_key: marketlens-local
   cors_origins:
   - '*'
-
-# --------------------------------------------------------------------------
-# 调度
-# --------------------------------------------------------------------------
-# timezone: 时区
-# tasks: 定时任务定义
-#   - interval: 间隔（分钟）
-#   - cron: CRON 表达式（分 时 日 月 周）
-# --------------------------------------------------------------------------
-# 情感分析
-# --------------------------------------------------------------------------
-# 对采集到的新闻调用 LLM 进行情感分类（positive / negative / neutral）。
-# optional: true — API key 缺失或服务不可用时静默降级为 neutral，
-#           不阻断采集流程。
-# api_key: 也可通过环境变量 DEEPSEEK_API_KEY 注入，优先级高于本文件。
-# model: deepseek-v4-pro（2026-07-24 起官方推荐; 替代 deepseek-chat/reasoner）
-# thinking: 按 use_case 分别控制 — 简单分类任务（如新闻情感）可关思考省 token，
-#   综合判断 / narrative summary 类任务才开思考。
-#   v4-pro 支持 1M 上下文 + 500 并发，但思考链会占 1.5~3x 输出 token。
+  # CORS 方法/请求头：代码层固定回退到 ["GET","POST","PUT","DELETE","PATCH"] +
+  # ["Content-Type","Authorization","X-API-Key"]；此处显式声明后即可在不改代码的情况下
+  # 调整（典型场景：增加 PATCH/OPTIONS、补自定义 header）。
+  cors_methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  cors_headers:
+  - Content-Type
+  - Authorization
+  - X-API-Key
 sentiment:
+  api_key: ''
+  base_url: https://api.deepseek.com
+  model: deepseek-v4-pro
+  optional: true
   provider: deepseek
-  api_key: ''                # 兜底占位；优先读取 DEEPSEEK_API_KEY 环境变量
-  base_url: 'https://api.deepseek.com'  # v4-pro 官方 base，无 /v1 后缀
-  model: 'deepseek-v4-pro'   # 2026-07-24 起官方推荐; 替代 deepseek-chat / deepseek-reasoner
   thinking_by_use_case:
-    news:                    # 新闻情感分析：单条 1k token 足以分类，关思考省 token
-      enabled: false
-    narrative_summary:       # 未来 AI 综合判断（待实现）：开思考做多步推理
+    narrative_summary:
       enabled: true
       reasoning_effort: high
-  timeout: 60                # 思考模式单次推理更长, 30s 可能超时
-  optional: true
-
-scheduler:
-  timezone: Asia/Shanghai
-  tasks:
-    quote:              # 行情采集
-      interval: 15      # 每 15 分钟
-    daily_close:        # 收盘处理
-      cron: 0 16 * * 1-5  # 工作日 16:00
-    news:               # 新闻采集
-      interval: 60      # 每 60 分钟
-    ai_report:          # AI 分析报告
-      cron: 0 20 * * *  # 每日 20:00
+    news:
+      enabled: false
+      # news 路径用 default "high" 也可（code 兜底），但显式声明便于排查
+      reasoning_effort: high
+  timeout: 60
