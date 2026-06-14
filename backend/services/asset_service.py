@@ -68,6 +68,17 @@ class AssetService:
     def _get_structured_providers(self) -> list[BaseProvider]:
         return self._providers.get("structured", [])
 
+    def update_providers(self, providers: dict[str, list[BaseProvider]]) -> None:
+        """运行时替换 provider 列表（用于配置变更后立即生效）。
+
+        调用方（CollectionService.reload_providers）应先关闭旧 provider 客户端，
+        本方法仅做引用替换，不清理旧客户端以避免重复关闭。
+
+        注意：本方法与 __init__ 共享同一 dict 引用，调用方传入的 providers
+        若被多个 AssetService 持有需自行处理引用语义。
+        """
+        self._providers = providers
+
     @staticmethod
     def _parse_symbol(symbol: str) -> tuple[str, str] | None:
         match = _build_symbol_pattern().match(symbol)

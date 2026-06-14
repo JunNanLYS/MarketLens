@@ -1,12 +1,270 @@
-"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。"""
+"""证据构建器（异步版）——聚合各类数据为 AI 分析提供输入。
+
+实现采用注册表（EVIDENCE_BUILDERS）驱动：
+- 每条 EvidenceBuilderSpec 描述「读哪张表 / 怎么 SQL / 怎么后处理」
+- build() / build_multi() 遍历注册表统一调度
+- 新增数据源只需追加注册表条目
+"""
 
 import json
 from collections import defaultdict
 from contextlib import suppress
+from dataclasses import dataclass
+from typing import Any, Callable, Literal
 
 from loguru import logger
 
 from backend.config import get_config
+
+
+@dataclass(frozen=True)
+class EvidenceBuilderSpec:
+    """注册表条目：单标的采集所需的一切。
+
+    Attributes:
+        key: 输出字典中的 key（如 "quote" / "kline"）
+        table: 主表名（用于 schema 元信息）
+        needs_symbol: True 时按标的查询；False 时为市场级共享数据（如 sector_context）
+        postprocess: 后处理函数 (rows: list[dict], symbol: str | None) -> 目标值
+            None 表示直接返回 rows 列表
+        order_by_desc: SQL ORDER BY 子句（不含 ORDER BY 关键字）
+        limit: LIMIT N（N 为 None 表示不带 LIMIT）
+        postprocess_kind: 后处理类别，决定主入口如何处理返回值
+            "list" -> 列表（如 kline）
+            "dict_or_none" -> dict 或 None（如 quote）
+            "wrapped_dict_or_none" -> 包装后 dict 或 None（如 dividends、finance）
+            "special" -> 调度时单独处理（sector_context / us_finance / shareholders）
+        multi_strategy: 多标的 (build_multi) 时的 SQL 策略
+            "standard" -> 走通用 _fetch_rows_multi（普通 WHERE IN + ORDER BY + LIMIT per symbol）
+            "max_per_symbol" -> 每标的最新的 N 行（quote / technical：MAX(date) 子查询）
+            "special" -> 调度时单独处理（sector_context / us_finance / shareholders / news）
+    """
+
+    key: str
+    table: str
+    needs_symbol: bool
+    postprocess: Callable | None
+    order_by_desc: str | None
+    limit: int | None
+    postprocess_kind: Literal["list", "dict_or_none", "wrapped_dict_or_none", "special"]
+    multi_strategy: Literal["standard", "max_per_symbol", "special"] = "standard"
+
+
+def _ma_compute(items: list[dict]) -> list[dict]:
+    """计算 MA(5/10/20/60)，滑动窗口 O(n)。
+
+    直接修改 items 列表中的每个 dict 追加 ma5/ma10/ma20/ma60 字段。
+    """
+    closes = [item["close"] for item in items]
+    ma_windows = (5, 10, 20, 60)
+    running_sums: dict[int, float] = {w: 0.0 for w in ma_windows}
+    for i, item in enumerate(items):
+        c = closes[i]
+        for w in ma_windows:
+            running_sums[w] += c
+            if i >= w:
+                running_sums[w] -= closes[i - w]
+            if i >= w - 1:
+                item[f"ma{w}"] = round(running_sums[w] / w, 4)
+            else:
+                item[f"ma{w}"] = None
+    return items
+
+
+def _pp_quote(rows: list[dict], _symbol: str | None) -> dict | None:
+    """quote: 取首行 dict，无则 None。"""
+    return dict(rows[0]) if rows else None
+
+
+def _pp_kline(rows: list[dict], _symbol: str | None) -> list[dict]:
+    """kline: 反转（按日期升序）+ 计算 MA(5/10/20/60)。"""
+    items = [dict(r) for r in rows]
+    items.reverse()
+    return _ma_compute(items)
+
+
+def _pp_fund_flows(rows: list[dict], _symbol: str | None) -> list[dict]:
+    """fund_flows: 反转（按日期升序）。"""
+    items = [dict(r) for r in rows]
+    items.reverse()
+    return items
+
+
+def _pp_finance(rows: list[dict], _symbol: str | None) -> dict | None:
+    """finance: 调 _derive_finance_yoy。"""
+    return EvidenceBuilder._derive_finance_yoy([dict(r) for r in rows])
+
+
+def _pp_dividends(rows: list[dict], _symbol: str | None) -> dict | None:
+    """dividends: 包装 history + latest_* + source。"""
+    if not rows:
+        return None
+    return {
+        "history": [dict(r) for r in rows],
+        "latest_cash_dividend": rows[0]["cash_dividend"],
+        "latest_ex_date": rows[0]["ex_date"],
+        "source": rows[0].get("source"),
+    }
+
+
+def _pp_shareholders_top(rows: list[dict], _symbol: str | None) -> list[dict]:
+    """shareholders (top): 转 list[dict]，无修改。"""
+    return [dict(r) for r in rows]
+
+
+def _pp_shareholders_count(rows: list[dict], _symbol: str | None) -> list[dict]:
+    """shareholders (count): 转 list[dict]，无修改。"""
+    return [dict(r) for r in rows]
+
+
+def _pp_forecasts(rows: list[dict], _symbol: str | None) -> dict | None:
+    """forecasts: 包装 history + latest + source。"""
+    if not rows:
+        return None
+    return {
+        "history": [dict(r) for r in rows],
+        "latest": dict(rows[0]),
+        "source": rows[0].get("source"),
+    }
+
+
+def _pp_sector_context(_rows: list[dict] | None, _symbol: str | None) -> dict | None:
+    """sector_context 特殊：需 3 个独立查询，主入口调度时单独处理。"""
+    # 实际逻辑在 build() 内部实现，postprocess 不直接使用
+    raise NotImplementedError("sector_context 调度在 build() 中特殊处理")
+
+
+def _pp_news(rows: list[dict], _symbol: str | None) -> dict | None:
+    """news: 调 _aggregate_news。"""
+    items = [dict(r) for r in rows]
+    return EvidenceBuilder._aggregate_news(items)
+
+
+def _pp_technical(rows: list[dict], _symbol: str | None) -> dict | None:
+    """technical: 取首行 + 加 prev_macd_histogram（如有第二行）。"""
+    if not rows:
+        return None
+    latest = dict(rows[0])
+    if len(rows) >= 2:
+        latest["prev_macd_histogram"] = dict(rows[1]).get("macd_histogram")
+    return latest
+
+
+# 11 个注册表条目
+# 排序：build() 内按注册表顺序输出；非 symbol 依赖（sector_context, news）单独处理
+EVIDENCE_BUILDERS: tuple[EvidenceBuilderSpec, ...] = (
+    EvidenceBuilderSpec(
+        key="quote",
+        table="market_quotes",
+        needs_symbol=True,
+        postprocess=_pp_quote,
+        order_by_desc="collected_at",
+        limit=1,
+        postprocess_kind="dict_or_none",
+        multi_strategy="max_per_symbol",
+    ),
+    EvidenceBuilderSpec(
+        key="kline",
+        table="kline_daily",
+        needs_symbol=True,
+        postprocess=_pp_kline,
+        order_by_desc="date",
+        limit="kline_limit",  # 由 _evidence_limits() 解析
+        postprocess_kind="list",
+    ),
+    EvidenceBuilderSpec(
+        key="fund_flows",
+        table="fund_flows",
+        needs_symbol=True,
+        postprocess=_pp_fund_flows,
+        order_by_desc="date",
+        limit="fund_flow_limit",
+        postprocess_kind="list",
+    ),
+    EvidenceBuilderSpec(
+        key="finance",
+        table="financial_reports",
+        needs_symbol=True,
+        postprocess=_pp_finance,
+        order_by_desc="collected_at",
+        limit="finance_limit",
+        postprocess_kind="wrapped_dict_or_none",
+    ),
+    EvidenceBuilderSpec(
+        key="dividends",
+        table="dividends",
+        needs_symbol=True,
+        postprocess=_pp_dividends,
+        order_by_desc="ex_date",
+        limit=4,
+        postprocess_kind="wrapped_dict_or_none",
+    ),
+    EvidenceBuilderSpec(
+        key="forecasts",
+        table="profit_forecasts",
+        needs_symbol=True,
+        postprocess=_pp_forecasts,
+        order_by_desc="report_period",
+        limit=4,
+        postprocess_kind="wrapped_dict_or_none",
+    ),
+    EvidenceBuilderSpec(
+        key="news",
+        table="news_items",
+        needs_symbol=True,
+        postprocess=_pp_news,
+        order_by_desc="published_at",
+        limit=None,
+        postprocess_kind="wrapped_dict_or_none",
+        multi_strategy="special",
+    ),
+    EvidenceBuilderSpec(
+        key="technical",
+        table="technical_indicators",
+        needs_symbol=True,
+        postprocess=_pp_technical,
+        order_by_desc="date",
+        limit=2,
+        postprocess_kind="dict_or_none",
+        multi_strategy="max_per_symbol",
+    ),
+    # sector_context 特殊：needs_symbol=False（市场级），3 个独立查询
+    # 调度时单独处理，不在通用调度循环内
+    EvidenceBuilderSpec(
+        key="sector_context",
+        table="sector_daily_quote",
+        needs_symbol=False,
+        postprocess=_pp_sector_context,
+        order_by_desc=None,
+        limit=None,
+        postprocess_kind="special",
+        multi_strategy="special",
+    ),
+    # us_finance 特殊：仅 us 前缀；2 个查询（annual + quarter）
+    EvidenceBuilderSpec(
+        key="us_finance",
+        table="us_financials",
+        needs_symbol=True,
+        postprocess=None,  # 特殊处理
+        order_by_desc="end_date",
+        limit=4,
+        postprocess_kind="special",
+        multi_strategy="special",
+    ),
+    # shareholders 特殊：跨 2 张表
+    EvidenceBuilderSpec(
+        key="shareholders",
+        table="shareholders",
+        needs_symbol=True,
+        postprocess=None,
+        order_by_desc="report_period, rank",
+        limit=10,
+        postprocess_kind="special",
+        multi_strategy="special",
+    ),
+)
+
+EVIDENCE_BUILDERS_BY_KEY: dict[str, EvidenceBuilderSpec] = {s.key: s for s in EVIDENCE_BUILDERS}
 
 
 class EvidenceBuilder:
@@ -300,525 +558,117 @@ class EvidenceBuilder:
             "ai_scored_count": sum(1 for it in items if isinstance(it.get("confidence"), (int, float))),
         }
 
-    @staticmethod
-    async def build(symbol: str, conn=None) -> dict:
-        close_conn = conn is None
-        if conn is None:
-            from backend.storage.database import aget_connection
-
-            conn = await aget_connection()
-
-        try:
-            quote = await EvidenceBuilder._build_quote(conn, symbol)
-            klines = await EvidenceBuilder._build_kline(conn, symbol)
-            fund_flows = await EvidenceBuilder._build_fund_flows(conn, symbol)
-            finance = await EvidenceBuilder._build_finance(conn, symbol)
-            news = await EvidenceBuilder._build_news(conn, symbol)
-            technical = await EvidenceBuilder._build_technical(conn, symbol)
-            dividends = await EvidenceBuilder._build_dividends(conn, symbol)
-            shareholders = await EvidenceBuilder._build_shareholders(conn, symbol)
-            forecasts = await EvidenceBuilder._build_profit_forecasts(conn, symbol)
-            sector_ctx = await EvidenceBuilder._build_sector_context(conn, symbol)
-            # 美股财务：仅 us 前缀的标的才查询（避免浪费 IO）
-            us_finance = (
-                await EvidenceBuilder._build_us_finance(conn, symbol)
-                if symbol.startswith("us")
-                else None
-            )
-
-            data_sources = EvidenceBuilder._assemble_data_sources(
-                quote,
-                klines,
-                fund_flows,
-                finance,
-                news,
-                technical,
-                dividends,
-                shareholders,
-                forecasts,
-                sector_ctx,
-                us_finance,
-            )
-
-            return {
-                "symbol": symbol,
-                "quote": quote,
-                "kline": klines,
-                "fund_flows": fund_flows,
-                "finance": finance,
-                "news": news,
-                "technical": technical,
-                "dividends": dividends,
-                "shareholders": shareholders,
-                "forecasts": forecasts,
-                "sector_context": sector_ctx,
-                "us_finance": us_finance,
-                "data_sources": data_sources,
-            }
-        finally:
-            if close_conn:
-                with suppress(Exception):
-                    await conn.close()
+    # ------------------------------------------------------------------
+    # 通用调度 helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
-    async def build_multi(symbols: list[str]) -> dict[str, dict]:
-        """批量构建多个标的的证据包，用 WHERE IN 减少查询次数。"""
-        if not symbols:
-            return {}
-        from backend.storage.database import aget_connection
+    def _resolve_limit(spec: EvidenceBuilderSpec) -> int | None:
+        """解析 spec.limit：数字直接返回，字符串（key 名）查 _evidence_limits()。"""
+        if spec.limit is None:
+            return None
+        if isinstance(spec.limit, int):
+            return spec.limit
+        return EvidenceBuilder._evidence_limits()[spec.limit]
 
-        # 关键：build_multi 与 build() 必须共享同一份 limits，
-        # 否则 evidence.yaml 改了 kline_limit/fund_flow_limit 仍只在单标路径生效。
-        limits = EvidenceBuilder._evidence_limits()
-        kline_limit = limits["kline_limit"]
-        fund_flow_limit = limits["fund_flow_limit"]
-
-        conn = await aget_connection()
-        try:
-            result: dict[str, dict] = {}
-            # 批量查询各表
-            placeholders = ",".join("?" for _ in symbols)
-            params = list(symbols)
-
-            # quotes
-            quotes_map: dict[str, dict] = {}
-            cursor = await conn.execute(
-                f"""SELECT * FROM market_quotes
-                    WHERE symbol IN ({placeholders})
-                    AND collected_at IN (
-                        SELECT MAX(collected_at) FROM market_quotes
-                        WHERE symbol IN ({placeholders})
-                        GROUP BY symbol
-                    )""",
-                params * 2,
-            )
-            for row in await cursor.fetchall():
-                quotes_map[row["symbol"]] = dict(row)
-
-            # klines
-            cursor = await conn.execute(
-                f"""SELECT * FROM kline_daily
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, date DESC""",
-                params,
-            )
-            klines_by_symbol: dict[str, list[dict]] = {}
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                bucket = klines_by_symbol.setdefault(sym, [])
-                if len(bucket) >= kline_limit:
-                    continue
-                bucket.append(r)
-
-            # fund_flows
-            cursor = await conn.execute(
-                f"""SELECT * FROM fund_flows
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, date DESC""",
-                params,
-            )
-            flows_by_symbol: dict[str, list[dict]] = {}
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                bucket = flows_by_symbol.setdefault(sym, [])
-                if len(bucket) >= fund_flow_limit:
-                    continue
-                bucket.append(r)
-
-            # finance
-            cursor = await conn.execute(
-                f"""SELECT * FROM financial_reports
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, collected_at DESC""",
-                params,
-            )
-            fin_by_symbol: dict[str, list[dict]] = {}
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                if sym not in fin_by_symbol:
-                    fin_by_symbol[sym] = []
-                fin_by_symbol[sym].append(r)
-
-            # dividends：取每标的最近 4 次分红（按 ex_date DESC）
-            cursor = await conn.execute(
-                f"""SELECT * FROM dividends
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, ex_date DESC""",
-                params,
-            )
-            divs_by_symbol: dict[str, list[dict]] = {}
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                divs_by_symbol.setdefault(sym, []).append(r)
-                if len(divs_by_symbol[sym]) >= 4:
-                    del divs_by_symbol[sym][4:]
-
-            # shareholders：取每标的最新一期前 10 名（按 report_period DESC, rank ASC）
-            shr_by_symbol: dict[str, dict] = {}
-            cursor = await conn.execute(
-                f"""SELECT * FROM shareholders
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, report_period DESC, rank ASC""",
-                params,
-            )
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                bucket = shr_by_symbol.get(sym)
-                if bucket is None:
-                    bucket = {
-                        "top_shareholders": [],
-                        "latest_period": r["report_period"],
-                        "source": r.get("source"),
-                    }
-                    shr_by_symbol[sym] = bucket
-                if r["report_period"] != bucket["latest_period"]:
-                    # 已超过该标的的最新一期，停止
-                    continue
-                if len(bucket["top_shareholders"]) < 10:
-                    bucket["top_shareholders"].append(r)
-            # 股东人数趋势：取每标的最近 8 个报告期
-            cursor = await conn.execute(
-                f"""SELECT * FROM shareholder_count_history
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, report_date DESC""",
-                params,
-            )
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                bucket = shr_by_symbol.setdefault(
-                    sym,
-                    {"top_shareholders": [], "source": r.get("source")},
-                )
-                bucket.setdefault("holder_count_trend", [])
-                if len(bucket["holder_count_trend"]) < 8:
-                    bucket["holder_count_trend"].append(r)
-                if not bucket.get("source"):
-                    bucket["source"] = r.get("source")
-            # 清理临时字段 latest_period
-            for bucket in shr_by_symbol.values():
-                bucket.pop("latest_period", None)
-
-            # profit_forecasts：取每标的最近 4 个报告期
-            cursor = await conn.execute(
-                f"""SELECT * FROM profit_forecasts
-                    WHERE symbol IN ({placeholders})
-                    ORDER BY symbol, report_period DESC""",
-                params,
-            )
-            fcsts_by_symbol: dict[str, list[dict]] = {}
-            for row in await cursor.fetchall():
-                r = dict(row)
-                sym = r["symbol"]
-                fcsts_by_symbol.setdefault(sym, []).append(r)
-                if len(fcsts_by_symbol[sym]) >= 4:
-                    del fcsts_by_symbol[sym][4:]
-
-            # news：批量拉取 7 天窗口内新闻，Python 端按 related_symbols 聚合。
-            # 替代原来的 N 次单标的 json_each 查询，性能提升 N 倍。
-            # LIMIT 5000 防止全表扫：单标的 evidence 包不需要 7 天内所有新闻。
-            # 多取 1 行（LIMIT 5001）用作截断探测——若实际命中 5000 截断则
-            # 记 warning，避免冷门标的相关新闻被静默丢弃。
+    @staticmethod
+    async def _fetch_rows_single(
+        conn,
+        spec: EvidenceBuilderSpec,
+        symbol: str | None,
+        limit: int | None,
+    ) -> list[dict]:
+        """单标的查询：执行 SQL 返回 list[dict]。"""
+        if spec.key == "news":
+            limits = EvidenceBuilder._evidence_limits()
             cursor = await conn.execute(
                 """SELECT * FROM news_items
-                   WHERE published_at >= datetime("now", "-7 days")
-                   ORDER BY published_at DESC
-                   LIMIT 5001""",
+                   WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?)
+                   AND published_at >= datetime('now', ?)
+                   ORDER BY published_at DESC""",
+                (symbol, f"-{limits['news_days']} days"),
             )
-            all_news_rows: list[dict] = [dict(r) for r in await cursor.fetchall()]
-            if len(all_news_rows) > 5000:
-                logger.warning(
-                    "build_multi: news_items 命中 LIMIT 5000 截断,共 {} 行可能未参与评分",
-                    len(all_news_rows) - 5000,
-                )
-                all_news_rows = all_news_rows[:5000]
-            news_by_symbol: dict[str, list[dict]] = {sym: [] for sym in symbols}
-            for row in all_news_rows:
-                related_raw = row.get("related_symbols")
-                if not related_raw:
-                    continue
-                try:
-                    related = (
-                        json.loads(related_raw)
-                        if isinstance(related_raw, str)
-                        else related_raw
-                    )
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                if not isinstance(related, list):
-                    continue
-                for sym in related:
-                    bucket = news_by_symbol.get(sym)
-                    if bucket is not None and len(bucket) < 100:
-                        bucket.append(row)
+        elif spec.key == "sector_context":
+            # 不在通用调度内（sector_context 调度由 _build_sector_context 特殊处理）
+            return []
+        else:
+            params: tuple = (symbol,)
+            sql_limit = f" LIMIT {limit}" if limit is not None else ""
+            sql = f"SELECT * FROM {spec.table} WHERE symbol = ?"
+            if spec.order_by_desc:
+                sql += f" ORDER BY {spec.order_by_desc} DESC"
+            sql += sql_limit
+            cursor = await conn.execute(sql, params)
+        return [dict(row) for row in await cursor.fetchall()]
 
-            # technical
+    @staticmethod
+    async def _fetch_rows_multi(
+        conn,
+        spec: EvidenceBuilderSpec,
+        symbols: list[str],
+        limit: int | None,
+    ) -> dict[str, list[dict]]:
+        """多标的批量查询：执行 WHERE IN，返回 dict[symbol, list[dict]]。
+
+        支持两种 SQL 策略：
+        - multi_strategy == "standard"：普通 WHERE IN + ORDER BY + 在 Python 端按 symbol
+          累积直到每标的 limit 行
+        - multi_strategy == "max_per_symbol"：用 MAX(date/collected_at) 子查询确保每标的
+          取最新的 N 行（quote/technical 用，避免每标的多条历史行干扰）
+        """
+        if not symbols:
+            return {}
+        placeholders = ",".join("?" for _ in symbols)
+        params = list(symbols)
+
+        if spec.multi_strategy == "max_per_symbol":
+            # 每标的最新 N 行：子查询 MAX(order_col) GROUP BY symbol,
+            # 外层 WHERE order_col IN (...) 限制取最新日期的 N 行
+            order_col = spec.order_by_desc or "date"
             cursor = await conn.execute(
-                f"""SELECT * FROM technical_indicators
+                f"""SELECT * FROM {spec.table}
                     WHERE symbol IN ({placeholders})
-                    AND date IN (
-                        SELECT MAX(date) FROM technical_indicators
+                    AND {order_col} IN (
+                        SELECT MAX({order_col}) FROM {spec.table}
                         WHERE symbol IN ({placeholders})
                         GROUP BY symbol
                     )""",
                 params * 2,
             )
-            tech_map: dict[str, dict] = {}
+            by_symbol: dict[str, list[dict]] = {s: [] for s in symbols}
             for row in await cursor.fetchall():
-                tech_map[row["symbol"]] = dict(row)
+                r = dict(row)
+                bucket = by_symbol.get(r["symbol"])
+                if bucket is not None and len(bucket) < (limit or 1):
+                    bucket.append(r)
+            return by_symbol
 
-            # sector_context：板块背景是市场级数据，不依赖具体 symbol，
-            # 所有标的共享同一份结果（与 build() 中 _build_sector_context 语义一致）。
-            sector_ctx_shared = await EvidenceBuilder._build_sector_context(
-                conn, symbols[0]
-            )
-            # us_finance：仅 us 前缀的标的才查询（避免浪费 IO，与 build() 路径一致）。
-            us_symbols = [s for s in symbols if s.startswith("us")]
-            us_finance_map: dict[str, dict | None] = {}
-            for s in us_symbols:
-                us_finance_map[s] = await EvidenceBuilder._build_us_finance(conn, s)
-
-            # Assemble per symbol
-            for symbol in symbols:
-                quote = quotes_map.get(symbol)
-                klines = list(reversed(klines_by_symbol.get(symbol, [])[:kline_limit]))
-                # 计算移动平均线（滑动窗口 O(n)）
-                closes_k = [item["close"] for item in klines]
-                ma_windows = (5, 10, 20, 60)
-                running_sums: dict[int, float] = {w: 0.0 for w in ma_windows}
-                for i, item in enumerate(klines):
-                    c = closes_k[i]
-                    for w in ma_windows:
-                        running_sums[w] += c
-                        if i >= w:
-                            running_sums[w] -= closes_k[i - w]
-                        if i >= w - 1:
-                            item[f"ma{w}"] = round(running_sums[w] / w, 4)
-                        else:
-                            item[f"ma{w}"] = None
-                flows = list(reversed(flows_by_symbol.get(symbol, [])[:fund_flow_limit]))
-                # 财务：复用单标的 _derive_finance_yoy 保证语义一致
-                finance = EvidenceBuilder._derive_finance_yoy(
-                    fin_by_symbol.get(symbol, [])
-                )
-                # dividends：取最近 4 期（按 ex_date DESC 已是当前顺序）
-                divs = divs_by_symbol.get(symbol, [])
-                dividends = None
-                if divs:
-                    dividends = {
-                        "history": divs,
-                        "latest_cash_dividend": divs[0]["cash_dividend"],
-                        "latest_ex_date": divs[0]["ex_date"],
-                        "source": divs[0].get("source"),
-                    }
-                # shareholders：来自 shr_by_symbol；组装同单标的版对齐
-                shr_bucket = shr_by_symbol.get(symbol)
-                shareholders = None
-                if shr_bucket and (
-                    shr_bucket.get("top_shareholders")
-                    or shr_bucket.get("holder_count_trend")
-                ):
-                    shareholders = {
-                        "top_shareholders": shr_bucket.get("top_shareholders", []),
-                        "holder_count_trend": shr_bucket.get("holder_count_trend", []),
-                        "source": shr_bucket.get("source"),
-                    }
-                # profit_forecasts：取最近 4 期
-                fcsts = fcsts_by_symbol.get(symbol, [])
-                forecasts = None
-                if fcsts:
-                    forecasts = {
-                        "history": fcsts,
-                        "latest": fcsts[0],
-                        "source": fcsts[0].get("source"),
-                    }
-
-                # news from pre-aggregated dict
-                news_rows = news_by_symbol.get(symbol, [])
-                news = EvidenceBuilder._aggregate_news(news_rows)
-
-                tech = tech_map.get(symbol)
-                sector_ctx = sector_ctx_shared
-                us_finance = us_finance_map.get(symbol)
-                data_sources = EvidenceBuilder._assemble_data_sources(
-                    quote,
-                    klines,
-                    flows,
-                    finance,
-                    news,
-                    tech,
-                    dividends,
-                    shareholders,
-                    forecasts,
-                    sector_ctx,
-                    us_finance,
-                )
-
-                result[symbol] = {
-                    "symbol": symbol,
-                    "quote": quote,
-                    "kline": klines,
-                    "fund_flows": flows,
-                    "finance": finance,
-                    "news": news,
-                    "technical": tech,
-                    "dividends": dividends,
-                    "shareholders": shareholders,
-                    "forecasts": forecasts,
-                    "sector_context": sector_ctx,
-                    "us_finance": us_finance,
-                    "data_sources": data_sources,
-                }
-            return result
-        finally:
-            with suppress(Exception):
-                await conn.close()
+        # standard：普通 WHERE IN + ORDER BY，DESC 在 Python 端按 symbol 累积
+        cursor = await conn.execute(
+            f"""SELECT * FROM {spec.table}
+                WHERE symbol IN ({placeholders})
+                ORDER BY symbol, {spec.order_by_desc or "date"} DESC""",
+            params,
+        )
+        by_symbol = {s: [] for s in symbols}
+        for row in await cursor.fetchall():
+            r = dict(row)
+            bucket = by_symbol.get(r["symbol"])
+            if bucket is None:
+                continue
+            if limit is None or len(bucket) < limit:
+                bucket.append(r)
+        return by_symbol
 
     @staticmethod
-    async def _build_quote(conn, symbol: str) -> dict | None:
-        cursor = await conn.execute(
-            """SELECT * FROM market_quotes WHERE symbol = ?
-               ORDER BY collected_at DESC LIMIT 1""",
-            (symbol,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return dict(row)
+    def _build_shareholders_batch(shr_by_symbol: dict[str, dict]) -> dict[str, dict | None]:
+        """清理 shareholders 双表合并后的临时字段 latest_period。"""
+        for bucket in shr_by_symbol.values():
+            bucket.pop("latest_period", None)
+        return shr_by_symbol
 
     @staticmethod
-    async def _build_kline(conn, symbol: str) -> list[dict]:
-        limits = EvidenceBuilder._evidence_limits()
-        cursor = await conn.execute(
-            """SELECT * FROM kline_daily WHERE symbol = ?
-               ORDER BY date DESC LIMIT ?""",
-            (symbol, limits["kline_limit"]),
-        )
-        rows = await cursor.fetchall()
-        items = [dict(row) for row in rows]
-        items.reverse()  # 按日期升序
-        # 计算移动平均线（滑动窗口 O(n)）
-        closes = [item["close"] for item in items]
-        ma_windows = (5, 10, 20, 60)
-        # 维护每个窗口的 running_sum，避免每次重新求和
-        running_sums: dict[int, float] = {w: 0.0 for w in ma_windows}
-        for i, item in enumerate(items):
-            c = closes[i]
-            for w in ma_windows:
-                running_sums[w] += c
-                if i >= w:
-                    # 滑出最早一格
-                    running_sums[w] -= closes[i - w]
-                if i >= w - 1:
-                    item[f"ma{w}"] = round(running_sums[w] / w, 4)
-                else:
-                    item[f"ma{w}"] = None
-        return items
-
-    @staticmethod
-    async def _build_fund_flows(conn, symbol: str) -> list[dict]:
-        limits = EvidenceBuilder._evidence_limits()
-        cursor = await conn.execute(
-            """SELECT * FROM fund_flows WHERE symbol = ?
-               ORDER BY date DESC LIMIT ?""",
-            (symbol, limits["fund_flow_limit"]),
-        )
-        rows = await cursor.fetchall()
-        items = [dict(row) for row in rows]
-        items.reverse()
-        return items
-
-    @staticmethod
-    async def _build_finance(conn, symbol: str) -> dict | None:
-        """多期财务 + YoY 派生指标。
-
-        取最近 ``finance_limit`` 期（默认 4）财务数据，派生：
-        - ``revenue_yoy``: 营收同比（最新 vs 前一期，单位 %）
-        - ``net_profit_yoy``: 净利润同比
-        - ``eps_yoy``: EPS 同比
-        - ``roe_change``: ROE 差值（绝对值，单位百分点）
-        - ``history``: 全部期次的列表（按时间从旧到新）
-        """
-        limits = EvidenceBuilder._evidence_limits()
-        cursor = await conn.execute(
-            """SELECT * FROM financial_reports WHERE symbol = ?
-               ORDER BY collected_at DESC LIMIT ?""",
-            (symbol, limits["finance_limit"]),
-        )
-        rows = await cursor.fetchall()
-        return EvidenceBuilder._derive_finance_yoy([dict(r) for r in rows])
-
-    @staticmethod
-    async def _build_dividends(conn, symbol: str) -> dict | None:
-        """查询最近 4 次分红历史 + 最新一次派息。"""
-        cursor = await conn.execute(
-            """SELECT * FROM dividends WHERE symbol = ?
-               ORDER BY ex_date DESC LIMIT 4""",
-            (symbol,),
-        )
-        rows = await cursor.fetchall()
-        if not rows:
-            return None
-        return {
-            "history": [dict(r) for r in rows],
-            "latest_cash_dividend": rows[0]["cash_dividend"] if rows else None,
-            "latest_ex_date": rows[0]["ex_date"] if rows else None,
-            "source": rows[0]["source"] if rows else None,
-        }
-
-    @staticmethod
-    async def _build_shareholders(conn, symbol: str) -> dict | None:
-        """查询最新一期十大股东 + 股东人数趋势。"""
-        # 十大股东（按报告期降序、排名升序，取最新一期前 10 名）
-        cursor = await conn.execute(
-            """SELECT * FROM shareholders WHERE symbol = ?
-               ORDER BY report_period DESC, rank ASC LIMIT 10""",
-            (symbol,),
-        )
-        top_rows = await cursor.fetchall()
-        # 股东人数历史（最近 8 个报告期）
-        cursor = await conn.execute(
-            """SELECT * FROM shareholder_count_history WHERE symbol = ?
-               ORDER BY report_date DESC LIMIT 8""",
-            (symbol,),
-        )
-        count_rows = await cursor.fetchall()
-        if not top_rows and not count_rows:
-            return None
-        return {
-            "top_shareholders": [dict(r) for r in top_rows],
-            "holder_count_trend": [dict(r) for r in count_rows],
-            "source": (
-                top_rows[0]["source"]
-                if top_rows
-                else (count_rows[0]["source"] if count_rows else None)
-            ),
-        }
-
-    @staticmethod
-    async def _build_profit_forecasts(conn, symbol: str) -> dict | None:
-        """查询最近 4 个报告期的业绩预告。"""
-        cursor = await conn.execute(
-            """SELECT * FROM profit_forecasts WHERE symbol = ?
-               ORDER BY report_period DESC LIMIT 4""",
-            (symbol,),
-        )
-        rows = await cursor.fetchall()
-        if not rows:
-            return None
-        return {
-            "history": [dict(r) for r in rows],
-            "latest": dict(rows[0]) if rows else None,
-            "source": rows[0]["source"] if rows else None,
-        }
-
-    @staticmethod
-    async def _build_sector_context(conn, symbol: str) -> dict | None:
+    async def _build_sector_context(conn, _symbol: str | None) -> dict | None:
         """查询板块背景（行业/概念涨幅榜 Top 5 + 资金流入 Top 5）。
 
         不依赖具体 symbol（板块是全市场级别），但保留 symbol 参数以保持
@@ -918,31 +768,311 @@ class EvidenceBuilder:
         }
 
     @staticmethod
-    async def _build_news(conn, symbol: str) -> dict | None:
-        limits = EvidenceBuilder._evidence_limits()
+    async def _fetch_shareholders(conn, symbol: str) -> dict | None:
+        """查询最新一期十大股东 + 股东人数趋势。"""
+        # 十大股东（按报告期降序、排名升序，取最新一期前 10 名）
         cursor = await conn.execute(
-            """SELECT * FROM news_items
-               WHERE EXISTS (SELECT 1 FROM json_each(related_symbols) WHERE value = ?)
-               AND published_at >= datetime('now', ?)
-               ORDER BY published_at DESC""",
-            (symbol, f"-{limits['news_days']} days"),
-        )
-        rows = await cursor.fetchall()
-        items = [dict(row) for row in rows]
-        return EvidenceBuilder._aggregate_news(items)
-
-    @staticmethod
-    async def _build_technical(conn, symbol: str) -> dict | None:
-        cursor = await conn.execute(
-            """SELECT * FROM technical_indicators WHERE symbol = ?
-               ORDER BY date DESC LIMIT 2""",
+            """SELECT * FROM shareholders WHERE symbol = ?
+               ORDER BY report_period DESC, rank ASC LIMIT 10""",
             (symbol,),
         )
-        rows = await cursor.fetchall()
-        if not rows:
+        top_rows = await cursor.fetchall()
+        # 股东人数历史（最近 8 个报告期）
+        cursor = await conn.execute(
+            """SELECT * FROM shareholder_count_history WHERE symbol = ?
+               ORDER BY report_date DESC LIMIT 8""",
+            (symbol,),
+        )
+        count_rows = await cursor.fetchall()
+        if not top_rows and not count_rows:
             return None
-        latest = dict(rows[0])
-        if len(rows) >= 2:
-            prev = dict(rows[1])
-            latest["prev_macd_histogram"] = prev.get("macd_histogram")
-        return latest
+        return {
+            "top_shareholders": [dict(r) for r in top_rows],
+            "holder_count_trend": [dict(r) for r in count_rows],
+            "source": (
+                top_rows[0]["source"]
+                if top_rows
+                else (count_rows[0]["source"] if count_rows else None)
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # 向后兼容的 4 个 _build_* 包装方法（测试代码直接调用）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _build_finance(conn, symbol: str) -> dict | None:
+        """多期财务 + YoY 派生指标。"""
+        limits = EvidenceBuilder._evidence_limits()
+        spec = EVIDENCE_BUILDERS_BY_KEY["finance"]
+        rows = await EvidenceBuilder._fetch_rows_single(conn, spec, symbol, limits["finance_limit"])
+        return EvidenceBuilder._derive_finance_yoy(rows)
+
+    @staticmethod
+    async def _build_dividends(conn, symbol: str) -> dict | None:
+        """查询最近 4 次分红历史 + 最新一次派息（委托给注册表后处理）。"""
+        spec = EVIDENCE_BUILDERS_BY_KEY["dividends"]
+        rows = await EvidenceBuilder._fetch_rows_single(conn, spec, symbol, limit=4)
+        return _pp_dividends(rows, symbol)
+
+    @staticmethod
+    async def _build_shareholders(conn, symbol: str) -> dict | None:
+        """查询最新一期十大股东 + 股东人数趋势。"""
+        return await EvidenceBuilder._fetch_shareholders(conn, symbol)
+
+    @staticmethod
+    async def _build_profit_forecasts(conn, symbol: str) -> dict | None:
+        """查询最近 4 个报告期的业绩预告（委托给注册表后处理）。"""
+        spec = EVIDENCE_BUILDERS_BY_KEY["forecasts"]
+        rows = await EvidenceBuilder._fetch_rows_single(conn, spec, symbol, limit=4)
+        return _pp_forecasts(rows, symbol)
+
+    # ------------------------------------------------------------------
+    # 主入口
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def build(symbol: str, conn=None) -> dict:
+        """单标的证据包构建。
+
+        调度流程：遍历 EVIDENCE_BUILDERS 注册表，特殊项（sector_context、
+        us_finance、shareholders）单独处理，其余项走通用 fetch + postprocess 链。
+        """
+        close_conn = conn is None
+        if conn is None:
+            from backend.storage.database import aget_connection
+            conn = await aget_connection()
+
+        try:
+            result: dict[str, Any] = {"symbol": symbol}
+
+            # 1) sector_context（市场级，一次性查询）
+            result["sector_context"] = await EvidenceBuilder._build_sector_context(conn, symbol)
+
+            # 2) 通用调度：遍历除 sector_context / us_finance 之外的注册表条目
+            for spec in EVIDENCE_BUILDERS:
+                if spec.key in ("sector_context", "us_finance"):
+                    continue  # 特殊处理
+                if not spec.needs_symbol:
+                    continue
+                if spec.key == "shareholders":
+                    result["shareholders"] = await EvidenceBuilder._fetch_shareholders(conn, symbol)
+                    continue
+                limit = EvidenceBuilder._resolve_limit(spec)
+                rows = await EvidenceBuilder._fetch_rows_single(conn, spec, symbol, limit)
+                if spec.postprocess is not None:
+                    result[spec.key] = spec.postprocess(rows, symbol)
+                else:
+                    result[spec.key] = rows
+
+            # 3) us_finance：仅 us 前缀
+            if symbol.startswith("us"):
+                result["us_finance"] = await EvidenceBuilder._build_us_finance(conn, symbol)
+            else:
+                result["us_finance"] = None
+
+            result["data_sources"] = EvidenceBuilder._assemble_data_sources(
+                result.get("quote"),
+                result.get("kline"),
+                result.get("fund_flows"),
+                result.get("finance"),
+                result.get("news"),
+                result.get("technical"),
+                result.get("dividends"),
+                result.get("shareholders"),
+                result.get("forecasts"),
+                result.get("sector_context"),
+                result.get("us_finance"),
+            )
+            return result
+        finally:
+            if close_conn:
+                with suppress(Exception):
+                    await conn.close()
+
+    @staticmethod
+    async def build_multi(symbols: list[str]) -> dict[str, dict]:
+        """批量构建多个标的的证据包，用 WHERE IN 减少查询次数。
+
+        调度流程（与 build() 对齐）：
+        1. 遍历 EVIDENCE_BUILDERS 注册表，区分策略：
+           - multi_strategy == "standard" -> 通用 _fetch_rows_multi（每标的累积 limit 行）
+           - multi_strategy == "max_per_symbol" -> MAX 子查询（quote / technical）
+           - multi_strategy == "special" -> 调用专用 _build_* 方法
+        2. news 一次性拉 7 天窗口，Python 端按 related_symbols 分桶
+        3. sector_context 跨标的共享一次查询
+        4. us_finance 仅 us 前缀
+        5. shareholders 跨 2 张表
+        6. 组装每标的 result（与 build() 共享 postprocess）
+        """
+        if not symbols:
+            return {}
+        from backend.storage.database import aget_connection
+
+        conn = await aget_connection()
+        try:
+            # ---------- 阶段 1: 注册表通用批量查询 ----------
+            by_symbol_data: dict[str, dict[str, list[dict] | dict | None]] = {
+                s: {} for s in symbols
+            }
+
+            for spec in EVIDENCE_BUILDERS:
+                if spec.multi_strategy == "special":
+                    continue  # sector_context / us_finance / shareholders / news 单独处理
+                limit = EvidenceBuilder._resolve_limit(spec)
+                rows_by_sym = await EvidenceBuilder._fetch_rows_multi(
+                    conn, spec, symbols, limit
+                )
+                for sym in symbols:
+                    by_symbol_data[sym][spec.key] = rows_by_sym.get(sym, [])
+
+            # ---------- 阶段 2: 特殊项 ----------
+            # news: 一次性拉 7 天窗口，Python 端按 related_symbols 分桶
+            cursor = await conn.execute(
+                """SELECT * FROM news_items
+                   WHERE published_at >= datetime("now", "-7 days")
+                   ORDER BY published_at DESC
+                   LIMIT 5001""",
+            )
+            all_news_rows: list[dict] = [dict(r) for r in await cursor.fetchall()]
+            if len(all_news_rows) > 5000:
+                logger.warning(
+                    "build_multi: news_items 命中 LIMIT 5000 截断,共 {} 行可能未参与评分",
+                    len(all_news_rows) - 5000,
+                )
+                all_news_rows = all_news_rows[:5000]
+            news_by_symbol: dict[str, list[dict]] = {sym: [] for sym in symbols}
+            for row in all_news_rows:
+                related_raw = row.get("related_symbols")
+                if not related_raw:
+                    continue
+                try:
+                    related = (
+                        json.loads(related_raw)
+                        if isinstance(related_raw, str)
+                        else related_raw
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(related, list):
+                    continue
+                for sym in related:
+                    bucket = news_by_symbol.get(sym)
+                    if bucket is not None and len(bucket) < 100:
+                        bucket.append(row)
+            for sym in symbols:
+                by_symbol_data[sym]["news"] = news_by_symbol.get(sym, [])
+
+            # shareholders: 跨 2 张表
+            shr_by_symbol: dict[str, dict] = {}
+            placeholders = ",".join("?" for _ in symbols)
+            params = list(symbols)
+            cursor = await conn.execute(
+                f"""SELECT * FROM shareholders
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, report_period DESC, rank ASC""",
+                params,
+            )
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                bucket = shr_by_symbol.get(sym)
+                if bucket is None:
+                    bucket = {
+                        "top_shareholders": [],
+                        "latest_period": r["report_period"],
+                        "source": r.get("source"),
+                    }
+                    shr_by_symbol[sym] = bucket
+                if r["report_period"] != bucket["latest_period"]:
+                    continue
+                if len(bucket["top_shareholders"]) < 10:
+                    bucket["top_shareholders"].append(r)
+            cursor = await conn.execute(
+                f"""SELECT * FROM shareholder_count_history
+                    WHERE symbol IN ({placeholders})
+                    ORDER BY symbol, report_date DESC""",
+                params,
+            )
+            for row in await cursor.fetchall():
+                r = dict(row)
+                sym = r["symbol"]
+                bucket = shr_by_symbol.setdefault(
+                    sym,
+                    {"top_shareholders": [], "source": r.get("source")},
+                )
+                bucket.setdefault("holder_count_trend", [])
+                if len(bucket["holder_count_trend"]) < 8:
+                    bucket["holder_count_trend"].append(r)
+                if not bucket.get("source"):
+                    bucket["source"] = r.get("source")
+            EvidenceBuilder._build_shareholders_batch(shr_by_symbol)
+            for sym in symbols:
+                by_symbol_data[sym]["shareholders_raw"] = shr_by_symbol.get(sym)
+
+            # sector_context 共享一次查询
+            sector_ctx_shared = await EvidenceBuilder._build_sector_context(
+                conn, symbols[0]
+            )
+
+            # us_finance 仅 us 前缀
+            us_symbols = [s for s in symbols if s.startswith("us")]
+            us_finance_map: dict[str, dict | None] = {}
+            for s in us_symbols:
+                us_finance_map[s] = await EvidenceBuilder._build_us_finance(conn, s)
+
+            # ---------- 阶段 3: 注册表驱动组装（与 build() 共享 postprocess） ----------
+            result: dict[str, dict] = {}
+            for symbol in symbols:
+                by_spec_rows = by_symbol_data[symbol]
+                evidence: dict = {"symbol": symbol}
+
+                # 通用 spec：调 postprocess
+                for spec in EVIDENCE_BUILDERS:
+                    if spec.multi_strategy == "special":
+                        continue
+                    if spec.postprocess is None:
+                        evidence[spec.key] = by_spec_rows.get(spec.key, [])
+                    else:
+                        evidence[spec.key] = spec.postprocess(
+                            by_spec_rows.get(spec.key, []), symbol
+                        )
+
+                # shareholders: 来自双表 bucket
+                shr_bucket = by_spec_rows.get("shareholders_raw")
+                if shr_bucket and (
+                    shr_bucket.get("top_shareholders")
+                    or shr_bucket.get("holder_count_trend")
+                ):
+                    evidence["shareholders"] = {
+                        "top_shareholders": shr_bucket.get("top_shareholders", []),
+                        "holder_count_trend": shr_bucket.get("holder_count_trend", []),
+                        "source": shr_bucket.get("source"),
+                    }
+                else:
+                    evidence["shareholders"] = None
+
+                # sector_context 共享
+                evidence["sector_context"] = sector_ctx_shared
+
+                # us_finance 仅 us 前缀；非 us 标的固定 None
+                evidence["us_finance"] = us_finance_map.get(symbol)
+
+                evidence["data_sources"] = EvidenceBuilder._assemble_data_sources(
+                    evidence.get("quote"),
+                    evidence.get("kline"),
+                    evidence.get("fund_flows"),
+                    evidence.get("finance"),
+                    evidence.get("news"),
+                    evidence.get("technical"),
+                    evidence.get("dividends"),
+                    evidence.get("shareholders"),
+                    evidence.get("forecasts"),
+                    evidence.get("sector_context"),
+                    evidence.get("us_finance"),
+                )
+                result[symbol] = evidence
+            return result
+        finally:
+            with suppress(Exception):
+                await conn.close()
