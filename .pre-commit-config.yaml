@@ -1,8 +1,9 @@
 # Pre-commit hooks for MarketLens
 # 单用户本地工具的提交前质量门禁：
-#   1. 文件卫生（trailing-whitespace / EOL / YAML / TOML 校验）
-#   2. ruff lint + format（与项目 pyproject.toml 锁定的 ruff>=0.15.16 对齐）
-#   3. fast pytest（pre-push 阶段；-x 遇首个失败即停）
+#   1. 文件卫生 + Python AST 语法检查
+#   2. ruff lint + format
+#   3. 前端检查 type-check + build
+#   4. pytest（pre-push 时）
 #
 # 安装：uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 # 手动跑全部：uv run pre-commit run --all-files
@@ -15,6 +16,7 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-toml
+      - id: check-ast
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.16
@@ -22,6 +24,14 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: frontend-check
+        name: npm type-check + build
+        entry: bash -c "cd frontend && npm run type-check && npm run build"
+        language: system
+        stages: [pre-commit]
 
   - repo: local
     hooks:

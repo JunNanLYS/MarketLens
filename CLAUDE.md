@@ -61,10 +61,9 @@ Single-user tool = you maintain it yourself. Code must be readable by you 3 mont
 - **Dead code** — unused methods, broken fixtures (`sample_asset` type cases)
 - **Type annotations + Chinese docstrings** — CLAUDE.md hard constraint
 
-### 5. UI / accessibility / docs accuracy
-You stare at the React 7-tab detail page daily. Color blindness, doc/code drift, dead UI options affect you.
+### 5. UI / docs accuracy
+You stare at the React 7-tab detail page daily. Doc/code drift, dead UI options affect you.
 
-- **P&L red/green only** — ~8% of male users can't distinguish; PnlDisplay uses ▲/▼ arrows as well
 - **Cache TTL reasonableness** — quote 15min cycle, TanStack Query staleTime 30s reasonable
 - **API doc/code sync** — `docs/api/*.md` vs `backend/api/*.py` field names, status codes
 - **Emoji-only buttons** — ensure all icon-only buttons have `title` or `aria-label`
@@ -258,23 +257,11 @@ Every APScheduler job MUST:
 - The `run_logs` table is the persistent runtime ledger: `task_name` / `status` / `started_at` / `finished_at` / `error_message` / `affected_assets`. The UI queries this for task history.
 - Data collection, AI analysis, and scheduler triggers MUST all leave a `run_logs` row.
 
-## Skills
-
-Claude Code 自动从可用 skills 列表加载,无需在此登记。需要时调用即可。
-
 ## Known issues
 
 See `ISSUES.md` for the comprehensive audit covering correctness, performance, and maintainability findings.
 
-下方 5 条 **截至 2026-06-06 已通过代码验证实际解决**，保留以追踪决策历史；新增问题请追加到本节末尾。
-
-- ✅ ~~`BaseProvider` defines 6 abstract methods but news/RSS providers only implement `search()` — the rest return empty stubs~~ → 拆分为 `StructuredProvider` + `NewsProvider` 两个 ABC（[base.py:22,71,102](backend/collectors/base.py)）；新闻类 Provider 改为继承 `NewsProvider` 并删去 6 个空 stub；MRO 兼容性由 [test_base_abcs.py](tests/collectors/test_base_abcs.py) 11 个单测守护。
-- ✅ ~~`ai_reports` table uses an index rather than a UNIQUE constraint on `(symbol, date(generated_at))`, risking duplicate reports~~ → 已升级为 `CREATE UNIQUE INDEX`（[schema.py:271-272](backend/storage/schema.py)）。
-- ✅ ~~`raw_data` table has no auto-cleanup and will grow unbounded~~ → `cleanup` 定时任务每天 03:30 删除 `>30 days` 记录（[jobs.py:195-213](backend/scheduler/jobs.py)）。
-- ✅ ~~`Service instances are recreated per scheduler tick rather than cached~~ → `_collection_service` / `_news_service` 已为模块级懒加载单例（[jobs.py:145-158](backend/scheduler/jobs.py)），APScheduler 每次 tick 复用同一实例。
-- ✅ ~~`SentimentResult.to_db_value()` 默认阈值 0.4 过低导致 0.4~0.55 区间的"擦边球"被保留为正/负面~~ → 已提至 0.55（[models.py:36](backend/services/sentiment/models.py)），并配套 `news_items` 扩 `confidence` + `sentiment_reason` 两列落库原始评分；`evidence_builder` 新增 `_aggregate_news` 输出 weighted sum 与 sector_exposure，让高置信新闻的"情绪强度"进入 AI 证据包。
-
-### External dependencies (fact, not bugs)
+## External dependencies
 
 - `NeoDataProvider` 的 token 由**外部 workbuddy 工具**写入 `~/.workbuddy/.neodata_token`，
   本项目不参与申请/刷新。`optional: true` 保证 token 缺失或 401 时静默降级，
@@ -288,56 +275,24 @@ See `ISSUES.md` for the comprehensive audit covering correctness, performance, a
 
 ## Task Completion Checklist
 
-After **every** task, execute these steps in order:
+> pre-commit 钩子已自动执行：语法检查 → ruff → 前端检查 → pytest（push 时）
 
-### 1. Error Check
-
-Scan all modified files for syntax errors or statically detectable logic issues. If errors are found, fix them and **restart from step 1**.
-
-### 1.5 Ruff Check
-
-Run ruff on all modified `.py` files:
-```bash
-uv run ruff check .
-```
-If issues are found, fix them and re-run until clean.
-
-### 1.75 Frontend Check
-
-当 `frontend/` 目录下任何文件被修改时,运行前端静态检查(全通过才视为"前端无误"):
-
-```bash
-cd frontend
-npm run lint
-npm run type-check
-npm run build
-```
-
-任一命令失败 → 修复后**重新从 step 1 开始**。
-
-> 命令来源:`frontend/package.json` scripts。`type-check` 是带连字符的正式名(`tsc -b --noEmit`),不是 `typecheck`;`build` 内嵌 `tsc -b && vite build`,虽与 `type-check` 语义重叠,但单独跑 `type-check` 失败暴露更快、定位更准。Vitest 单元/集成测试归到 step 2。
-
-### 2. Test Judgment & Execution
-
-Determine if the task falls into test-required categories:
-- New or modified business logic in `backend/`
-- New or modified API endpoints (routes, services)
-- Database schema or storage layer changes
-
-If so, run relevant tests (`uv run pytest tests/` or specific test files). Ensure **all tests pass** before proceeding.
-
-### 3. Documentation Sync
+### 1. Documentation Sync
 
 When APIs are added, modified, or removed:
 - Update the corresponding docs in `docs/api/`
 - Check if `docs/prd.md`, `docs/features.md`, `docs/architecture.md` need cascading updates
 
-### 4. Git Commit & Push
+### 2. Git Commit
 
-Commit all changes with a conventional commit message (use `git-commit` skill):
-- **Title**: one-line summary of the change (e.g. `feat: add portfolio P&L chart`)
-- **Body**: detailed breakdown by functional module
-- After commit, push to remote if configured.
+**每次任务完成立即 commit**（push 等用户明确要求）：
+
+```bash
+git add -A
+git commit -m "fix: resolve ..."
+```
+
+使用 `/git-commit` skill 生成规范 commit message。
 
 ## Project state
 
