@@ -142,9 +142,14 @@ MarketLens MVP
 │   ├── 5.2 新闻列表（按标的筛选）
 │   ├── 5.3 AI 报告列表与详情
 │   └── 5.4 任务运行状态
-└── 6. 配置管理
-    ├── 6.1 数据源开关与优先级
-    └── 6.2 调度频率调整
+├── 6. 配置管理
+│   ├── 6.1 数据源开关与优先级
+│   ├── 6.2 调度频率调整
+│   ├── 6.3 在线编辑 config.yaml（ConfigStore 持久化、立即生效）
+│   └── 6.4 配置回滚（一键恢复 `.bak`）
+└── 7. 启动器
+    ├── 7.1 启动前自动清理端口占用（8000/5173）
+    └── 7.2 dev/prod 双模式（Vite 子进程 / 单端口挂载）
 ```
 
 ### 4.2 功能详细说明
@@ -222,6 +227,25 @@ MarketLens MVP
 | 新闻列表 | 支持按标的、日期范围筛选，显示情绪标签 |
 | AI 报告 | 卡片式展示：动作建议 + 置信度 + 多空理由 + 风险提示 |
 | 任务状态 | 显示最近一次各任务的执行时间、状态（成功/失败）、耗时 |
+
+#### FR-7: 在线配置管理
+
+| 需求项 | 说明 |
+|---|---|
+| 在线编辑 | Settings 页面行内编辑数据源 `enabled` / `timeout`、调度任务 interval/cron，**立即生效**（无需重启） |
+| 白名单 | 仅 `data_sources.*` / `scheduler.tasks.*` 路径可改；`security.api_key` / `cleanup.retention_days` 等仍需手工改 yaml |
+| 持久化 | `ConfigStore` 单例 + 原子写回（tempfile + `os.replace`），写前自动备份 `config.yaml.bak` |
+| 生效链 | `data_sources.*` → Provider 链 reload 钩子；`scheduler.tasks.*` → APScheduler `reschedule_job` |
+| 配置回滚 | `POST /api/v1/settings/rollback` 一键恢复 `.bak`，触发 reload 钩子 |
+
+#### FR-8: 启动器
+
+| 需求项 | 说明 |
+|---|---|
+| 端口自动清理 | 启动 uvicorn / Vite 之前自动检测端口占用（8000/5173），自动 kill 占用的旧进程并等待端口释放（最长 10s） |
+| 平台兼容 | Windows 走 `netstat -ano` + `taskkill /T /F`；Unix 走 `lsof -ti` + `os.kill(SIGTERM)` |
+| 双模式 | `MARKETLENS_PROD=1` 走 FastAPI 挂载 `frontend/dist` 单端口；否则 Vite dev server 子进程 + FastAPI（5173 + 8000） |
+| 自残保护 | 占用端口的 PID 等于启动器自身 PID 时拒绝清理 |
 
 ---
 

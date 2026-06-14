@@ -23,7 +23,7 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 |---|---|---|---|
 | `GET` | `/assets` | 追踪列表（分页/筛选） | 200 |
 | `POST` | `/assets` | 添加标的 | 201, 400, 401, 409 |
-| `GET` | `/assets/search` | 搜索外部标的 | 200, 422 |
+| `GET` | `/assets/search` | 搜索外部标的 | 200, 400, 422 |
 | `GET` | `/assets/{id}` | 标的详情（聚合行情等） | 200, 404 |
 | `PATCH` | `/assets/{id}` | 部分更新（启用/标签/备注） | 200, 401, 404, 422 |
 | `DELETE` | `/assets/{id}` | 删除标的 | 204, 401, 404 |
@@ -140,6 +140,8 @@ Location: /api/v1/assets/1
 ---
 
 ## `GET /assets/search` — 搜索外部标的
+
+**空关键词行为**：`keyword` 为空字符串时直接返回 `{ items: [], total: 0 }`，不发请求（前端 `<Input.Search>` 受控输入会在 `onSearch` 触发前过滤空白字符，避免 422）。
 
 ```http
 GET /api/v1/assets/search?keyword=腾讯&market=hk HTTP/1.1

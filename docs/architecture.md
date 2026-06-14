@@ -32,12 +32,14 @@ MarketLens 是一个**本地优先、证据驱动**的 AI 金融研究助理系�
 存储            SQLite (WAL 模式 + foreign_keys=ON)
 日志            loguru (文件)  +  run_logs 表 (持久化)
 包管理          uv
-数据源          westock-data-clawhub (Node.js ≥ v18 CLI 子进程)
+数据源          westock-data-clawhub (Node.js ≥ v18 CLI 包装脚本，全局安装)
                 新浪财经 / 腾讯新闻 / RSS / NeoData (HTTP)
 测试            pytest + pytest-asyncio (asyncio_mode="auto")
 ```
 
 > **重要**：Node.js ≥ v18 仅在 `westock` 数据源启用时为必需；其他纯 HTTP 数据源可独立运行。
+>
+> WeStock 调用链（2026-06-13 修复 CSPRNG 偶发崩溃后）：FastAPI → `westock.py` 走 `powershell.exe -NoProfile -Command "& '<wrapper>' ..."` 调全局 npm 装的 `westock-data-clawhub` 包装脚本。**首次部署需手动 `npm i -g westock-data-clawhub@1.0.4`**（Windows 默认 `%AppData%\Roaming\npm\`）。绕开 npx 冷启动 + MSYS 子进程栈干扰（详见 `docs/dev/lessons_learned.md`）。
 
 ---
 
@@ -455,7 +457,10 @@ data_sources:
       timeout: 30
       optional: false
       params:
-        command: "npx -y westock-data-clawhub@1.0.4"
+        # 全局 npm 包装脚本（westock-data-clawhub@1.0.4 装在 PATH 可达位置），
+        # 实际调用走 PowerShell -Command 包装（见 backend/collectors/westock.py::_run_cli）。
+        # 历史原因：原 `npx -y ...` 在 Windows + Node 24 偶发 ncrypto::CSPRNG 断言失败 (rc=134)。
+        command: "westock-data-clawhub"
   news:
     - name: sina_news
       provider: SinaNewsProvider
@@ -881,6 +886,20 @@ cd frontend && npm run dev
 # 或使用统一启动器（dev: Vite 子进程 + uvicorn; prod: 单端口）
 uv run python scripts/launcher.py
 ```
+
+### 16.2.1 启动器自动清理端口占用
+
+`scripts/launcher.py` 启动 uvicorn / Vite 之前会先调用 `_release_port(host, port, service_name)`：
+
+1. `socket.bind` 探测端口可用性
+2. 不可用 → `netstat -ano -p tcp` (Windows) / `lsof -ti tcp:<port>` (Unix) 查 PID
+3. `taskkill /PID <pid> /T /F` (Windows) / `os.kill(pid, SIGTERM)` (Unix) 终止
+4. 200ms 轮询等待（最长 10s）端口释放
+5. 释放成功 → 继续启动；超时则抛 `RuntimeError`
+
+`tests/scripts/test_launcher.py` 3 个测试守护上述流程（`_is_port_available` / `_release_port` 用 `patch` 隔离真实进程）。
+
+---
 
 ### 16.3 初始化与单次运行
 
