@@ -59,7 +59,6 @@ Single-user tool = you maintain it yourself. Code must be readable by you 3 mont
 - **Config-driven vs hardcoded** — scattered `if symbol.startswith("sh")`?
 - **Provider registry** — `base.py` 6 methods, are they `@abstractmethod` or empty stubs? (see Known issues)
 - **Dead code** — unused methods, broken fixtures (`sample_asset` type cases)
-- **Duplicated logic** — `collection_service.py` `_fetch_kline`/`_fetch_finance`/`_fetch_fund_flow`/`_fetch_technical` 4-way duplication
 - **Type annotations + Chinese docstrings** — CLAUDE.md hard constraint
 
 ### 5. UI / accessibility / docs accuracy
