@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -32,18 +33,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - X-Content-Type-Options: nosniff — 禁止浏览器进行 MIME 嗅探。
     - X-Frame-Options: DENY — 禁止任何 iframe 嵌入。
     - Referrer-Policy: no-referrer — 出口链路不携带来源。
-    - Strict-Transport-Security: 强制 HTTPS（本地开发无影响，生产环境必须 HTTPS）。
+    - Strict-Transport-Security: 仅当 ``security.enable_hsts: true`` 显式开启时注入。
+      本地工具走 HTTP 无意义；若误启用并访问过 HTTPS，浏览器会缓存 HSTS 2 年。
     - Content-Security-Policy: 保持宽松（FastAPI Swagger UI 需要 inline script/style）。
     """
+
+    def __init__(self, app, *, enable_hsts: bool = False) -> None:
+        super().__init__(app)
+        self._enable_hsts = enable_hsts
 
     async def dispatch(self, request: StarletteRequest, call_next):  # type: ignore[override]
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=63072000; includeSubDomains"
-        )
+        if self._enable_hsts:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=63072000; includeSubDomains"
+            )
         # CSP 留宽松：Swagger UI 需要 inline script/style
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
@@ -56,33 +63,57 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 _scheduler_manager: SchedulerManager | None = None
 _db_ready = False
 _scheduler_ready = False
+_main_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _provider_reload_hook(new_cfg: dict) -> None:
     """ConfigStore reload 钩子：让 CollectionService / NewsService 用新配置重建 Provider。
 
-    钩子在 ConfigStore.update 内调用，是同步上下文；Service.reload_providers 是
-    async（要 close httpx 客户端），用 asyncio.run 启临时 loop 执行。
+    钩子可能在 starlette threadpool（PATCH /settings 走 sync 路由）或主 event loop
+    中被调用。Provider 的 httpx.AsyncClient 必须在**它被创建的 loop** 上 close —— 否则
+    httpx 0.27+ 会抛 ``RuntimeError: ... different loop``。
 
-    任意 Service 失败都只 log，不抛——避免一个钩子崩了整个 PATCH 回滚。
+    解法：把 reload 协程提交到 lifespan 阶段抓取的主 loop（``_main_loop``）上执行；
+    钩子线程同步等待 future。任何 Service 失败都只 log，不抛——避免一个钩子崩了整个 PATCH。
     """
-    import asyncio
-
     from backend.scheduler.jobs import _get_collection_service, _get_news_service
 
-    for label, getter in (
-        ("CollectionService", _get_collection_service),
-        ("NewsService", _get_news_service),
-    ):
-        try:
-            asyncio.run(getter().reload_providers(new_cfg))
-        except Exception:
-            logger.exception("{} reload_providers 失败", label)
+    if _main_loop is None or _main_loop.is_closed():
+        logger.warning("主 event loop 不可用，Provider reload 跳过（重启后生效）")
+        return
+
+    async def _reload_all() -> None:
+        for label, getter in (
+            ("CollectionService", _get_collection_service),
+            ("NewsService", _get_news_service),
+        ):
+            try:
+                await getter().reload_providers(new_cfg)
+            except Exception:
+                logger.exception("{} reload_providers 失败", label)
+
+    try:
+        current = asyncio.get_running_loop()
+    except RuntimeError:
+        current = None
+
+    if current is _main_loop:
+        # 主 loop 内调用（例如启动期 reload）：直接调度
+        _main_loop.create_task(_reload_all())
+        return
+
+    # 跨线程：worker thread → 主 loop。同步等结果以保证 PATCH 返回时 reload 已完成。
+    future = asyncio.run_coroutine_threadsafe(_reload_all(), _main_loop)
+    try:
+        future.result(timeout=30)
+    except Exception:
+        logger.exception("Provider reload 在主 loop 上执行失败")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global _scheduler_manager, _db_ready, _scheduler_ready
+    global _scheduler_manager, _db_ready, _scheduler_ready, _main_loop
+    _main_loop = asyncio.get_running_loop()
     logger.info("MarketLens 应用启动中...")
     try:
         await init_db()
@@ -149,7 +180,8 @@ logger.info("CORS allowed origins: {}", cors_origins)
 
 # 安全头中间件必须在 CORS 之前注册，
 # 以保证 preflight 401/4xx 响应也携带安全头。
-app.add_middleware(SecurityHeadersMiddleware)
+_enable_hsts = bool(config.get("security", {}).get("enable_hsts", False))
+app.add_middleware(SecurityHeadersMiddleware, enable_hsts=_enable_hsts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -187,7 +219,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 @app.get("/api/v1/health")
-def health_check() -> JSONResponse:
+async def health_check() -> JSONResponse:
     healthy = _db_ready and _scheduler_ready
     body = {
         "status": "ok" if healthy else "degraded",
@@ -201,7 +233,7 @@ def health_check() -> JSONResponse:
 
 
 @app.get("/")
-def root() -> dict:
+async def root() -> dict:
     return {
         "title": app.title,
         "version": app.version,

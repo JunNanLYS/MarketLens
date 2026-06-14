@@ -94,37 +94,41 @@ class TestTriggerTask:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("quote")
-        assert result is True
+        assert result is not None
+        assert "run_log_id" in result
 
     def test_trigger_daily_close(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("daily_close")
-        assert result is True
+        assert result is not None
+        assert "run_log_id" in result
 
     def test_trigger_news(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("news")
-        assert result is True
+        assert result is not None
+        assert "run_log_id" in result
 
     def test_trigger_ai_report(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("ai_report")
-        assert result is True
+        assert result is not None
+        assert "run_log_id" in result
 
     def test_trigger_invalid_task(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("nonexistent")
-        assert result is False
+        assert result is None
 
     def test_trigger_empty_name(self) -> None:
         mgr = SchedulerManager()
         mgr.register_jobs()
         result = mgr.trigger_task("")
-        assert result is False
+        assert result is None
 
 
 class TestGetTaskStatus:

@@ -154,7 +154,7 @@ function PositionsTab() {
               <Pagination
                 current={page}
                 onChange={setPage}
-                total={realized.data?.total ?? 0}
+                total={realized.data?.page_info?.total ?? 0}
                 pageSize={20}
                 size="small"
                 showSizeChanger={false}

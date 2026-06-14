@@ -1,10 +1,11 @@
 import os
 import re
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 
+from backend.api.dependencies import verify_api_key
 from backend.collectors.neodata_client import NeoDataClient
 from backend.config import get_config
 
@@ -36,23 +37,6 @@ def _get_or_create_client() -> NeoDataClient:
     if _client_cache is None:
         _client_cache = _get_client()
     return _client_cache
-
-
-def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
-    """写端点鉴权依赖：从配置或环境变量校验 API Key。
-
-    优先级：环境变量 MARKETLENS_API_KEY > config.security.api_key。
-    启动时若检测到默认 key 未被环境变量覆盖，仅记录 warning（本地工具可继续使用）。
-    """
-    config = get_config()
-    expected_key: str = os.getenv("MARKETLENS_API_KEY") or config.get(
-        "security", {}
-    ).get("api_key", "marketlens-local")
-    if not x_api_key or x_api_key != expected_key:
-        raise HTTPException(
-            status_code=401,
-            detail={"error": "UNAUTHORIZED", "detail": "无效或缺失的 API Key"},
-        )
 
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")

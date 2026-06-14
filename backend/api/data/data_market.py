@@ -6,10 +6,12 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.data._service import _get_service
-from backend.api.neodata import verify_api_key
+from backend.api.dependencies import verify_api_key
 
 
 router = APIRouter()
+
+
 @router.get("/sectors/board")
 def get_sector_board(
     sector_type: str | None = Query(
@@ -136,30 +138,25 @@ async def refresh_calendar(
 ) -> dict:
     """手动触发新股日历（ipo）+ 除权日历（exdiv）采集并落库。
 
-    两个 collect 并发（asyncio.gather），任一失败不影响其它。
+    两个 collect 并发（asyncio.gather），任一失败不影响其它；exdiv_symbol 为空时跳过。
     """
-    results = await asyncio.gather(
-        _get_service().collect_ipo_calendar(market),
-        _get_service().collect_exdiv_calendar(exdiv_symbol) if exdiv_symbol else _noop(),
-        return_exceptions=True,
-    )
+    tasks: list = [_get_service().collect_ipo_calendar(market)]
+    keys: list[str] = ["ipo"]
+    if exdiv_symbol:
+        tasks.append(_get_service().collect_exdiv_calendar(exdiv_symbol))
+        keys.append("exdiv")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     summary: dict[str, dict] = {}
-    keys = ["ipo", "exdiv"]
     for k, r in zip(keys, results, strict=True):
         if isinstance(r, Exception):
             summary[k] = {"success": False, "error": str(r)}
         elif r is None:
-            summary[k] = {"success": False, "error": "no data (or skipped)"}
+            summary[k] = {"success": False, "error": "no data"}
         elif isinstance(r, list):
             summary[k] = {"success": True, "items": len(r)}
         else:
             summary[k] = {"success": True}
     return {"summary": summary, "market": market, "exdiv_symbol": exdiv_symbol}
-
-
-async def _noop() -> None:
-    """占位 noop（asyncio.gather 需要可 await 对象）。"""
-    return None
 
 
 # ============================================================================
@@ -240,41 +237,32 @@ async def refresh_chip_margintrade(
 @router.post("/blocktrade-refresh/{symbol}")
 async def refresh_blocktrade(
     symbol: str,
-    date: str = Query(..., description="YYYY-MM-DD"),
+    trade_date: date = Query(..., alias="date", description="YYYY-MM-DD"),
     _auth: None = Depends(verify_api_key),
 ) -> dict:
     """手动触发大宗交易采集（单只 + 指定日期）。"""
-    result = await _get_service().collect_blocktrade(symbol, date)
+    date_str = trade_date.isoformat()
+    result = await _get_service().collect_blocktrade(symbol, date_str)
     if result is None:
         raise HTTPException(
             status_code=502,
             detail={"error": "COLLECT_FAILED", "detail": f"{symbol} 大宗交易采集失败"},
         )
-    return {"symbol": symbol, "date": date, "data": result}
+    return {"symbol": symbol, "date": date_str, "data": result}
 
 
 @router.post("/lhb-refresh/{symbol}")
 async def refresh_lhb(
     symbol: str,
-    date: str = Query(..., description="YYYY-MM-DD"),
+    trade_date: date = Query(..., alias="date", description="YYYY-MM-DD"),
     _auth: None = Depends(verify_api_key),
 ) -> dict:
     """手动触发龙虎榜采集（单只 + 指定日期）。"""
-    result = await _get_service().collect_lhb(symbol, date)
+    date_str = trade_date.isoformat()
+    result = await _get_service().collect_lhb(symbol, date_str)
     if result is None:
         raise HTTPException(
             status_code=502,
             detail={"error": "COLLECT_FAILED", "detail": f"{symbol} 龙虎榜采集失败"},
         )
-    return {"symbol": symbol, "date": date, "data": result}
-async def _noop() -> None:
-    """占位 noop（asyncio.gather 需要可 await 对象）。"""
-    return None
-
-
-# ============================================================================
-# 阶段 17：筹码 / 融资融券 / 大宗 / 龙虎榜（4 GET 查询 + 1 POST refresh）
-# 4 个维度都仅 A 股支持；blocktrade/lhb 需指定日期
-# ============================================================================
-
-
+    return {"symbol": symbol, "date": date_str, "data": result}
