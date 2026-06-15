@@ -477,34 +477,125 @@ Research 报告 ───┼──▶│  左脑(量化)   │───▶│  �
 
 **职责**: 每分钟扫描行情 + 新闻突发 + 异常资金流 → 触发 Alert。**从被动工具 → 主动系统的关键**。
 
-**两级过滤机制(降噪关键)**:
+**统一降噪策略(3 类输入各自 3 层过滤)**:
 
 > **金融数据每分钟有无数异动**,如果每次异动都触发完整的多智能体流水线,API 账单会瞬间爆表。必须把 99% 的杂音在代码层拦掉。
+>
+> Monitoring Agent 接收 3 类输入:**行情流 / 资金流 / 新闻流**。每类输入都走"3 层漏斗"(硬规则 → 小模型 → 大模型裁判)。下面以**新闻流**为例展开(最复杂的输入),行情/资金流是它的简化版(详见 §5.3.2)。
+
+#### 新闻流 3 层漏斗(详细版)
 
 ```
-金融事件流(每分钟 1000+ 异动)
+每天 10,000 条原始新闻(RSS + 财经媒体 + 微博/雪球/股吧)
+        │
+        ▼ 10000 → ~3000
+┌────────────────────────────────────────────────────────────────┐
+│ 第 1 层:硬规则层(纯代码,零模型成本)                          │
+│  目标: 过滤 70% 低级噪音                                       │
+├────────────────────────────────────────────────────────────────┤
+│  · SimHash 去重:                                                │
+│    金融媒体喜欢互相抄袭,同一条新闻换标题能发 20 遍              │
+│    计算文本指纹(64-bit SimHash),海明距离 ≤ 3 → 直接丢弃        │
+│    时间复杂度 O(N) → 单机可处理 10k+ 条/分钟                   │
+│                                                                │
+│  · Ticker Linking(股票池强绑定):                                │
+│    维护主观测股池 / 概念股池(如 [新能源, 白酒, 半导体, ...])   │
+│    用正则 + 基础 NER 匹配:                                      │
+│      · 股票代码(hk00700 / sh600519 / usAAPL)                   │
+│      · 公司简称(腾讯 / 茅台 / Apple)                            │
+│      · 行业关键词(从 tracked_assets.tags 提取)                 │
+│    通篇不含任何关注标的 / 板块 → 直接过滤                       │
+│                                                                │
+│  · 已知噪音模板(如"广告/推广/招贤纳士"):                       │
+│    标题含特定关键词 → 直接丢弃                                  │
+│                                                                │
+│  · 时间窗口去重:同一 URL / 同一事件已处理过 → 跳过              │
+└────────────────────────────────────────────────────────────────┘
+        │
+        ▼ ~3000 → ~500
+┌────────────────────────────────────────────────────────────────┐
+│ 第 2 层:小模型特征层(本地 FinBERT / DeBERTa-v3-small)        │
+│  目标: 评估关联度 + 冲击力,过滤 80% 情绪噪音                   │
+├────────────────────────────────────────────────────────────────┤
+│  小模型不读懂逻辑,只判断 2 个指标:                             │
+│                                                                │
+│  · Relevance(关联度 0-1):                                       │
+│    这则新闻对该公司的影响是边缘性的("公司赞助马拉松")           │
+│    还是核心的("财报暴雷" / "大股东减持")                        │
+│    → < 0.5 视为弱关联,即使后续冲击高也不触发                   │
+│                                                                │
+│  · Volatility Shock(波动冲击 0-1):                              │
+│    新闻文本的情绪极性是否越过临界点                              │
+│    极性: -1 (极度利空) ↔ +1 (极度利好)                         │
+│    冲击: |极性| × 来源权威性                                    │
+│                                                                │
+│  · 规则拦截(关键):                                              │
+│    ⚠️ 只有 shock_score > 0.75 时,这条新闻才有资格进入下一关    │
+│    shock_score = abs(polarity) × source_authority × relevance  │
+│                                                                │
+│  · 候选模型(本地推理):                                          │
+│    · FinBERT(金融专用,BERT-base,~440MB)                       │
+│    · DeBERTa-v3-small(轻量,通用)                                │
+│    · 自训小模型(基于历史 +feedback,Phase 2 评估)               │
+└────────────────────────────────────────────────────────────────┘
+        │
+        ▼ ~500 → ~100-200
+┌────────────────────────────────────────────────────────────────┐
+│ 第 3 层:大模型裁判层(主智能体系统介入)                        │
+│  目标: 判定"是否改变基本面 / 短期供需关系"                     │
+├────────────────────────────────────────────────────────────────┤
+│  此时每天 10000 条已被洗剩 100-200 条,大模型成本可承受        │
+│                                                                │
+│  · 大模型(Claude Sonnet / GPT-4o / DeepSeek-V3)只回答 1 个问: │
+│    "这则新闻是否改变了该公司的核心基本面或短期供需关系?"        │
+│                                                                │
+│  · 判定结果:                                                    │
+│    是 → 触发 Planner Agent 启动研究(进入主流水线)              │
+│    否 → 直接归档(如"行业分析师表示看好未来发展"——纯主观)      │
+│                                                                │
+│  · 输出 Schema(强制 JSON):                                      │
+│    {                                                            │
+│      "fundamentally_changed": true,                             │
+│      "change_type": "supply_shock" | "demand_shock" |           │
+│                      "earnings_revision" | "policy_change" |    │
+│                      "management_change" | "no_material_change",│
+│      "confidence": 0.85,                                        │
+│      "reasoning": "...",                                         │
+│      "data_used": [<news_id>, <news_url>]                       │
+│    }                                                            │
+│                                                                │
+│  · 批量优化:一次送 5-10 条新闻 → 单次 LLM 调用 →               │
+│    减少 API 调用次数 + token 摊销                               │
+└────────────────────────────────────────────────────────────────┘
+        │
+        ▼ ~100-200
+Planner Agent 接收触发信号 → 启动主研究流水线
+```
+
+#### 行情流 / 资金流 3 层漏斗(简化版)
+
+行情 / 资金流输入结构化(数值型),无需 SimHash / NER,简化为:
+
+```
+行情流(每分钟 N 个标的实时报价)
         │
         ▼
-[第 1 级:代码硬规则过滤]            ← 拦截 90% 杂音(零成本)
+[第 1 层:硬规则] ← 拦截 95% 噪音(零成本)
   · 涨跌幅阈值(单标的 1h 内 ±5%)
-  · 资金流阈值(主力净流入 > 1 亿)
-  · 新闻关键词黑名单("st/退市/审计"等高敏感)
-  · 时间窗口去重(同一标的 1h 内不重复触发)
+  · 量比阈值(成交量 > 5 日均量 3 倍)
+  · 跳空缺口(开盘 ±2% 缺口)
         │
         ▼
-候选事件(100 条/h)
+[第 2 层:统计特征] ← 拦截 4%
+  · 滚动 z-score(1h 内价格偏离历史波动率 3σ)
+  · 同业对比(板块内涨跌幅排名 Top/Bottom 5)
+  · 资金流加权(主力净流入 > 板块平均 2 倍)
         │
         ▼
-[第 2 级:轻量级小模型过滤]          ← 拦截 8% 情绪噪音
-  · Embedding 相似度匹配(用户关注标的 / 板块)
-  · 情感分析小模型(开源 LLM 1B-3B 或 DeepSeek 小模型)
-  · 上下文关联判断(是否真的与持仓相关)
-        │
-        ▼
-[第 3 级:核心异动(2%)]              ← 仅这层启动主智能体系统
-  · Alert Router 决策:是否发通知 + 是否触发 Planner 联动
-  · 严重度评估(high / normal)
-  · 关联持仓检查(Portfolio Agent 介入条件)
+[第 3 层:大模型裁判] ← 仅 1% 启动主系统
+  · 大模型判定:"这个异动是否由可解释的事件驱动(新闻/财报/公告)?"
+  · 无事件驱动的异动 → 标记为"市场噪声",归档不告警
+  · 有事件驱动 → 触发 Planner 联动 Research 找根因
 ```
 
 **Alert Router 联动 Planner(关键范式)**:
@@ -523,7 +614,10 @@ Research 报告 ───┼──▶│  左脑(量化)   │───▶│  �
         "related_symbols": ["sz002594", "sz300750"],
         "news_refs": ["url1", "url2"],
         "current_holdings": [{"symbol": "sz002594", "qty": 100, "cost": 250.0}],
-        "current_pnl_pct": -3.2
+        "current_pnl_pct": -3.2,
+        "news_pipeline_stage": 3,           # 新闻流第 3 层漏斗输出
+        "shock_score": 0.87,                 # 小模型打分
+        "fundamental_change": "supply_shock"  # 大模型裁判结果
     }
 }
 ```
@@ -538,8 +632,12 @@ Planner 接收后:
 | Action | 输入 | 输出 |
 |--------|------|------|
 | `scan_market_anomaly` | `{tracked_symbols, threshold_pct}` | `{anomalies: [...], collected_at}` |
-| `detect_news_burst` | `{keywords, lookback_min}` | `{bursts: [...], news_refs}` |
+| `detect_news_burst` | `{raw_news: list, ticker_pool, macro_rules}` | `{layered_results: {layer1_dedup, layer2_scored, layer3_judged}, alerts: [...]}` |
 | `detect_fund_flow_anomaly` | `{symbols, threshold_value}` | `{anomalies: [...], source}` |
+| `news_simhash_filter` | `{news_list, seen_hashes, threshold=3}` | `{deduped: [...], dropped: [...]}` |
+| `news_ticker_linking` | `{news_list, ticker_pool, macro_rules}` | `{linked: [{news, matched_tickers, macro_causal}], unlinked: [...]}` |
+| `news_small_model_score` | `{news_list, model="finbert"}` | `{scored: [{news, relevance, polarity, shock_score}]}` |
+| `news_llm_judge_batch` | `{news_batch, batch_size=5}` | `{judgments: [{news_id, fundamentally_changed, change_type, ...}]}` |
 | `fire_alert` | `{type, severity, payload}` | `{alert_id, dispatched_via: [notify, ui, webhook]}` |
 | `route_to_planner` | `{auto_intent, severity, context}` | `{plan_id, dispatched: true}` |
 | `register_alert_rule` | `{rule_definition}` | `{rule_id, active: true}` |
@@ -561,6 +659,238 @@ Planner 接收后:
 - Alert 推送失败(网络) → 重试 3 次,失败后只入 DB,不推送
 - 误报率高 → Confidence Engine 自动降低同类 Alert 的 future priority
 - route_to_planner 失败 → 退化为单纯 fire_alert,不丢告警
+
+### 5.4 新闻流过滤层 — 算法细节与隐性关联兜底
+
+> 本节是 §5.3 新闻流 3 层漏斗的算法实现细节。Phase 1 启动时按本文实现,Phase 2+ 可迭代优化。
+
+#### 5.4.1 SimHash 文本指纹(第 1 层去重)
+
+**原理**: 把文档分词 → 每个词映射到 64-bit hash → 加权向量求和 → 符号位输出指纹。
+
+**算法**(Python 伪代码):
+
+```python
+def simhash(text: str, hashbits: int = 64) -> int:
+    """计算文本的 SimHash 指纹。"""
+    tokens = jieba.cut(text)                # 中文分词
+    v = [0] * hashbits                      # 加权向量
+    for token in tokens:
+        h = mmh3.hash64(token)[0] & ((1 << hashbits) - 1)  # 64-bit hash
+        for i in range(hashbits):
+            v[i] += 1 if (h >> i) & 1 else -1
+    fingerprint = 0
+    for i in range(hashbits):
+        if v[i] > 0:
+            fingerprint |= (1 << i)
+    return fingerprint
+
+def hamming_distance(a: int, b: int) -> int:
+    """海明距离:两个指纹不同的 bit 数。"""
+    return bin(a ^ b).count("1")
+
+def is_duplicate(news_hash: int, seen_hashes: list[int], threshold: int = 3) -> bool:
+    """判断是否与已见新闻重复(海明距离 ≤ 3)。"""
+    return any(hamming_distance(news_hash, h) <= threshold for h in seen_hashes)
+```
+
+**关键参数**:
+
+| 参数 | 默认值 | 调整方向 |
+|------|--------|---------|
+| `hashbits` | 64 | 越多越精确但越慢;32 也可,误判率上升 |
+| `threshold`(海明距离) | 3 | ≤ 3 判为重复;<5 判为相似;> 5 视为不同 |
+| 窗口大小 | 24h | 24h 内的指纹参与对比;过期清理 |
+| 来源分组 | 是 | 同源(如都来自新浪财经)去重阈值更严(≤ 2);跨源(新浪 vs RSS)放宽(≤ 3) |
+
+**依赖库**: `jieba`(中文分词)+ `mmh3`(MurmurHash3,比 hashlib 更快)
+
+**性能**: 10000 条/分钟 SimHash 计算 ≈ 5 秒(CPU i5 单核),完全够用。
+
+#### 5.4.2 Ticker Linking 隐性关联兜底(关键补丁)
+
+> **Gemini 指出的问题**: 国际新闻(如"某地发生战争")全文未提"黄金/石油",但战争 → 大宗商品上涨 → 影响持仓。如果第 1 层 Ticker Linking 只匹配标题/正文里出现的标的代码/简称,会漏掉这类**间接因果链**。
+
+**兜底方案:因果规则图 + 反向触发**
+
+```
+原始因果规则图(handcrafted + 半自动挖掘):
+
+[战争 / 地缘冲突]
+    ├→ [原油上涨]          (原油 ETF, 能源股)
+    ├→ [黄金上涨]          (黄金 ETF, 黄金股)
+    └→ [避险情绪]          (美债, 防御板块)
+
+[美联储加息]
+    ├→ [科技股下跌]        (高估值科技)
+    ├→ [银行股上涨]        (净息差扩大)
+    └→ [新兴市场资本外流]  (港股, A 股)
+
+[主要出口国限制出口]
+    ├→ [对应商品价格上涨]  (粮食, 芯片, 稀土)
+    └→ [下游成本上升]      (制造业)
+
+... 50-100 条规则(覆盖 80% 常见宏观因果)
+```
+
+**实现方式**(3 选 1):
+
+| 方案 | 复杂度 | 精度 | 推荐阶段 |
+|------|--------|------|---------|
+| **A. 关键词反向匹配**(Phase 1) | 低 | 中 | 标题/正文含"战争/加息/出口限制"等宏观词 → 触发因果规则图 → 反查影响的标的 |
+| **B. Embedding 相似度**(Phase 2) | 中 | 高 | 把因果规则编码为 Embedding,新闻文本 Embedding 余弦相似 > 阈值 → 触发 |
+| **C. 小模型 NER + 因果推理**(Phase 3) | 高 | 最高 | 用本地 LLM 1B-3B 抽取"事件 → 影响标的"对 |
+
+**Phase 1 方案 A 实现**:
+
+```python
+MACRO_KEYWORDS = {
+    "战争|冲突|地缘|制裁": ["原油", "黄金", "国防", "美债"],  # 影响行业
+    "加息|缩表|通胀": ["科技", "成长股", "银行", "美债"],
+    "降息|宽松|QE": ["小盘股", "房地产", "黄金"],
+    "出口限制|禁令|封锁": ["粮食", "芯片", "稀土", "对应下游制造业"],
+    "汇率|贬值|本币": ["出口企业", "进口依赖型"],
+}
+
+def reverse_link(news_text: str, ticker_pool: set[str]) -> set[str]:
+    """反向触发:从宏观关键词推断影响的行业/标的。"""
+    matched_tickers = set()
+    for macro_pattern, affected_sectors in MACRO_KEYWORDS.items():
+        if re.search(macro_pattern, news_text):
+            for sector in affected_sectors:
+                matched_tickers.update(SECTOR_TO_TICKERS.get(sector, []))
+    return matched_tickers & ticker_pool
+```
+
+**关键约束**:
+- 因果规则图必须**人工维护 + 定期 review**(每季度更新)
+- 规则命中后,**不直接触发 Alert**,而是给该条新闻打上 `macro_causal=true` 标签,在第 2 层小模型打分时加权(降低 relevance 阈值)
+- 用户可关闭某条规则(偏好设置)— 例如"我对黄金不感兴趣"
+
+#### 5.4.3 第 2 层小模型评分细节
+
+**输入**: 第 1 层过滤后的候选新闻(每条约 500-2000 字)
+
+**输出**: 3 个数值
+
+```python
+class NewsScore(BaseModel):
+    relevance: float          # 0-1,关联度
+    polarity: float           # -1 到 +1,情感极性(负=利空,正=利好)
+    source_authority: float   # 0-1,来源权威性(westock > sina > 雪球 > 微博)
+    shock_score: float        # 综合冲击分
+    reasoning: str | None     # 小模型可解释性输出(可选)
+```
+
+**shock_score 计算**:
+
+```python
+shock_score = abs(polarity) * source_authority * relevance
+```
+
+**规则拦截**:`shock_score > 0.75` 才进入第 3 层。
+
+**候选小模型**(本地推理,需 GPU 或量化 CPU):
+
+| 模型 | 大小 | 速度(CPU) | 精度 | 备注 |
+|------|------|----------|------|------|
+| **FinBERT**(金融专用) | 440MB | 50ms/条 | 高 | 推荐 Phase 1 |
+| DeBERTa-v3-base | 350MB | 40ms/条 | 中 | 通用,可二次微调 |
+| Qwen2.5-1.5B-Instruct | 1.5GB | 200ms/条 | 高 | 可解释性好,带 reasoning |
+| 自训小模型 | 50MB | 10ms/条 | 中 | Phase 2+ 反馈回路训练 |
+
+**部署位置**: `backend/agents/monitoring/models/`(独立目录,模型文件 git LFS 或首次启动自动下载)
+
+#### 5.4.4 第 3 层大模型裁判批量优化
+
+**问题**: 100-200 条新闻如果一条一条送 LLM,每次 1k-2k token,总成本 ≈ 100-300k token/天,DeepSeek 也要几十元/天。
+
+**批量优化策略**:
+
+```python
+def batch_judge(news_batch: list[NewsItem]) -> list[Judgment]:
+    """一次 LLM 调用判断 5-10 条。"""
+    prompt = build_batch_prompt(news_batch)  # 拼接 5-10 条新闻 + structured output
+    response = llm.invoke(
+        prompt,
+        response_format={"type": "json_schema", "schema": BatchJudgmentSchema},
+        temperature=0.1,  # 低温度,稳定输出
+    )
+    return parse_batch_judgment(response, news_batch)
+```
+
+**Batch Size 选择**:
+
+| 场景 | Batch Size | 单次调用 Token | 每日总调用 |
+|------|-----------|----------------|----------|
+| 保守 | 3 | ~6k input + 1k output | ~33 次 |
+| 推荐 | 5 | ~10k input + 2k output | ~20 次 |
+| 激进 | 10 | ~20k input + 3k output | ~10 次 |
+
+**成本估算**(DeepSeek-V3,假设 $0.14/M input + $0.28/M output):
+
+| Batch | 每日成本(USD) | 每月成本(USD) |
+|-------|-------------|--------------|
+| 3 | ~$0.05 | ~$1.5 |
+| 5 | ~$0.08 | ~$2.4 |
+| 10 | ~$0.13 | ~$3.9 |
+
+**结论**: 第 3 层批量调用成本可承受(每月 < $5),关键是把第 1 + 2 层做好,确保进入第 3 层的都是真信号。
+
+**JSON Schema(强制)**:
+
+```python
+class BatchJudgmentSchema(BaseModel):
+    judgments: list[SingleJudgment]
+
+class SingleJudgment(BaseModel):
+    news_id: str
+    fundamentally_changed: bool
+    change_type: Literal[
+        "supply_shock",        # 供给冲击(原材料 / 产能 / 出口限制)
+        "demand_shock",        # 需求冲击(订单 / 消费 / 出口)
+        "earnings_revision",   # 盈利预测大幅修正
+        "policy_change",       # 政策变化(行业政策 / 监管)
+        "management_change",   # 管理层 / 大股东变动
+        "no_material_change",  # 无实质影响(分析师废话等)
+    ]
+    confidence: float           # 0-1,大模型对自己判断的把握
+    reasoning: str              # 1-2 句话解释
+    affected_symbols: list[str] # 影响的标的(可多个)
+```
+
+**防御性约束**(继承 v1 lessons_learned §17):
+- 大模型 API 调用必须经过 `conftest.py` 拦截保护(防止真实 API 调用泄漏成本)
+- 输入 / 输出 loguru 不打印完整 prompt(只打印 token 数 + 摘要)
+- `temperature ≤ 0.2`(确保输出一致性)
+- 失败重试最多 1 次,失败后该批次直接归档为"未知"
+
+#### 5.4.5 端到端漏斗性能预算
+
+```
+每日 10000 条原始新闻
+   │
+   ├─ 第 1 层 SimHash + Ticker Linking:  10000 → 3000(~0.5s)
+   │
+   ├─ 第 2 层 FinBERT 小模型:           3000  → 500 (~150s)
+   │    (并行 4 进程,实际 ~40s)
+   │
+   ├─ 第 3 层大模型批量:                500  → 100-200 (~120s)
+   │    (batch=5, ~20 次调用)
+   │
+   └─ 触发 Planner 联动:                100-200 个事件 → 评估后触发 5-15 次 Planner
+        │
+        ▼
+       ~15 个 Alert / 天(用户实际收到)
+
+成本预算:
+- SimHash: 0(本地计算)
+- FinBERT: 0(本地推理)
+- 大模型批量: ~$0.08 / 天
+- LLM 触发 Planner: ~$0.05 / 次 × 15 = $0.75 / 天
+
+日总成本: < $1 / 天(可接受)
+```
 
 ---
 
