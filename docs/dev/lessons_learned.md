@@ -34,6 +34,7 @@
 | 20 | 写锁源单一化 | 共享 `_WRITE_LOCK` 必须有中立模块,新 mixin/新 Service 只能从那里导入 | 🔴 P0 |
 | 21 | 审计完整性 | **任何**调度任务结尾都要在锁内写 `run_logs`;无 URL 数据也要有去重键 + raw_data | 🟡 P1 |
 | 22 | 路由入口契约 | URL 携带状态(`?key=...`)时,React 页面要 `useSearchParams` 同步,别只信本地 state | 🟡 P1 |
+| 23 | 端到端测试断言陷阱 | **5 个常见"装饰性断言"模式**——总和 / 集合归属 / 错位去重盲区 / mock 循环 | 🟡 P1 |
 
 ---
 
@@ -1150,6 +1151,157 @@ const navigateToAssetSymbol = async (symbol: string) => {
 
 ---
 
+## 23. 端到端测试的 5 个"装饰性断言"陷阱
+
+### 教训来源
+
+第 19 轮（2026-06-15）—— westock 28 个业务方法扩展测试，**3 轮评审**抓到 5 个
+常见"装饰性断言"模式：测试看着严格，但 row tuple 错位 / mock 返回值错键名时**仍
+能通过**。
+
+### 5 个陷阱 + 修复
+
+#### 陷阱 1：总和断言陷阱（最严重）
+
+`assert sum(stock_ratio, bond_ratio, ...) ≈ 100` —— 若 `stock_ratio` 与 `bond_ratio`
+互换，总和仍 ≈ 100，断言抓不到。
+
+**修复**：拆 5 个具体值断言：
+
+```python
+# 错误（row tuple 把 stock_ratio 写到 bond_ratio 列时仍通过）
+total = row["stock_ratio"] + row["bond_ratio"] + row["commodity_ratio"] \
+      + row["fund_ratio"] + row["key_asset_ratio"]
+assert abs(total - 100.0) < 0.1
+
+# 正确（5 个 ratio 各自断值）
+assert row["stock_ratio"] == 92.5
+assert row["bond_ratio"] == 4.5
+assert row["commodity_ratio"] == 0.0
+assert row["fund_ratio"] == 1.5
+assert row["key_asset_ratio"] == 1.5
+```
+
+**案例**：`test_etf_financial_e2e`（13 e2e 测试之一），27 列 etf_basic 的 ratio 之
+和断言被评审抓出，改 5 个具体值断言。
+
+#### 陷阱 2：列归属错位（buy/sell / left/right 互斥对）
+
+`assert "机构专用" in json.loads(buy_department)` —— 若 normalizer 把 buy 错位
+写入 sell_department 列，buy 字符串本身没变，断言**仍通过**。
+
+**修复**：交叉断言（buy 字符串不在 sell，sell 字符串不在 buy）：
+
+```python
+# 错误（buy/sell 错位仍通过）
+buy = json.loads(row["buy_department"])
+sell = json.loads(row["sell_department"])
+assert "机构专用" in buy
+
+# 正确（交叉验证列归属）
+assert "机构专用席位" in buy
+assert "华泰证券深圳益田路" in sell
+assert "华泰证券深圳益田路" not in buy  # sell 名不能出现在 buy 列
+assert "机构专用席位" not in sell        # buy 名不能出现在 sell 列
+```
+
+**案例**：`test_blocktrade_e2e` / `test_lhb_e2e`（评审 high 严重度），加 4 行交叉断言。
+
+#### 陷阱 3：UNIQUE 去重遮蔽错位
+
+`INSERT OR IGNORE` 落 1 行后只断言 1 行 —— 若 row tuple 把列 A 写到列 B 位置，**UNIQUE
+仍命中 → 1 行 → 测试通过**，列 A/B 错位抓不到。
+
+**修复**：去重后必须显式断被遮蔽列的具体值：
+
+```python
+# 错误（3 ftype 共享 end_date → UNIQUE 去重到 1 行 → period_type 错位到 period_mark 列抓不到）
+assert len(rows) == 1
+assert row["period_mark"] == "2024FY"  # 若 period_type 错位写入此列，断言仍通过
+
+# 正确（显式断被遮蔽列）
+assert row["period_type"] == "annual"  # SQL 第 3 列
+assert row["period_mark"] == "2024FY"   # SQL 第 5 列
+```
+
+**案例**：`test_us_finance_e2e`（3 ftype 并发去重到 1 行），补 `period_type` 断言。
+
+#### 陷阱 4：27 列只断 6 列 → 大幅错位漏报
+
+`etf_basic` 27 列，测试只断 `etf_type / track_index_code / close_price / total_mv
+/ return_3y / max_drawdown_3y` —— 若 row tuple 把 `establish_date` 写到
+`manage_institution` 列（早期列大幅错位），测试仍能通过。
+
+**修复**：覆盖至少 15 列，含"前段 + 中段 + 后段" + 多种类型（text / float / date）：
+
+```python
+# 推荐覆盖策略
+assert row["etf_type"] == "股票型"            # text 1
+assert row["establish_date"] == "2012-05-28"  # text 2（早期列）
+assert row["manage_institution"] == "华泰柏瑞"  # text 3
+assert row["close_price"] == 3.92              # float 1
+assert row["shares"] == 305_000_000_000.0      # float 2
+assert row["shares_chg"] == -1_500_000.0       # float 3（带符号）
+assert row["max_drawdown_1m"] == -2.1          # float 4（后段列）
+```
+
+**案例**：`test_etf_info_e2e` 6 列 → 16 列覆盖。
+
+#### 陷阱 5：mock 验证 mock 循环
+
+mock provider 直接返回 `{"etf_type": ..., "date": ...}`，键名与 normalizer 期望的键
+名完全同源。若 normalizer 改键名（如 `etf_type` → `etfType`），mock 也得同步改
+**才能让测试通过** —— 测试永远抓不到键名漂移。
+
+**修复（3 选 1）**：
+
+1. **方案 A：mock 故意用拼写差异** —— 1-2 个 mock 故意返回 `{"etfType": ...}`
+   （驼峰），证明测试会捕获键名不匹配
+2. **方案 B：mock 多塞无关 key** —— `{"_unused_extra_1": "noise"}`，
+   验证 row tuple 只取需要的 key（防 normalizer 增字段导致 SQL "too many values"）
+3. **方案 C：独立 fixture 测"CLI 字符串 → row tuple"** —— 不让 mock 重复 normalizer
+   的输入形状，直接喂 CLI markdown 字符串走完整 normalizer
+
+**真实边界**：`tests/services/test_westock_storage_extended.py` 与
+`tests/collectors/test_westock_etf.py` 等 9 个文件是分工的——本文件覆盖
+`_run_collect_with_lock` 模板 + payload_builder + `_insert_X` 静态方法 + raw_data 审
+计 + abort_on_invalid + 异常吞噬路径；collectors 单测覆盖 CLI 输出 → normalizer 链
+路。**两边职责互补，不要试图用集成测试替代单测**。
+
+### 范式总结
+
+| 陷阱 | 修复 | 评审严重度 |
+|------|------|-----------|
+| 1. 总和断言 | 拆 N 个具体值 | P1 high |
+| 2. 列归属错位 | 交叉断言（buy 不在 sell，sell 不在 buy） | P1 high |
+| 3. UNIQUE 去重遮蔽 | 显式断被遮蔽列 | P1 medium |
+| 4. 27 列只断 6 列 | 覆盖 15+ 列（多段多类型） | P1 medium |
+| 5. mock 验证 mock | 故意 mock 拼写差异 / 多塞无关 key / 独立 fixture | design-level |
+
+### 集成测试真实性评级
+
+| 维度 | 评级 | 说明 |
+|------|------|------|
+| `_is_westock_only` + 调度 + 锁 | 真 | 走生产代码 |
+| `payload_builder` + `_insert_X` | 真 | 闭包 + 静态方法全跑 |
+| `_save_raw_data` + 审计行 | 真 | raw_data 真落库 |
+| `abort_on_invalid` + 异常吞噬 | 真 | `_template.py` 完整覆盖 |
+| `_parse_markdown_tables` + normalizer | **跳过** | mock 喂 dict，不走 CLI 字符串解析 |
+| westock CLI 输出格式 | **跳过** | 同一原因——由 `tests/collectors/test_westock_*.py` 9 文件覆盖 |
+
+**结论**：本文件 (extended) 与 `test_westock_storage.py` 早期阶段测试 + collectors
+单测**三层职责互补**，不要试图用一类测试替代另外两类。
+
+### 自我检查清单
+
+- [ ] 端到端测试断言中**没有** `assert sum(...)` / `assert avg(...)` / `assert len(set) == N` 的"汇总断言"
+- [ ] 互斥对列（buy/sell / left/right / before/after）有交叉归属断言
+- [ ] `INSERT OR IGNORE` 去重后**不只**断行数，还断被遮蔽列的具体值
+- [ ] 27+ 列的表覆盖至少 15 列（多段多类型）
+- [ ] 评审时让另一个人独立评审断言，问"这个断言在 row tuple 错位时仍能通过吗"
+
+---
+
 ## 附录 A：经验索引（按发现轮次）
 
 | 轮次 | 经验 | 归档位置 |
@@ -1180,6 +1332,7 @@ const navigateToAssetSymbol = async (symbol: string) => {
 | 第 15 轮 | `AssetService` 私有锁 → 中立 `_write_lock.py` 收口 | 本文件 §20 |
 | 第 15 轮 | `news_service` 无 URL 去重 / `raw_data` 漏写 / cleanup 无审计 | 本文件 §21 |
 | 第 15 轮 | `AssetDetail` 不读 `?assetId=` + 跳转路由不存在的 `:symbol` 参数 | 本文件 §22 |
+| 第 19 轮 | westock e2e 测试 5 个装饰性断言陷阱（总和/列归属/UNIQUE 遮蔽/列覆盖/mock 循环） | 本文件 §23 |
 
 ---
 
