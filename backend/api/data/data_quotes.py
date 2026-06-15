@@ -5,10 +5,12 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.data._service import _get_service
-from backend.api.neodata import verify_api_key
+from backend.api.dependencies import verify_api_key
 
 
 router = APIRouter()
+
+
 @router.get("/quotes/{symbol}")
 def get_quote(symbol: str) -> dict:
     quote = _get_service().get_quote(symbol)
@@ -70,24 +72,6 @@ def get_kline(
     return {"symbol": symbol, "items": items, "total": len(items)}
 
 
-@router.post("/intraday/{symbol}")
-async def get_intraday(
-    symbol: str,
-    days: int = Query(1, ge=1, le=5),
-    _auth: None = Depends(verify_api_key),
-) -> dict:
-    result = await _get_service().collect_intraday(symbol, days=days)
-    if result is None:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "COLLECT_FAILED",
-                "detail": f"标的 '{symbol}' 分时数据采集失败",
-            },
-        )
-    return {"symbol": symbol, "items": result}
-
-
 @router.get("/minute/{symbol}")
 def get_minute_klines(
     symbol: str,
@@ -110,8 +94,7 @@ def get_minute_klines(
 
 
 # ============================================================================
-# 4 个 /refresh 端点（POST 主动触发采集）
-# 保留 /dividend、/shareholder、/reserve、/intraday 老路径以兼容现有调用方
+# /refresh 端点（POST 主动触发采集）
 # ============================================================================
 
 

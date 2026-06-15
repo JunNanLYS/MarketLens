@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, field_validator
 
-from backend.api.neodata import verify_api_key
+from backend.api.dependencies import verify_api_key
 from backend.services.report_service import ReportService
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
@@ -36,15 +36,7 @@ async def generate_reports(
     body: GenerateRequest,
     _auth: None = Depends(verify_api_key),
 ) -> dict:
-    symbols = body.symbols
-    force = body.force
-    targets = len(symbols) if symbols else 0
-    if targets == 0:
-        from backend.services.report_service import ReportService as RS
-
-        active = RS._get_active_symbols()
-        targets = len(active)
-    result = await _service.generate_reports(symbols=symbols, force=force)
+    result = await _service.generate_reports(symbols=body.symbols, force=body.force)
     return {
         "status": "completed",
         "generated": result["generated"],

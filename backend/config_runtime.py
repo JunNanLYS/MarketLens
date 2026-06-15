@@ -131,6 +131,11 @@ class ConfigStore:
             logger.info("ConfigStore 已应用 {} 项更新", len(updates))
             return dict(new_cfg)
 
+    # data_sources entry 允许编辑的字段白名单（避免误传 garbage 字段进 yaml）
+    _ALLOWED_SOURCE_FIELDS: frozenset[str] = frozenset(
+        {"enabled", "timeout", "optional"}
+    )
+
     @staticmethod
     def _apply_data_sources_change(cfg: dict, key: str, value: Any) -> None:
         """处理 data_sources.<group>.<name>[.<field>] 形式的变更。
@@ -138,6 +143,10 @@ class ConfigStore:
         支持：
         - 整条替换：data_sources.structured.sina → {enabled: false, timeout: 30, ...}
         - 单字段：  data_sources.structured.sina.enabled → false
+
+        整条替换的 value dict 字段必须在 ``_ALLOWED_SOURCE_FIELDS`` 白名单内，
+        且每个字段都会过 ``_validate_value`` 做类型/范围校验；``params``（命令/URL/token）
+        从原 dict 沿用，不接受前端覆写。
         """
         parts = key.split(".")
         # data_sources.structured.sina  (length 3)  整条替换
@@ -163,19 +172,34 @@ class ConfigStore:
             items.append(target)
 
         if field is None:
-            # 整条替换：保留 name，覆盖其他字段
+            # 整条替换：白名单校验 + 逐字段类型校验，避免 garbage 字段污染 yaml
             if not isinstance(value, dict):
                 raise ConfigStoreError(
                     f"{key} 的 value 必须是 dict（当前 {type(value).__name__}）"
                 )
+            unknown = set(value.keys()) - ConfigStore._ALLOWED_SOURCE_FIELDS
+            if unknown:
+                raise ConfigStoreError(
+                    f"{key} 的 value 含未允许字段：{sorted(unknown)}；"
+                    f"仅允许 {sorted(ConfigStore._ALLOWED_SOURCE_FIELDS)}"
+                )
+            for k_, v_ in value.items():
+                ConfigStore._validate_value(f".{k_}", v_)
             new_entry = {"name": name, **value}
             # 保留 params（命令/URL/token）避免被覆盖丢失
             if "params" in target:
                 new_entry.setdefault("params", target["params"])
+            # 保留 provider（class 名映射，不属用户可编辑范围）
+            if "provider" in target:
+                new_entry.setdefault("provider", target["provider"])
             target.clear()
             target.update(new_entry)
         else:
             # 单字段
+            if field not in ConfigStore._ALLOWED_SOURCE_FIELDS:
+                raise ConfigStoreError(
+                    f"{key} 字段不允许编辑；仅允许 {sorted(ConfigStore._ALLOWED_SOURCE_FIELDS)}"
+                )
             ConfigStore._validate_value(f".{field}", value)
             target[field] = value
 
@@ -187,7 +211,15 @@ class ConfigStore:
         if len(parts) != 4:
             raise ConfigStoreError(f"key 格式错误：{key}（应为 scheduler.tasks.<task>.<field>）")
         _, _, task_name, field = parts
-        ConfigStore._validate_value(f".{field}", value)
+        if field not in {"interval", "cron"}:
+            raise ConfigStoreError(
+                f"{key} 字段不允许编辑；仅允许 'interval' / 'cron'"
+            )
+        if field == "interval":
+            ConfigStore._validate_value(f".{field}", value)
+        else:  # cron
+            if not isinstance(value, str) or not value.strip():
+                raise ConfigStoreError(f"{key} 必须是非空字符串，收到 {value!r}")
         cfg.setdefault("scheduler", {}).setdefault("tasks", {}).setdefault(task_name, {})[field] = value
 
     @staticmethod
@@ -241,11 +273,13 @@ class ConfigStore:
         if key.endswith(".interval") or key.endswith(".timeout"):
             if not isinstance(value, int) or value <= 0 or value > 24 * 60:
                 raise ConfigStoreError(f"{key} 必须是 1~1440 之间的整数，收到 {value!r}")
-        elif key.endswith(".enabled"):
+        elif key.endswith(".enabled") or key.endswith(".optional"):
             if not isinstance(value, bool):
                 raise ConfigStoreError(f"{key} 必须是 bool，收到 {value!r}")
-        # 其他 key（cron string、command 等）暂不在前端编辑范围内
-        # 如未来扩展需在此追加校验
+        else:
+            # 未识别字段（cron string、command 等）：在 _apply_* 已做字段白名单兜底，
+            # 这里再次拦截避免被遗漏的路径写入未校验值
+            raise ConfigStoreError(f"{key} 字段不在 ConfigStore 已校验集合中")
 
     def _atomic_write_yaml(self, new_cfg: dict) -> None:
         """atomic 写：备份旧文件 → 写 tmp → rename 覆盖。"""

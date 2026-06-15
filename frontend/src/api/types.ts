@@ -205,17 +205,10 @@ export interface RealizedPnlItem {
   realized_pnl: number;
 }
 
-// 防御性类型：后端 /positions/realized-pnl 当前返回扁平 { items, total, page, page_size }
-// （不带 page_info 包装），前端在 Phase 1 阶段先容忍两种格式：
-// - 扁平格式（实际后端契约）：{ items, total?, page?, page_size? }
-// - PageResult 格式（未来对齐后）：{ items, page_info }
-// RealizedPnlResult 把两种格式的可选字段都列上，UI 层按 `items` 取数即可。
+// 后端 /positions/realized-pnl 返回 { items, page_info } —— 与 /news、/assets、/transactions 对齐
 export interface RealizedPnlResult {
   items: RealizedPnlItem[];
-  total?: number;
-  page?: number;
-  page_size?: number;
-  page_info?: PageInfo;
+  page_info: PageInfo;
 }
 
 export interface AssetDetail extends TrackedAsset {

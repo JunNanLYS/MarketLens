@@ -505,26 +505,46 @@ class SchedulerManager:
         self._scheduler.shutdown(wait=False)
         logger.info("调度器已关闭")
 
-    def trigger_task(self, task_name: str) -> bool:
+    def trigger_task(self, task_name: str) -> dict | None:
         """手动触发指定名称的定时任务。
 
         Args:
             task_name: 任务名，可选 quote / daily_close / news / ai_report / cleanup。
 
         Returns:
-            触发成功返回 True；任务名无效或执行失败返回 False。
+            触发成功返回 ``{"run_log_id": int|None, "started_at": str|None}``；
+            任务名无效或执行失败返回 ``None``。``run_log_id`` 在任务函数未写
+            run_logs 行时（极少数采集为 0 的情况）可能为 None。
         """
         if task_name not in VALID_TASK_NAMES:
             logger.warning("无效的任务名: {}", task_name)
-            return False
+            return None
         func = _TASK_FUNCTIONS[task_name]
+        triggered_at = datetime.now(timezone.utc).isoformat()
         try:
             func()
         except Exception:
             logger.exception("手动触发任务失败: {}", task_name)
-            return False
+            return None
         logger.info("已手动触发任务: {}", task_name)
-        return True
+        # func() 内部 asyncio.run(async_business(...))，业务通过 _with_run_log 已写 run_logs 行；
+        # 取本次触发后该 task_name 的最新一条 id 返回，让前端可深链到日志详情。
+        run_log_id: int | None = None
+        started_at: str | None = None
+        try:
+            with get_db() as conn:
+                row = conn.execute(
+                    """SELECT id, started_at FROM run_logs
+                       WHERE task_name = ? AND started_at >= ?
+                       ORDER BY started_at DESC LIMIT 1""",
+                    (task_name, triggered_at),
+                ).fetchone()
+                if row is not None:
+                    run_log_id = row["id"]
+                    started_at = row["started_at"]
+        except Exception:
+            logger.exception("查询 trigger_task run_log_id 失败")
+        return {"run_log_id": run_log_id, "started_at": started_at}
 
     def get_task_status(self) -> list[dict]:
         """汇总每个任务最近一次执行情况与下一次执行时间。

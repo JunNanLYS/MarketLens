@@ -4,10 +4,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.data._service import _get_service
-from backend.api.neodata import verify_api_key
+from backend.api.dependencies import verify_api_key
 
 
 router = APIRouter()
+
+
 def _format_technical(row: dict) -> dict:
     return {
         "symbol": row.get("symbol"),
@@ -59,57 +61,6 @@ def get_technical(symbol: str) -> dict:
             },
         )
     return _format_technical(row)
-
-
-@router.post("/shareholder/{symbol}")
-async def get_shareholder(
-    symbol: str,
-    _auth: None = Depends(verify_api_key),
-) -> dict:
-    result = await _get_service().collect_shareholder(symbol)
-    if result is None:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "COLLECT_FAILED",
-                "detail": f"标的 '{symbol}' 股东结构数据采集失败",
-            },
-        )
-    return result
-
-
-@router.post("/dividend/{symbol}")
-async def get_dividend(
-    symbol: str,
-    _auth: None = Depends(verify_api_key),
-) -> dict:
-    items = await _get_service().collect_dividend(symbol)
-    if items is None:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "COLLECT_FAILED",
-                "detail": f"标的 '{symbol}' 分红数据采集失败",
-            },
-        )
-    return {"symbol": symbol, "items": items}
-
-
-@router.post("/reserve/{symbol}")
-async def get_reserve(
-    symbol: str,
-    _auth: None = Depends(verify_api_key),
-) -> dict:
-    result = await _get_service().collect_reserve(symbol)
-    if result is None:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "COLLECT_FAILED",
-                "detail": f"标的 '{symbol}' 业绩预告采集失败",
-            },
-        )
-    return result
 
 
 # ============================================================================
@@ -292,48 +243,14 @@ async def refresh_finance(
     return {"symbol": symbol, "summary": summary, "num": num}
 
 
-# 财务采集路由表：symbol 前缀 → 采集方法（lambda 包装 _service 实例方法，
-# 避免直接引用 unbound method 导致 self 缺失）。扩展新市场（如 jp/uk）时只需追加一行。
-def _collect_us(symbol: str, num: int) -> object:
-    return _get_service().collect_us_finance(symbol, num=num)
+# 财务采集路由表：symbol 前缀 → 采集方法。扩展新市场（如 jp/uk）时只需追加一行。
+# collect_*_finance 是 async（CLAUDE.md 硬约束），包装函数必须 async def + await。
+async def _collect_us(symbol: str, num: int) -> object:
+    return await _get_service().collect_us_finance(symbol, num=num)
 
 
-def _collect_hk(symbol: str, num: int) -> object:
-    return _get_service().collect_hk_finance(symbol, num=num)
-
-
-_FINANCE_DISPATCH: dict[str, object] = {
-    "us": _collect_us,
-    "hk": _collect_hk,
-}
-
-
-# ============================================================================
-# 阶段 16：港美 ipo + exdiv 日历（2 GET 查询 + 1 POST refresh）
-# 走 /calendar/{event_type} + /calendar-refresh
-# A 股 ipo/exdiv 数据源死，仅 hk/us
-# ============================================================================
-
-
-def _collect_us(symbol: str, num: int) -> object:
-    return _get_service().collect_us_finance(symbol, num=num)
-
-
-def _collect_hk(symbol: str, num: int) -> object:
-    return _get_service().collect_hk_finance(symbol, num=num)
-
-
-_FINANCE_DISPATCH: dict[str, object] = {
-    "us": _collect_us,
-    "hk": _collect_hk,
-}
-
-
-# ============================================================================
-# 阶段 16：港美 ipo + exdiv 日历（2 GET 查询 + 1 POST refresh）
-# 走 /calendar/{event_type} + /calendar-refresh
-# A 股 ipo/exdiv 数据源死，仅 hk/us
-# ============================================================================
+async def _collect_hk(symbol: str, num: int) -> object:
+    return await _get_service().collect_hk_finance(symbol, num=num)
 
 
 _FINANCE_DISPATCH: dict[str, object] = {

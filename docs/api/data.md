@@ -11,7 +11,7 @@
 | `GET` | 否 |
 | `POST` | 是（需 `X-API-Key` 头） |
 
-API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。所有 POST 端点（`/quotes/{symbol}/refresh`、`/intraday/{symbol}`、`/shareholder/{symbol}`、`/dividend/{symbol}`、`/reserve/{symbol}`、`/dividend/{symbol}/refresh`、`/shareholder/{symbol}/refresh`、`/reserve/{symbol}/refresh`、`/minute/{symbol}/refresh`、`/etf-refresh/{symbol}`、`/sectors/refresh`、`/finance-refresh/{symbol}`、`/calendar-refresh`、`/chip-refresh/{symbol}`、`/blocktrade-refresh/{symbol}`、`/lhb-refresh/{symbol}`）均受保护。
+API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。所有 POST 端点（`/quotes/{symbol}/refresh`、`/dividend/{symbol}/refresh`、`/shareholder/{symbol}/refresh`、`/reserve/{symbol}/refresh`、`/minute/{symbol}/refresh`、`/etf-refresh/{symbol}`、`/sectors/refresh`、`/finance-refresh/{symbol}`、`/calendar-refresh`、`/chip-refresh/{symbol}`、`/blocktrade-refresh/{symbol}`、`/lhb-refresh/{symbol}`）均受保护。
 
 ---
 
@@ -26,10 +26,6 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 | `GET` | `/data/finance/{symbol}` | 财务数据 | 200, 422 |
 | `GET` | `/data/fund-flow/{symbol}` | 资金流向 | 200, 422 |
 | `GET` | `/data/technical/{symbol}` | 技术指标 | 200, 404 |
-| `POST` | `/data/intraday/{symbol}` | 分时数据采集 | 200, 401, 422, 502 |
-| `POST` | `/data/shareholder/{symbol}` | 股东结构采集 | 200, 401, 502 |
-| `POST` | `/data/dividend/{symbol}` | 分红数据采集 | 200, 401, 502 |
-| `POST` | `/data/reserve/{symbol}` | 业绩预告采集 | 200, 401, 502 |
 | `GET` | `/data/dividend/{symbol}` | 分红记录（落库） | 200, 404, 422 |
 | `GET` | `/data/shareholder/{symbol}` | 股东结构（落库） | 200, 404, 422 |
 | `GET` | `/data/reserve/{symbol}` | 业绩预告（落库） | 200, 404, 422 |

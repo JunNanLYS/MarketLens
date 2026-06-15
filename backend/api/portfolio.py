@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from backend.api.neodata import verify_api_key
+from backend.api.dependencies import verify_api_key
 from backend.services.portfolio_service import PortfolioService
 
 router = APIRouter(prefix="/api/v1", tags=["portfolio"])

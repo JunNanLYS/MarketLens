@@ -691,9 +691,7 @@ class PortfolioService:
             包含 items 与分页信息的字典：
 
             - items: 当前页内按 (account_id, symbol) 聚合的已实现盈亏列表
-            - total: 过滤条件下所有 (account_id, symbol) 组合的总数（DB 层 COUNT）
-            - page: 当前页码
-            - page_size: 当前页大小
+            - page_info: { page, page_size, total, total_pages } —— 与 /news、/assets、/transactions 对齐
         """
         # 防御性 guard：API 层 Pydantic min_length=1 已防空串，但 service 被其他模块直接调用时仍可能传空串
         if symbol is not None and not symbol:
@@ -718,7 +716,17 @@ class PortfolioService:
         where_clause: str = " AND ".join(conditions)
         # DB 层封顶，避免 service 被直接调用时 page_size 失控
         cap: int = max(1, min(page_size, 200))
-        offset: int = (max(1, page) - 1) * cap
+        page = max(1, page)
+        offset: int = (page - 1) * cap
+
+        def _page_info(total_: int) -> dict:
+            total_pages = (total_ + cap - 1) // cap if total_ > 0 else 0
+            return {
+                "page": page,
+                "page_size": cap,
+                "total": total_,
+                "total_pages": total_pages,
+            }
 
         with get_db() as conn:
             # 先 COUNT 全部 (account_id, symbol) 组合，供 API 层 page_info 使用
@@ -736,9 +744,7 @@ class PortfolioService:
             if total == 0:
                 return {
                     "items": [],
-                    "total": 0,
-                    "page": page,
-                    "page_size": cap,
+                    "page_info": _page_info(0),
                 }
             # 强制分页：按 (account_id, symbol) 聚合在 DB 层完成，避免 Python 端遍历全表。
             group_rows = conn.execute(
@@ -755,9 +761,7 @@ class PortfolioService:
             if not group_rows:
                 return {
                     "items": [],
-                    "total": total,
-                    "page": page,
-                    "page_size": cap,
+                    "page_info": _page_info(total),
                 }
             # 构造 VALUES 子句：SQLite 3.8.3+ 支持 `(account_id, symbol) IN (VALUES (?,?), (?,?), ...)`，
             # planner 能识别为 row-value 列表并利用 (account_id, symbol) 索引；旧 `IN ((?, ?), (?, ?))`
@@ -796,7 +800,5 @@ class PortfolioService:
 
         return {
             "items": items,
-            "total": total,
-            "page": page,
-            "page_size": cap,
+            "page_info": _page_info(total),
         }

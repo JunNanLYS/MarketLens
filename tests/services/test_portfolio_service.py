@@ -465,9 +465,10 @@ async def test_realized_pnl(
     )
     results: dict = svc.get_realized_pnl()
     assert len(results["items"]) == 1
-    assert results["total"] == 1
-    assert results["page"] == 1
-    assert results["page_size"] == 50
+    assert results["page_info"]["total"] == 1
+    assert results["page_info"]["page"] == 1
+    assert results["page_info"]["page_size"] == 50
+    assert results["page_info"]["total_pages"] == 1
     r: dict = results["items"][0]
     assert r["total_sell_qty"] == 100
     assert r["avg_cost"] == 300.0
@@ -501,9 +502,10 @@ async def test_realized_pnl_with_filter(
     )
     results: dict = svc.get_realized_pnl(account_id=acct2["id"])
     assert results["items"] == []
-    assert results["total"] == 0
-    assert results["page"] == 1
-    assert results["page_size"] == 50
+    assert results["page_info"]["total"] == 0
+    assert results["page_info"]["page"] == 1
+    assert results["page_info"]["page_size"] == 50
+    assert results["page_info"]["total_pages"] == 0
 
 
 async def test_get_transactions_pagination(
@@ -895,7 +897,7 @@ async def test_realized_pnl_includes_buy_fee(
     )
     results: dict = svc.get_realized_pnl()
     assert len(results["items"]) == 1
-    assert results["total"] == 1
+    assert results["page_info"]["total"] == 1
     # avg_cost=381, realized = (400-381)*100 - 15 = 1885
     assert results["items"][0]["realized_pnl"] == pytest.approx(1885.0)
 
@@ -1212,9 +1214,9 @@ async def test_realized_pnl_empty_account_returns_zero_total(
     """
     results: dict = svc.get_realized_pnl(account_id=sample_account["id"])
     assert results["items"] == []
-    assert results["total"] == 0
-    assert results["page"] == 1
-    assert results["page_size"] == 50
+    assert results["page_info"]["total"] == 0
+    assert results["page_info"]["page"] == 1
+    assert results["page_info"]["page_size"] == 50
 
 
 async def test_update_transaction_trade_date_not_validated_at_service_layer(
