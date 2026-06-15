@@ -248,6 +248,113 @@ async def test_search_skips_empty_code(provider: WeStockProvider) -> None:
     assert result[0]["symbol"] == "sh600519"
 
 
+async def test_search_maps_all_westock_type_prefixes(provider: WeStockProvider) -> None:
+    """回归 r17 P1: westock 所有实测 type 前缀必须映射到前端 ASSET_TYPES。
+
+    覆盖 westock 实际出现的 type 枚举:
+    - GP-ETF / ETF → etf (复盖 GP* 兜底前先判)
+    - LOF → fund
+    - ZS / ZS-ZQ → index
+    - ZQ-NHG → bond
+    - BK → sector
+    - GP / GP-A / GP-A-CYB → stock
+    """
+    stdout = (
+        "| code | name | type |\n| --- | --- | --- |\n"
+        "| sh510300 | 沪深300ETF华泰柏瑞 | ETF |\n"
+        "| usASHR.AM | 沪深300ETF-德银嘉实 | GP-ETF |\n"
+        "| sz160706 | 沪深300LOF | LOF |\n"
+        "| sh000300 | 沪深300 | ZS |\n"
+        "| sh000012 | 国债指数 | ZS-ZQ |\n"
+        "| sh204001 | GC001 | ZQ-NHG |\n"
+        "| pt01801081 | 华为概念 | BK |\n"
+        "| sh600519 | 贵州茅台 | GP-A |\n"
+        "| sz300750 | 宁德时代 | GP-A-CYB |\n"
+        "| hk00700 | 腾讯控股 | GP |\n"
+        "| usAAPL | 苹果 | GP-US |\n"
+    )
+    with patch("backend.collectors.westock.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
+        result = await provider.search("test")
+    by_symbol = {r["symbol"]: r for r in result}
+    # 关键不变量: 任何前端的 9 类 asset_type 都能命中
+    expected = {
+        "sh510300": "etf",
+        "usASHR.AM": "etf",   # GP-ETF 不被 GP* 截胡
+        "sz160706": "fund",   # LOF
+        "sh000300": "index",  # ZS
+        "sh000012": "index",  # ZS-ZQ
+        "sh204001": "bond",   # ZQ-NHG
+        "pt01801081": "sector",  # BK
+        "sh600519": "stock",  # GP-A
+        "sz300750": "stock",  # GP-A-CYB
+        "hk00700": "stock",   # GP
+        "usAAPL": "stock",    # GP-US
+    }
+    actual = {sym: r["asset_type"] for sym, r in by_symbol.items()}
+    assert actual == expected, f"asset_type 映射偏差: {actual}"
+
+
+def test_westock_type_to_asset_type_unit() -> None:
+    """纯函数: _westock_type_to_asset_type 各分支命中表（无 subprocess 依赖）。"""
+    cases = [
+        # 股票类
+        ("", "stock"),
+        ("GP", "stock"),
+        ("GP-A", "stock"),
+        ("GP-A-CYB", "stock"),
+        ("GP-HK", "stock"),
+        ("GP-US", "stock"),
+        # ETF (必须先于 GP* 兜底)
+        ("GP-ETF", "etf"),
+        ("ETF", "etf"),
+        ("QDII-ETF", "etf"),
+        ("QDII-LOF", "etf"),
+        # 基金 (LOF)
+        ("LOF", "fund"),
+        # 指数
+        ("ZS", "index"),
+        ("ZS-ZQ", "index"),
+        # 债券
+        ("ZQ", "bond"),
+        ("ZQ-NHG", "bond"),
+        # 板块
+        ("BK", "sector"),
+        ("BK-HY-2", "sector"),
+        # 未知 → 兜底
+        ("UNKNOWN-TYPE", "stock"),
+    ]
+    for wtype, expected in cases:
+        assert WeStockProvider._westock_type_to_asset_type(wtype) == expected, (
+            f"_westock_type_to_asset_type({wtype!r}) "
+            f"应返回 {expected!r}, 实际 {WeStockProvider._westock_type_to_asset_type(wtype)!r}"
+        )
+
+
+async def test_search_returns_real_world_xiaomi_results(provider: WeStockProvider) -> None:
+    """回归用户原始 bug 报告: search('小米') 必须返回 4 条可被前端消费的候选。
+
+    真实 westock 输出（2026-06-15 实测）: hk01810 / hk81810 / usXIACY.PS / usXIACF.PS,
+    全部 GP* → stock; market 从 code 前缀正确推断为 hk / us。
+    """
+    stdout = (
+        "| code | name | type |\n| --- | --- | --- |\n"
+        "| hk01810 | 小米集团-W | GP |\n"
+        "| hk81810 | 小米集团-WR | GP |\n"
+        "| usXIACY.PS | 小米集团(ADR) | GP |\n"
+        "| usXIACF.PS | 小米集团 | GP |\n"
+    )
+    with patch("backend.collectors.westock.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
+        result = await provider.search("小米")
+    assert len(result) == 4
+    # 关键不变量: 每条都必须有 non-empty symbol（AssetService.search_assets 按 symbol 取值）
+    for r in result:
+        assert r["symbol"], f"symbol 为空,会被 service 静默丢弃: {r}"
+        assert r["market"] in ("hk", "us")
+        assert r["asset_type"] == "stock"
+
+
 async def test_search_empty(provider: WeStockProvider) -> None:
     with patch("backend.collectors.westock.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="数据为空", returncode=0)

@@ -333,15 +333,32 @@ class WeStockProvider(BaseProvider):
     def _westock_type_to_asset_type(wtype: str) -> str:
         """westock search 返回的 type 字段 → 前端约定的 asset_type。
 
-        westock 实际值（实测）:
-        - GP / GP-A-CYB / GP-A / GP-HK / GP-US → stock
-        - BK / BK-HY-2 → sector
-        - 其余/空 → stock（兜底，搜索结果主要是股票）
+        westock 实测 type 枚举（2026-06-15）:
+          GP / GP-A / GP-A-CYB / GP-HK / GP-US → 股票
+          GP-ETF（如 usASHR.AM 沪深300ETF-德银嘉实）→ ETF
+          ETF / QDII-ETF / QDII-LOF → ETF
+          LOF → 基金
+          ZS / ZS-ZQ → 指数
+          ZQ / ZQ-NHG → 债券
+          BK / BK-HY-2 → 板块
+          其余/空 → 股票（兜底，搜索结果以股票为主）
+
+        顺序敏感：GP-ETF 必须在 GP* 兜底前先匹配；ETF 必须先于 LOF 匹配。
         """
         if not wtype:
             return "stock"
+        if wtype == "GP-ETF" or wtype.startswith("GP-ETF"):
+            return "etf"
         if wtype.startswith("GP"):
             return "stock"
+        if wtype.startswith("ETF") or wtype.startswith("QDII"):
+            return "etf"
+        if wtype == "LOF" or wtype.startswith("LOF"):
+            return "fund"
+        if wtype.startswith("ZS"):
+            return "index"
+        if wtype.startswith("ZQ"):
+            return "bond"
         if wtype.startswith("BK"):
             return "sector"
         return "stock"
