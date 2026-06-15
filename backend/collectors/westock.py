@@ -318,19 +318,79 @@ class WeStockProvider(BaseProvider):
         # 理论上不可达（循环内已 return），但保留防御
         return [], last_err
 
+    @staticmethod
+    def _guess_market_from_code(code: str) -> str:
+        """从 westock CLI 返回的 code 字段推断市场前缀（sh/sz/bj/hk/us）。
+
+        复刻 SinaProvider._guess_market_from_symbol 的语义，覆盖 westock 实际
+        出现的 5 个市场前缀；未知前缀返回 "us"（与 SinaProvider 兜底一致）。
+        """
+        if code.startswith(("sh", "sz", "bj", "hk", "us")):
+            return code[:2]
+        return "us"
+
+    @staticmethod
+    def _westock_type_to_asset_type(wtype: str) -> str:
+        """westock search 返回的 type 字段 → 前端约定的 asset_type。
+
+        westock 实测 type 枚举（2026-06-15）:
+          GP / GP-A / GP-A-CYB / GP-HK / GP-US → 股票
+          GP-ETF（如 usASHR.AM 沪深300ETF-德银嘉实）→ ETF
+          ETF / QDII-ETF / QDII-LOF → ETF
+          LOF → 基金
+          ZS / ZS-ZQ → 指数
+          ZQ / ZQ-NHG → 债券
+          BK / BK-HY-2 → 板块
+          其余/空 → 股票（兜底，搜索结果以股票为主）
+
+        顺序敏感：GP-ETF 必须在 GP* 兜底前先匹配；ETF 必须先于 LOF 匹配。
+        """
+        if not wtype:
+            return "stock"
+        if wtype == "GP-ETF" or wtype.startswith("GP-ETF"):
+            return "etf"
+        if wtype.startswith("GP"):
+            return "stock"
+        if wtype.startswith("ETF") or wtype.startswith("QDII"):
+            return "etf"
+        if wtype == "LOF" or wtype.startswith("LOF"):
+            return "fund"
+        if wtype.startswith("ZS"):
+            return "index"
+        if wtype.startswith("ZQ"):
+            return "bond"
+        if wtype.startswith("BK"):
+            return "sector"
+        return "stock"
+
     async def search(self, keyword: str) -> list[dict]:
+        """westock 模糊搜索（股票/板块/基金/指数等）。
+
+        CLI 返回表格列: code / name / type（如 GP / GP-A-CYB / BK）。
+        本方法映射为 AssetService.search_assets 约定的字段
+        (symbol / name / market / asset_type)，避免上游因字段名不匹配
+        静默丢弃所有结果（r17 修复）。
+        """
         tables, err = await self._run_cli(f"search {keyword}")
         if err or not tables:
             return []
         rows = tables[0]
-        return [
-            {
-                "code": r.get("code", ""),
-                "name": r.get("name", ""),
-                "type": r.get("type", ""),
-            }
-            for r in rows
-        ]
+        results: list[dict] = []
+        for r in rows:
+            code = r.get("code", "")
+            if not code:
+                continue
+            results.append(
+                {
+                    "symbol": code,
+                    "name": r.get("name", ""),
+                    "market": self._guess_market_from_code(code),
+                    "asset_type": self._westock_type_to_asset_type(
+                        r.get("type", "")
+                    ),
+                }
+            )
+        return results
 
     async def quote(self, symbols: list[str]) -> list[dict]:
         if not symbols:
