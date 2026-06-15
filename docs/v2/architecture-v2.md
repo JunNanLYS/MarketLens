@@ -400,9 +400,33 @@ app.whenReady()
 
 ---
 
-## 8. 部署形态
+## 8. 候选技术栈(参考,非强制)
 
-### 8.1 开发模式(3 进程)
+> 本节列出 v2 各层可能用到的候选技术。**v2 设计文档保持 Provider 无关**,实际选型在 Phase 1 启动前确定。
+
+| 层 | 候选 | 推荐阶段 | 备注 |
+|----|------|---------|------|
+| **Agent 编排** | LangGraph(首选,天然支持图/DAG/状态持久化)/ CrewAI(适合角色扮演,DAG 控制较弱)/ 自研 Orchestrator(简单可控) | LangGraph Phase 2+,自研 Phase 1 | Phase 1 自研最简;Phase 2+ 评估迁移到 LangGraph |
+| **状态/消息总线** | Redis(轻量,支持 pub-sub + 持久化)/ PostgreSQL LISTEN/NOTIFY(强一致)/ asyncio.Queue(零依赖) | asyncio.Queue Phase 1,Redis Phase 2+ | 单进程 asyncio.Queue 够用;Monitoring Agent 独立部署时需 Redis |
+| **任务队列(可选)** | Celery + RabbitMQ(重型,生态成熟)/ RQ(轻量 Redis)/ 自研 asyncio.Task | Phase 2+ | Phase 1 asyncio.gather 足够 |
+| **LLM(Planner / 解释)** | Claude 4.5 Sonnet / GPT-4o / Claude Sonnet 4.6 / DeepSeek-V3 | Phase 2 引入 | Phase 1 Planner 用规则模板,不依赖 LLM |
+| **LLM(情感分析小模型)** | 开源 1B-3B(Qwen2.5-1.5B / Phi-3.5-mini)/ DeepSeek 小模型 | Phase 1 评估 | Monitoring Agent 第 2 级过滤用,成本敏感 |
+| **向量数据库** | Milvus(开源,生产级)/ Pinecone(SaaS,易用)/ Qdrant(轻量)/ FAISS(本地) | Phase 2+ | Phase 1 用 SQLite + 简单文本相似度 |
+| **计算库(Portfolio)** | PyPortfolioOpt(均值-方差 / BL)/ riskfolio-lib(高级因子)/ pandas + numpy(基础) | Phase 1 选 PyPortfolioOpt | 大模型不做数学,左脑量化 |
+| **风险因子** | Barra(商业)/ 简化因子库(自研,基于行业 / 市值 / 动量) | Phase 1 自研简化版 | 完整 Barra 需要商业授权 |
+| **NLP(情感分析)** | DeepSeek API(已接入)/ 开源 SnowNLP / jieba + 自训词典 | Phase 1 DeepSeek | 见 CLAUDE.md 已建立防御性拦截 |
+| **Embeddings(检索)** | OpenAI text-embedding-3 / bge-large-zh(开源中文)/ m3e(轻量) | Phase 2+ | Vector Memory 上线时选型 |
+
+**选型原则**:
+- Phase 1 优先**零依赖 / 已有依赖**: asyncio.Queue / 规则 Planner / DeepSeek(已接入)
+- Phase 2+ 评估**生态成熟度**: LangGraph / Redis / Milvus 都是主流候选
+- 避免**未经验证的小众框架**: 即使吹得再响,没在金融场景跑过的别用
+
+---
+
+## 9. 部署形态
+
+### 9.1 开发模式(3 进程)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -428,7 +452,7 @@ app.whenReady()
 
 **优势**: 改 Python 代码 → uvicorn reload,改 React → HMR,独立调试。
 
-### 8.2 生产模式(单进程 + 打包)
+### 9.2 生产模式(单进程 + 打包)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -457,7 +481,7 @@ app.whenReady()
                       └─ 双击安装 → 桌面图标 → 单进程启动(内嵌 FastAPI)
 ```
 
-### 8.3 部署形态对比
+### 9.3 部署形态对比
 
 | 维度 | 开发模式 | 生产模式(Phase 1) | 打包模式(Phase 3) |
 |------|---------|-------------------|-------------------|
@@ -468,7 +492,7 @@ app.whenReady()
 | React 调试 | HMR | 静态文件 | 静态文件 |
 | 适用 | 开发 | 单机内测 | 用户分发 |
 
-### 8.4 Phase 路线图
+### 9.4 Phase 路线图
 
 | Phase | 目标 | 状态 |
 |-------|------|------|
