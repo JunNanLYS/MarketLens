@@ -635,6 +635,7 @@ Planner 接收后:
 | `detect_news_burst` | `{raw_news: list, ticker_pool, macro_rules}` | `{layered_results: {layer1_dedup, layer2_scored, layer3_judged}, alerts: [...]}` |
 | `detect_fund_flow_anomaly` | `{symbols, threshold_value}` | `{anomalies: [...], source}` |
 | `news_simhash_filter` | `{news_list, seen_hashes, threshold=3}` | `{deduped: [...], dropped: [...]}` |
+| `news_macro_whitelist_check` | `{news_list, whitelist=MACRO_WHITELIST}` | `{passed: [{news, matched_keywords}], rejected: [...]}` |
 | `news_ticker_linking` | `{news_list, ticker_pool, macro_rules}` | `{linked: [{news, matched_tickers, macro_causal}], unlinked: [...]}` |
 | `news_small_model_score` | `{news_list, model="finbert"}` | `{scored: [{news, relevance, polarity, shock_score}]}` |
 | `news_llm_judge_batch` | `{news_batch, batch_size=5}` | `{judgments: [{news_id, fundamentally_changed, change_type, ...}]}` |
@@ -710,8 +711,84 @@ def is_duplicate(news_hash: int, seen_hashes: list[int], threshold: int = 3) -> 
 #### 5.4.2 Ticker Linking 隐性关联兜底(关键补丁)
 
 > **Gemini 指出的问题**: 国际新闻(如"某地发生战争")全文未提"黄金/石油",但战争 → 大宗商品上涨 → 影响持仓。如果第 1 层 Ticker Linking 只匹配标题/正文里出现的标的代码/简称,会漏掉这类**间接因果链**。
+>
+> 本节实现**双通道架构**:**(A) 宏观白名单无条件放行** + **(B) 因果规则图反向触发**。两条通道独立运行,任一命中即给新闻打标。
 
-**兜底方案:因果规则图 + 反向触发**
+---
+
+##### 通道 A:宏观核心词库白名单(无条件放行)
+
+> **核心洞察**: 宏观大事(战争 / 加息 / CPI)全球每天最多几条,**放行它们不会让 Token 账单爆炸**,但能保住系统的**全局视野**——避免漏掉"中东冲突 → 原油 ETF"的致命盲区。
+
+**白名单词库(初始版,可配置)**:
+
+```python
+# backend/agents/monitoring/config/macro_whitelist.py
+MACRO_WHITELIST = [
+    # 地缘政治
+    "战争", "武装冲突", "军事行动", "地缘政治", "制裁", "禁运",
+    "政变", "恐怖袭击", "核试验", "大使馆撤离",
+    # 央行政策
+    "美联储", "Fed", "FOMC", "欧洲央行", "ECB", "日本央行", "BOJ",
+    "中国人民银行", "PBOC", "加息", "降息", "缩表", "扩表", "QE",
+    # 宏观数据
+    "CPI", "PPI", "非农", "就业数据", "GDP", "PMI", "通胀", "通缩",
+    # 财政与贸易
+    "关税", "贸易战", "贸易摩擦", "出口管制", "实体清单", "WTO",
+    "财政赤字", "国债收益率", "美债",
+    # 大宗商品与能源
+    "OPEC", "欧佩克", "原油", "石油", "天然气", "黄金", "白银",
+    "大宗商品", "期货", "商品交易所", "WTI", "Brent",
+    # 汇率与跨境
+    "汇率", "人民币贬值", "美元指数", "DXY", "跨境资本",
+    # 系统性风险
+    "金融危机", "银行倒闭", "主权债务违约", "主权评级下调",
+    "经济衰退", "硬着陆", "软着陆",
+]
+```
+
+**行为**:
+
+```python
+def macro_whitelist_check(news_text: str) -> bool:
+    """只要新闻含白名单任一词,无条件放行 + 打标。"""
+    matched = [kw for kw in MACRO_WHITELIST if kw in news_text]
+    if matched:
+        # 打 tag: macro_whitelist_pass=True + 命中的关键词列表
+        return True, {"matched_keywords": matched}
+    return False, {}
+```
+
+**关键约束**:
+
+| 项 | 说明 |
+|----|------|
+| **放行范围** | 仅跳过第 1 层的 Ticker Linking + SimHash,**不跳过第 2 层 FinBERT** — 仍要算 relevance / shock_score |
+| **打标字段** | `news.macro_whitelist_pass = True`, `news.macro_keywords = [kw1, kw2, ...]` |
+| **白名单维护** | 写入 `config/macro_whitelist.py`,每月 review;用户偏好设置可禁用某些关键词 |
+| **大小预估** | 初始 60-80 词,Phase 1 稳定后扩到 100-150 词 |
+| **误判容忍** | 误判放行的边际成本 = 一条新闻走完漏斗 ≈ $0.0005(DeepSeek)→ 可忽略 |
+
+**预期效果**:
+
+```
+每日 10000 条原始新闻
+   ├─ Ticker Linking 命中: ~3000 条
+   └─ Ticker Linking 漏掉: ~7000 条
+        └─ Macro Whitelist 命中: ~5-20 条  ← 全球宏观大事
+              └─ 给这 5-20 条打 macro_whitelist_pass=True
+              └─ 与"反向因果命中"的条目合并 → 进入第 2 层
+```
+
+**与通道 B 的关系**:
+
+- 通道 A 命中 → 不再走通道 B 的反向匹配(已确认宏观重要性)
+- 通道 A 未命中 + 通道 B 命中 → 进入第 2 层(打 `macro_causal=true` 标签)
+- 两者都没命中 → 视为"与持仓无关",第 1 层丢弃
+
+---
+
+##### 通道 B:因果规则图反向触发
 
 ```
 原始因果规则图(handcrafted + 半自动挖掘):
@@ -744,7 +821,7 @@ def is_duplicate(news_hash: int, seen_hashes: list[int], threshold: int = 3) -> 
 **Phase 1 方案 A 实现**:
 
 ```python
-MACRO_KEYWORDS = {
+MACRO_CAUSAL_RULES = {
     "战争|冲突|地缘|制裁": ["原油", "黄金", "国防", "美债"],  # 影响行业
     "加息|缩表|通胀": ["科技", "成长股", "银行", "美债"],
     "降息|宽松|QE": ["小盘股", "房地产", "黄金"],
@@ -755,7 +832,7 @@ MACRO_KEYWORDS = {
 def reverse_link(news_text: str, ticker_pool: set[str]) -> set[str]:
     """反向触发:从宏观关键词推断影响的行业/标的。"""
     matched_tickers = set()
-    for macro_pattern, affected_sectors in MACRO_KEYWORDS.items():
+    for macro_pattern, affected_sectors in MACRO_CAUSAL_RULES.items():
         if re.search(macro_pattern, news_text):
             for sector in affected_sectors:
                 matched_tickers.update(SECTOR_TO_TICKERS.get(sector, []))
@@ -766,6 +843,65 @@ def reverse_link(news_text: str, ticker_pool: set[str]) -> set[str]:
 - 因果规则图必须**人工维护 + 定期 review**(每季度更新)
 - 规则命中后,**不直接触发 Alert**,而是给该条新闻打上 `macro_causal=true` 标签,在第 2 层小模型打分时加权(降低 relevance 阈值)
 - 用户可关闭某条规则(偏好设置)— 例如"我对黄金不感兴趣"
+
+---
+
+##### 双通道统一入口
+
+```python
+def layer1_filter(news_list: list[NewsItem], ticker_pool: set[str]) -> list[NewsItem]:
+    """第 1 层硬规则:SimHash 去重 + 双通道宏观识别。"""
+    # Step 1: SimHash 去重
+    deduped = news_simhash_filter(news_list)
+    
+    # Step 2: 双通道识别(任一命中即保留)
+    survived = []
+    for news in deduped:
+        # 通道 A: 宏观白名单无条件放行
+        pass_a, info_a = macro_whitelist_check(news.text)
+        
+        # 通道 B: Ticker Linking + 因果规则反向触发
+        linked_tickers = ticker_link(news.text, ticker_pool)
+        pass_b = len(linked_tickers) > 0
+        
+        # 任一命中 → 进入第 2 层
+        if pass_a or pass_b:
+            news.macro_whitelist_pass = pass_a
+            news.matched_keywords = info_a.get("matched_keywords", [])
+            news.linked_tickers = linked_tickers
+            news.macro_causal = pass_b and not pass_a  # 仅通道 B 命中时为 True
+            survived.append(news)
+    
+    return survived
+```
+
+**漏斗指标修订**:
+
+```
+每日 10000 条原始新闻
+   │
+   ├─ SimHash 去重:                     10000 → ~8000 (~0.5s)
+   │
+   ├─ 通道 A 宏观白名单命中:            ~5-20 条  (放行 + 打 macro_whitelist_pass 标)
+   │
+   ├─ 通道 B Ticker Linking 命中:       ~3000 条
+   │
+   ├─ 通道 B 因果规则反向命中:          ~50-100 条 (打 macro_causal 标,降低后续阈值)
+   │
+   ├─ 合计进入第 2 层:                  ~3000-3200 条
+   │
+   ▼
+[第 2 层 FinBERT 评分]                  3000 → ~600 条
+   ├─ 通道 A 命中的 macro_whitelist_pass=True 新闻:
+   │    shock_score 阈值放宽到 0.55(默认 0.75)— 宏观大事容错性更高
+   │
+   ▼
+[第 3 层 LLM batch 裁判]                600 → ~150 条
+   ▼
+Planner 联动:                           ~150 → ~20 Alert/天
+```
+
+**对比修订前**:原来预期 ~15 Alert/天,现在因宏观白名单放宽阈值 → ~20 Alert/天(多出的 5 条主要是宏观大事)。**成本增加 < $0.10/天,可接受**。
 
 #### 5.4.3 第 2 层小模型评分细节
 
@@ -865,31 +1001,41 @@ class SingleJudgment(BaseModel):
 - `temperature ≤ 0.2`(确保输出一致性)
 - 失败重试最多 1 次,失败后该批次直接归档为"未知"
 
-#### 5.4.5 端到端漏斗性能预算
+#### 5.4.5 端到端漏斗性能预算(含双通道宏观识别)
 
 ```
 每日 10000 条原始新闻
    │
-   ├─ 第 1 层 SimHash + Ticker Linking:  10000 → 3000(~0.5s)
+   ├─ 第 1 层 SimHash 去重:               10000 → 8000 (~0.5s)
    │
-   ├─ 第 2 层 FinBERT 小模型:           3000  → 500 (~150s)
+   ├─ 第 1 层 通道 A 宏观白名单命中:      ~10-30 条 (无条件放行 + 打 macro_whitelist_pass 标)
+   │
+   ├─ 第 1 层 通道 B Ticker Linking:      8000 → ~3000 条
+   │
+   ├─ 第 1 层 通道 B 因果规则反向命中:    ~50-100 条 (打 macro_causal 标)
+   │
+   ├─ 合计进入第 2 层:                    ~3000-3200 条
+   │
+   ├─ 第 2 层 FinBERT 小模型:             3200  → 500-600 (~150s)
    │    (并行 4 进程,实际 ~40s)
+   │    ⚠️ 通道 A 命中的新闻: shock_score 阈值放宽到 0.55(默认 0.75)
    │
-   ├─ 第 3 层大模型批量:                500  → 100-200 (~120s)
-   │    (batch=5, ~20 次调用)
+   ├─ 第 3 层大模型批量:                  500-600 → 100-200 (~120s)
+   │    (batch=5, ~25 次调用)
    │
-   └─ 触发 Planner 联动:                100-200 个事件 → 评估后触发 5-15 次 Planner
+   └─ 触发 Planner 联动:                  100-200 个事件 → 评估后触发 15-25 次 Planner
         │
         ▼
-       ~15 个 Alert / 天(用户实际收到)
+       ~20 个 Alert / 天(用户实际收到)
+       其中 ~5 条来自宏观白名单通道(全球大事),~15 条来自常规标的新闻
 
 成本预算:
-- SimHash: 0(本地计算)
-- FinBERT: 0(本地推理)
-- 大模型批量: ~$0.08 / 天
-- LLM 触发 Planner: ~$0.05 / 次 × 15 = $0.75 / 天
+- SimHash: $0(本地计算)
+- FinBERT: $0(本地推理)
+- 大模型批量: ~$0.10 / 天(略增,因双通道多放 ~50 条进漏斗)
+- LLM 触发 Planner: ~$0.05 / 次 × 20 = $1.00 / 天
 
-日总成本: < $1 / 天(可接受)
+日总成本: ~$1.10 / 天(可接受)
 ```
 
 ---
