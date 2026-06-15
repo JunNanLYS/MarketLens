@@ -23,6 +23,14 @@
 | 9 | 多 Agent 拆分 | **文件零交叉时可完全并行** | 🟢 P2 |
 | 10 | 截断探测 | **静默 `LIMIT` 必须多取 1 行做截断探测 + warning** | 🟡 P1 |
 | 11 | 依赖声明 | **`pyproject.toml` 必须列出所有 import 的第三方包**(否则 CI 跑挂) | 🔴 P0 |
+| 12 | 端口清理 | **自残保护 + 10s 硬超时**（不允许 silent 启动） | 🟡 P1 |
+| 13 | 路由动画 | **只用入场动画**（`initial` + `animate`），不用 `AnimatePresence + exit` | 🟡 P1 |
+| 14 | WeStock 调子进程 | **PowerShell + 全局 wrapper**，避开 `npx` / 裸 `node` / sh wrapper | 🟡 P1 |
+| 15 | ConfigStore 白名单 | **PATCH 端点必须白名单 key 列表**（`name`/`provider`/`optional` 不接受覆盖） | 🟡 P1 |
+| 16 | Issue tracker | **新问题只写 `ISSUES.md`，禁建 `CODE_REVIEW.md`** | 🟡 P1 |
+| 17 | API 成本防御 | **第三方付费 API 路径必须有 autouse 拦截**（不依赖每个测试自觉） | 🔴 P0 |
+| 18 | UI 重构流程 | **五阶段顺序**：DESIGN.md → token → shared → pages → 验证 | 🟡 P1 |
+| 19 | Squash-merge 后合并 | **优先 cherry-pick 而非 rebase**（保留独立 commit identity） | 🟢 P2 |
 
 ---
 
@@ -717,6 +725,227 @@ def update_with_special_handling(self, updates: dict) -> dict:
 
 ---
 
+## 16. Issue tracker 唯一合法位置是 `ISSUES.md`
+
+### 教训来源
+
+第 15 轮（2026-06-11）—— 审查完 37 条 UI 问题后，习惯性地写到了 `CODE_REVIEW.md`，
+**用户立刻纠正**：
+
+> "我记得不是写到 @ISSUES.md 当中吗？你怎么写到 @CODE_REVIEW.md 当中了"
+
+CLAUDE.md 项目状态段明文：
+
+> "第 11 轮 `git mv` `CODE_REVIEW.md` → `ISSUES.md` 保留 history。"
+
+**禁止新建 `CODE_REVIEW.md`** — 11 轮已合并到 ISSUES.md，再创建就是历史回退。
+
+### 规则
+
+> **新发现的 issue 只能写到 `ISSUES.md` 的"已知问题登记"** 段，修复后从该段删除
+> 归档到 `docs/dev/issues_<修复日期>.md`。
+>
+> **绝不再创建 `CODE_REVIEW.md`**。如果看到旧 `CODE_REVIEW.md` 残留 → `git rm` 删除。
+
+### 自我检查清单
+
+- [ ] 新问题写进 `ISSUES.md` 而非 `CODE_REVIEW.md`
+- [ ] 修复完 issue 从 `ISSUES.md` 段删除，归档到 `docs/dev/issues_*.md`
+- [ ] 看到 `CODE_REVIEW.md` 残留 → 立即 `git rm`（不写修复记录）
+
+---
+
+## 17. 用户对第三方 API 成本敏感 → 测试必须 mock 真实端点
+
+### 教训来源
+
+第 16 轮（2026-06-12）—— 修复 AI 报告页 TypeScript 类型时，担心测试可能真调
+DeepSeek API。用户原话：
+
+> "在测试中是不是有真实调用DeepSeek的API，如果有请改成虚拟的，因为这会消耗的我钱。"
+
+**这是一个真约束，不是性能问题**。DeepSeek API 按 token 计费，562 测试每次跑会
+消耗真实配额。
+
+### 现状
+
+- 现有测试通过 `analyzer._client = AsyncMock()` 注入确定性响应
+- `DeepSeekSentimentAnalyzer._get_client()` 在 `api_key == ""` 时早返回 `_available=False`
+- 工厂层 + 测试 fixture 双层保护
+
+### 防御性加固（2026-06-12）
+
+`tests/conftest.py` 加 **autouse fixture**，作为最后一道防线：
+
+```python
+@pytest.fixture(autouse=True)
+def _block_real_deepseek_calls(monkeypatch):
+    """防御性：禁止测试中真实调用 api.deepseek.com。"""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    from backend.services.sentiment.deepseek_analyzer import DeepSeekSentimentAnalyzer
+    real_get_client = DeepSeekSentimentAnalyzer._get_client
+
+    def guarded(self):
+        client = real_get_client(self)
+        if client is None:
+            return None
+        base_url = getattr(client, "base_url", "")
+        if "api.deepseek.com" in str(base_url).lower():
+            raise RuntimeError("禁止真实调用 api.deepseek.com — conftest.py 拦截")
+        return client
+
+    monkeypatch.setattr(DeepSeekSentimentAnalyzer, "_get_client", guarded)
+```
+
+### 规则
+
+> **任何调用第三方付费 API 的代码路径必须有 mock 保护 + autouse 防御性 fixture。**
+> 即使现有测试都 mock 了，仍要加全局 conftest 兜底——防止后续 PR 引入新测试忘记 mock。
+
+### 自我检查清单
+
+- [ ] 第三方付费 API 路径（DeepSeek / OpenAI / Claude / 短信 / 邮件）在测试中
+      必须 `AsyncMock` / `MagicMock`
+- [ ] 至少一处 **autouse fixture** 拦截真调用（不依赖每个测试的自觉）
+- [ ] 拦截策略：检测 base_url / host 含真实域名时 raise RuntimeError
+- [ ] 拦截时清除相关 env var（`monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)`）
+- [ ] 用真实但极小的 quota 跑一次 pytest 后，看 API 控制台"无调用"才放心
+
+---
+
+## 18. 前端 UI 重构的"五阶段顺序"流程
+
+### 教训来源
+
+第 17-18 轮（2026-06-12/13）—— 用户首次提出：
+
+> "请您先根据项目的用途设计一套设计语言输出到 DESIGN.md 中，然后再根据设计语言
+> 将前端 UI 进行重构，使前端 UI 更精美独特。"
+
+发现这个"先设计语言、后重构"的流程在大型 UI 重构中可复用，且顺序不可乱。
+
+### 五阶段流程
+
+```
+Phase 1: 设计语言文档（DESIGN.md）    ← 必须先做，不能跳
+  ↓
+Phase 2: 设计令牌 + 全局样式          ← token 是基础
+  ↓
+Phase 3: 8 个 shared 组件            ← 原子组件先统一
+  ↓
+Phase 4: 7 个 page 视觉重构          ← 组合阶段
+  ↓
+Phase 5: 验证 + 收尾                  ← lint/type-check/build/pytest + 浏览器目视
+```
+
+### 为什么不能跳 Phase 1
+
+- 写代码前如果没有 DESIGN.md 锚定，每个组件会"自己造 token"，风格漂移
+- 用户确认 DESIGN.md 后 = 一次评审机会，比 5 轮组件 PR 评审更高效
+- DESIGN.md 必须包含：color / typography / spacing / radius / elevation / motion
+  6 类 token + 10+ 组件规范 + 8 状态体系 + WCAG AA 4.5:1 + 实施规则
+
+### Phase 2 必须做
+
+- 26 color token（4 大类：主色/强调/语义/中性，浅+深双套）
+- spacing 8px 基准 6 级 + radius 4 级 + elevation 3 级 + motion 3 档
+- `frontend/tailwind.config.js` 全 token 映射
+- `ConfigProvider` 注入 antd token（让 antd Menu / Card / Tag 用我们的色）
+
+### Phase 3 顺序（依赖最小化）
+
+- 先无依赖：`PnlDisplay` / `StatusTag` / `QueryErrorState` / `ConfirmDelete`
+- 再依赖：`KpiBar`（用 `PnlDisplay`）/ `CollectionTimeline`（用 `QueryErrorState`）
+- 最后：layout 层 `Sidebar` / `AppLayout` / 新增 `PageHeader` 共用
+
+### Phase 4 顺序（轻→重）
+
+```
+Settings    (最轻：3 卡片 + 表格) ← 1-2 小时
+TaskStatus  (表格 + 触发)
+NewsList    (列表 + 过滤)
+TrackedAssets (表格 + 添加/搜索)
+AiReports   (卡片 + StatusTag 改造点)
+Portfolio   (3 Tab)
+AssetDetail (最重：3 栏 + Hero + 图表)
+```
+
+### Phase 5 验证清单
+
+```bash
+cd frontend && npm run lint && npm run type-check && npm run build
+uv run pytest tests/ -q
+# 启动 dev server + 浏览器目视 7 page + light/dark
+```
+
+### 范式 — DESIGN.md 章节模板
+
+1. 品牌定位（1 段）
+2. 设计原则（5 条）
+3. 设计令牌（color/typography/spacing/radius/elevation/motion 6 张表）
+4. 组件库规范（10+ 组件：每个含 default/hover/active/focus/disabled/loading/error/empty 8 状态）
+5. 状态体系
+6. 可访问性（WCAG AA 4.5:1 / 3px focus ring / 44px 触摸目标 / reduced motion）
+7. 实施规范（命名 / 何时用 antd 默认 vs 自定义 / 暗色模式 / 现状问题对照表）
+
+### 自我检查清单
+
+- [ ] Phase 1 完成前不写任何 frontend 代码
+- [ ] Phase 2 token 完整（含暗色模式）再开始 Phase 3
+- [ ] Phase 3 改 shared 组件时同步在 pages 找 import 现场改造
+- [ ] Phase 4 按"轻→重"顺序，避免一上来改最重的 AssetDetail
+- [ ] Phase 5 验证 4 件套全过（lint + type-check + build + pytest）才视为完成
+
+---
+
+## 19. Squash-merge 后的"非 fast-forward"：何时 cherry-pick，何时新建
+
+### 教训来源
+
+第 18 轮（2026-06-14）—— 工作流上 `claude/*` 分支通过 `gh pr merge --squash` 合并
+后，main 拿到 squash commit（如 `a72835a`）。后续该分支继续累加新 commit（如
+`7ccdf63`）时，`git merge --ff-only` 失败，提示"diverging branches"。
+
+### 三种场景的正确动作
+
+| 场景 | 特征 | 正确动作 |
+|------|------|---------|
+| A. 线性延续 | source 是 main 的严格后续 | `git merge --ff-only` 在主 worktree |
+| B. 已 squash 后旁支延续 | source 是 main 父 commit 之后累加的新 commit | `git cherry-pick <commit>` 在主 worktree |
+| C. PR 远程分支 | source 在 `origin/claude/*` | `gh pr merge <num> --squash --delete-branch` |
+
+**主 worktree 是 `D:/Project/MarketLens`**（已 used by main），worktree 子目录
+不能 checkout main，所有 main 写入必须回主 worktree。
+
+### 决策树
+
+```
+$ git log --oneline --graph --all -10  # 看分支图
+* <source_commit>   feat: ...   ← 目标 commit
+* <squash_commit>   feat: ... (#N)  ← main 当前 HEAD
+|/
+* <base_commit>     ...
+* <base_commit>     ...
+```
+
+- 如果图是线性 → `--ff-only`
+- 如果 source 在 squash 之后的旁支 → `cherry-pick source_commit`
+- 如果图很乱 → `git rebase main` 在 source 上，再 `--ff-only`（但 rebase 会改 source commit hash）
+
+### 规则
+
+> **优先 cherry-pick 而非 rebase**——rebase 改写 commit hash 会让 PR 评论与原 commit
+> 失联。Cherry-pick 创建**新 commit**保留独立身份，历史可追溯。
+
+### 自我检查清单
+
+- [ ] 看 `git log --oneline --graph --all -10` 确认分支关系
+- [ ] 主 worktree 操作 main（不在 worktree 子目录）
+- [ ] 优先 cherry-pick 而非 rebase
+- [ ] 合并后 `git push origin main` 推送到远程
+
+---
+
 ## 附录 A：经验索引（按发现轮次）
 
 | 轮次 | 经验 | 归档位置 |
@@ -740,6 +969,10 @@ def update_with_special_handling(self, updates: dict) -> dict:
 | 第 13 轮 | AnimatePresence 退出动画的"空白陷阱" → 单 keyed motion.div | 本文件 §13 |
 | 第 13 轮 | WeStock Node CSPRNG 三路径绕开（PowerShell + 全局 wrapper） | 本文件 §14 |
 | 第 12 轮 | ConfigStore 白名单：避免误改 security / api_key | 本文件 §15 |
+| 第 15 轮 | Issue tracker 唯一合法位置是 `ISSUES.md`，禁建 `CODE_REVIEW.md` | 本文件 §16 |
+| 第 16 轮 | 用户对第三方 API 成本敏感 → conftest.py 防御性拦截 DeepSeek | 本文件 §17 |
+| 第 17-18 轮 | UI 重构五阶段流程（DESIGN.md → token → shared → pages → 验证） | 本文件 §18 |
+| 第 18 轮 | Squash-merge 后的 cherry-pick / rebase / ff-only 选择决策树 | 本文件 §19 |
 
 ---
 
@@ -749,6 +982,9 @@ def update_with_special_handling(self, updates: dict) -> dict:
 - **ISSUES.md** — 当前活跃 issue tracker（修完即删）
 - **docs/dev/issues_2026-06-08.md** — 第 4-11 轮 70+ 条审查+修复历史
 - **docs/dev/issues_2026-06-08_r12.md** — 第 12 轮 11 条 + 修复归档
+- **docs/dev/issues_2026-06-11_r13.md** — 第 13 轮 React 迁移审查 27 条
+- **docs/dev/issues_2026-06-11_r14.md** — 第 14 轮前端审查 6 条
+- **ISSUES.md** "第 15 轮前端审查" + "第 16 轮 UI/UX" — 37 条 + 修复（合并到 PR #7）
 - **docs/dev/pre-commit.md** — pre-commit 钩子使用指南
 - **docs/architecture.md** — 架构文档（与本文件互补）
 - **docs/api/*.md** — 端点 API 文档（7 份）
