@@ -14,7 +14,7 @@
 
 ## 新闻
 
-> 基准路径: `/api/v1/news` | 返回上级: [API 概述](/docs/api.md)
+> 基准路径: `/api/v1/news` | 返回上级: [API 概述](/docs/v1/api.md)
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
@@ -90,7 +90,7 @@ GET /api/v1/news/1 HTTP/1.1
 
 ## AI 报告
 
-> 基准路径: `/api/v1/reports` | 返回上级: [API 概述](/docs/api.md)
+> 基准路径: `/api/v1/reports` | 返回上级: [API 概述](/docs/v1/api.md)
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
@@ -179,7 +179,7 @@ Content-Type: application/json
 
 ## 任务管理
 
-> 基准路径: `/api/v1/tasks` | 返回上级: [API 概述](/docs/api.md)
+> 基准路径: `/api/v1/tasks` | 返回上级: [API 概述](/docs/v1/api.md)
 
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|

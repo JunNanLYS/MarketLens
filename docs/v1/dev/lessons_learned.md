@@ -3,7 +3,7 @@
 > **新会话接手 5 分钟扫读版**。所有"踩过的坑"与"实操最佳实践"集中归档，
 > 避免分散在 CLAUDE.md / ISSUES.md / 归档文件各处反复探索。
 >
-> **维护规则**：发现新经验 → 追加到本文件相应章节。修复归档（`docs/dev/issues_*.md`）
+> **维护规则**：发现新经验 → 追加到本文件相应章节。修复归档（`issues_*.md`）
 > 保留完整决策历史,但速查表只保留"可复用的最佳实践"。
 
 ---
@@ -14,7 +14,7 @@
 |---|------|-----------|--------|
 | 1 | 写锁 | **所有 SQLite 写路径必须 `with _WRITE_LOCK:`** | 🔴 P0 |
 | 2 | UI 分层 | **`ui/` 严禁 import `backend/storage/`** | 🔴 P0 |
-| 3 | 文档同步 | **改后端必动 `docs/api/*.md`** | 🟡 P1 |
+| 3 | 文档同步 | **改后端必动 `../api/*.md`** | 🟡 P1 |
 | 4 | evidence 审计 | **AI 输出必须含 `data_used` 字段** | 🟡 P1 |
 | 5 | Provider 关闭 | **`_HttpClientMixin` 已是叶子节点，base 不要再 `super().close()`** | 🔴 CRITICAL |
 | 6 | 锁测试 | **`from X import Y` patch 必须双向**（源头 + 本地副本） | 🟡 P1 |
@@ -144,16 +144,16 @@ frontend/            → React + Vite UI; NEVER touches DB directly
 
 ### Task Completion Checklist 第 3 步（CLAUDE.md）
 
-> 端点签名、状态码、字段名 3 处任一变动 → 同步更新 `docs/api/*.md`
+> 端点签名、状态码、字段名 3 处任一变动 → 同步更新 `../api/*.md`
 
 ### 易漂移点
 
 | 改动 | 必须同步 |
 |------|---------|
-| 新增/修改端点路径 | `docs/api/{domain}.md` 端点列表 |
-| 修改 Pydantic 字段名 | `docs/api/{domain}.md` 字段说明 |
-| 修改 HTTP 状态码 | `docs/api/{domain}.md` 状态码表 |
-| 修改表结构 | `docs/architecture.md` 核心表清单 + `backend/storage/schema.py` |
+| 新增/修改端点路径 | `../api/{domain}.md` 端点列表 |
+| 修改 Pydantic 字段名 | `../api/{domain}.md` 字段说明 |
+| 修改 HTTP 状态码 | `../api/{domain}.md` 状态码表 |
+| 修改表结构 | `../architecture.md` 核心表清单 + `backend/storage/schema.py` |
 
 ### 历史教训
 
@@ -162,8 +162,8 @@ frontend/            → React + Vite UI; NEVER touches DB directly
 
 ### 自我检查清单
 
-- [ ] 改完 `backend/api/*.py` 后，相应 `docs/api/*.md` 是否同步？
-- [ ] 改完 `backend/storage/schema.py` 后，`docs/architecture.md` 是否同步？
+- [ ] 改完 `backend/api/*.py` 后，相应 `../api/*.md` 是否同步？
+- [ ] 改完 `backend/storage/schema.py` 后，`../architecture.md` 是否同步？
 
 ---
 
@@ -760,14 +760,14 @@ CLAUDE.md 项目状态段明文：
 ### 规则
 
 > **新发现的 issue 只能写到 `ISSUES.md` 的"已知问题登记"** 段，修复后从该段删除
-> 归档到 `docs/dev/issues_<修复日期>.md`。
+> 归档到 `issues_<修复日期>.md`。
 >
 > **绝不再创建 `CODE_REVIEW.md`**。如果看到旧 `CODE_REVIEW.md` 残留 → `git rm` 删除。
 
 ### 自我检查清单
 
 - [ ] 新问题写进 `ISSUES.md` 而非 `CODE_REVIEW.md`
-- [ ] 修复完 issue 从 `ISSUES.md` 段删除，归档到 `docs/dev/issues_*.md`
+- [ ] 修复完 issue 从 `ISSUES.md` 段删除，归档到 `issues_*.md`
 - [ ] 看到 `CODE_REVIEW.md` 残留 → 立即 `git rm`（不写修复记录）
 
 ---
@@ -1309,9 +1309,9 @@ mock provider 直接返回 `{"etf_type": ..., "date": ...}`，键名与 normaliz
 | 第 4 轮 | portfolio 5 个写端点漏锁 → 必须 `_WRITE_LOCK` 包裹所有写路径 | 本文件 §1 |
 | 第 4-7 轮 | doc/code drift 30+ 处 → 改后端必动 docs/api | 本文件 §3 |
 | 第 6/8 轮 | `report_service` / `news_service` / `_run_cleanup` 漏锁补登 | 本文件 §1 |
-| 第 8 轮 | 资金主线 8 个 CRITICAL 修复 | `docs/dev/issues_2026-06-08.md` |
-| 第 10 轮 | 7 doc 校准 + 30+ 处状态码修正 | `docs/dev/issues_2026-06-08.md` |
-| 第 11 轮 | `ISSUES.md` 迁移（`CODE_REVIEW.md` → `ISSUES.md`）+ git mv 保 history | `docs/dev/issues_2026-06-08.md` |
+| 第 8 轮 | 资金主线 8 个 CRITICAL 修复 | `issues_2026-06-08.md` |
+| 第 10 轮 | 7 doc 校准 + 30+ 处状态码修正 | `issues_2026-06-08.md` |
+| 第 11 轮 | `ISSUES.md` 迁移（`CODE_REVIEW.md` → `ISSUES.md`）+ git mv 保 history | `issues_2026-06-08.md` |
 | 第 12 轮 | `Provider.close()` AttributeError → 改 pass no-op | 本文件 §5 |
 | 第 12 轮 | `build_multi` 累加无截断 → `setdefault` + 提前 `continue` | 本文件 §10 |
 | 第 12 轮 | `news LIMIT 5000` 静默截断 → 多取 1 行探测 | 本文件 §10 |
@@ -1340,13 +1340,13 @@ mock provider 直接返回 `{"etf_type": ..., "date": ...}`，键名与 normaliz
 
 - **CLAUDE.md** — 项目硬约束、架构、命令、Task Completion Checklist
 - **ISSUES.md** — 当前活跃 issue tracker（修完即删）
-- **docs/dev/issues_2026-06-08.md** — 第 4-11 轮 70+ 条审查+修复历史
-- **docs/dev/issues_2026-06-08_r12.md** — 第 12 轮 11 条 + 修复归档
-- **docs/dev/issues_2026-06-11_r13.md** — 第 13 轮 React 迁移审查 27 条
-- **docs/dev/issues_2026-06-11_r14.md** — 第 14 轮前端审查 6 条
+- **issues_2026-06-08.md** — 第 4-11 轮 70+ 条审查+修复历史
+- **issues_2026-06-08_r12.md** — 第 12 轮 11 条 + 修复归档
+- **issues_2026-06-11_r13.md** — 第 13 轮 React 迁移审查 27 条
+- **issues_2026-06-11_r14.md** — 第 14 轮前端审查 6 条
 - **ISSUES.md** "第 15 轮前端审查" + "第 16 轮 UI/UX" — 37 条 + 修复（合并到 PR #7）
-- **docs/dev/pre-commit.md** — pre-commit 钩子使用指南
-- **docs/architecture.md** — 架构文档（与本文件互补）
-- **docs/api/*.md** — 端点 API 文档（7 份）
+- **pre-commit.md** — pre-commit 钩子使用指南
+- **../architecture.md** — 架构文档（与本文件互补）
+- **../api/*.md** — 端点 API 文档（7 份）
 
 ---

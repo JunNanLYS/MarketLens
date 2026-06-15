@@ -81,7 +81,7 @@ uv tool run pre-commit run --all-files --hook-stage pre-push
 历史遗留格式问题，钩子自动修复了以下内容：
 
 - **29 个文件** `end-of-file-fixer`：补齐缺失的 EOF 换行（如 `backend/scheduler/jobs.py`、
-  `ui/api_client.py`、`docs/features.md`、`config.yaml` 等）。
+  `ui/api_client.py`、`features.md`、`config.yaml` 等）。
 - **72 个文件** `ruff-format`：主要是字典/列表的多行折行（与 `pyproject.toml` 锁定的
   ruff>=0.15.16 行为差异），同时 `backend/api/data.py` 等文件移除了文件头 BOM。
 - 合计 **78 个文件，+3051/-1112 行**改动；二次运行所有钩子全部 Passed。

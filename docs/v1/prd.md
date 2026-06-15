@@ -261,7 +261,7 @@ MarketLens MVP
 | AI 报告生成（20 只） | < 60 秒 | 规则引擎 + 证据包并行组装 |
 | 数据库大小（1 年数据） | < 500MB | 20 只标的，日级别数据 |
 
-> 写入路径并发模型（`_WRITE_LOCK` + `PRAGMA busy_timeout`）详见 `docs/architecture.md` §4.2。
+> 写入路径并发模型（`_WRITE_LOCK` + `PRAGMA busy_timeout`）详见 `architecture.md` §4.2。
 
 ### 5.2 可靠性
 

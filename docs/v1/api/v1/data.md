@@ -1,6 +1,6 @@
 # 市场数据 API
 
-> 基准路径: `/api/v1/data` | 返回上级: [API 概述](/docs/api.md)
+> 基准路径: `/api/v1/data` | 返回上级: [API 概述](/docs/v1/api.md)
 
 ---
 

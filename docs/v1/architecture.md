@@ -39,7 +39,7 @@ MarketLens 是一个**本地优先、证据驱动**的 AI 金融研究助理系�
 
 > **重要**：Node.js ≥ v18 仅在 `westock` 数据源启用时为必需；其他纯 HTTP 数据源可独立运行。
 >
-> WeStock 调用链（2026-06-13 修复 CSPRNG 偶发崩溃后）：FastAPI → `westock.py` 走 `powershell.exe -NoProfile -Command "& '<wrapper>' ..."` 调全局 npm 装的 `westock-data-clawhub` 包装脚本。**首次部署需手动 `npm i -g westock-data-clawhub@1.0.4`**（Windows 默认 `%AppData%\Roaming\npm\`）。绕开 npx 冷启动 + MSYS 子进程栈干扰（详见 `docs/dev/lessons_learned.md`）。
+> WeStock 调用链（2026-06-13 修复 CSPRNG 偶发崩溃后）：FastAPI → `westock.py` 走 `powershell.exe -NoProfile -Command "& '<wrapper>' ..."` 调全局 npm 装的 `westock-data-clawhub` 包装脚本。**首次部署需手动 `npm i -g westock-data-clawhub@1.0.4`**（Windows 默认 `%AppData%\Roaming\npm\`）。绕开 npx 冷启动 + MSYS 子进程栈干扰（详见 `dev/lessons_learned.md`）。
 
 ---
 
@@ -946,7 +946,7 @@ uv run pytest tests/services/test_collection_service.py::test_collect_quotes_con
 
 ### 第 5 轮（2026-06-06）— 25 条新发现 + 第 5 轮 P0 全部修复
 
-4-Agent 并行新发现 25 条候选（4 CRITICAL / 11 MAJOR / 7 MINOR / 3 NIT），覆盖 4 张新表（chip / margintrade / blocktrade / lhb）+ 7 个新端点 + 19 个新 westock 方法的鉴权/写日志/日期校验盲点。同日完成第 5 轮 P0 全部修复（`create_transaction` 加写锁、14 个查询端点 ISO 校验、7 个新 POST 端点加 `verify_api_key`、13 个 `collect_*` 写 `run_logs`、evidence_builder 5 个新维度评分），全部 457 测试通过。`docs/api/` 同步新增 5 个端点文档（chip / margintrade / blocktrade / lhb / calendar）。
+4-Agent 并行新发现 25 条候选（4 CRITICAL / 11 MAJOR / 7 MINOR / 3 NIT），覆盖 4 张新表（chip / margintrade / blocktrade / lhb）+ 7 个新端点 + 19 个新 westock 方法的鉴权/写日志/日期校验盲点。同日完成第 5 轮 P0 全部修复（`create_transaction` 加写锁、14 个查询端点 ISO 校验、7 个新 POST 端点加 `verify_api_key`、13 个 `collect_*` 写 `run_logs`、evidence_builder 5 个新维度评分），全部 457 测试通过。`api/` 同步新增 5 个端点文档（chip / margintrade / blocktrade / lhb / calendar）。
 
 ### 第 6 轮（2026-06-07）— 5-Agent 补登 1 CRITICAL + 3 条 NIT 修复
 
@@ -954,13 +954,13 @@ uv run pytest tests/services/test_collection_service.py::test_collect_quotes_con
 
 ### 第 7-8 轮（2026-06-07）— 8 个资金/写锁 CRITICAL 全部修复
 
-**第 7 轮**：5-Agent 并行清理 MINOR/NIT 5 条（news + portfolio + asset 域）；`tencent_news` disable + westock env 最小化（5 个测试夹具不再网络命中）；`_HttpClientMixin` 抽出 5 个 Provider 重复 13 行代码；`settings` 直读 config 改端点；docs/api 字段名 + `task_status` `running` 过滤修复。
+**第 7 轮**：5-Agent 并行清理 MINOR/NIT 5 条（news + portfolio + asset 域）；`tencent_news` disable + westock env 最小化（5 个测试夹具不再网络命中）；`_HttpClientMixin` 抽出 5 个 Provider 重复 13 行代码；`settings` 直读 config 改端点；`api/` 字段名 + `task_status` `running` 过滤修复。
 
 **第 8 轮**（里程碑）：Sub Agent 1 逐条 Read `portfolio_service.py` / `news_service.py` / `scheduler/jobs.py` / `report_service.py` 实际代码，逐条复验第 4 轮 7 CRITICAL + 第 6 轮补登 1 CRITICAL = **8 / 8 全部已修**（5 资金主线 + 2 写锁（news + cleanup） + 1 写锁（report_service 漏审））。`ISSUES.md` 增"第 8 轮复验记录"章节作为决策追踪历史，汇总表保留 7/12/19/10/48 数字作为"登记总数"快照不变更。修复文件 0 个（仅文档归档）；测试 457 通过。
 
 ### 第 9 轮（2026-06-07）— 文档/UI 全面校准 + realized-pnl 同构化
 
-5-Agent 并行：Agent 1 归档第 8 轮复验（仅 `ISSUES.md` 文档 42+ 行新增/55 行删除）；Agent 2 修 `realized-pnl` page wrapper（`get_realized_pnl` 返回类型 `list[dict]` → `dict` 含 `items/total/page/page_size`，与 `/transactions` 同构，4 文件改动 +62 行）；Agent 3 校准 `docs/api/` 7 个文档（接口数 41 → 74，30+ 处状态码/鉴权标错修正，`/config` 章节补齐）；Agent 5 给 `ui/api_client.py` 补 30 个 client 方法（353 → 713 行，72 端点全覆盖）。修复文件 12 个 + 测试 457 通过。
+5-Agent 并行：Agent 1 归档第 8 轮复验（仅 `ISSUES.md` 文档 42+ 行新增/55 行删除）；Agent 2 修 `realized-pnl` page wrapper（`get_realized_pnl` 返回类型 `list[dict]` → `dict` 含 `items/total/page/page_size`，与 `/transactions` 同构，4 文件改动 +62 行）；Agent 3 校准 `api/` 7 个文档（接口数 41 → 74，30+ 处状态码/鉴权标错修正，`/config` 章节补齐）；Agent 5 给 `ui/api_client.py` 补 30 个 client 方法（353 → 713 行，72 端点全覆盖）。修复文件 12 个 + 测试 457 通过。
 
 ### 累计成果
 

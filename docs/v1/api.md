@@ -9,15 +9,15 @@
 
 | 资源组 | 文档 | 接口数 |
 |---|---|---|
-| 🏷️ 标的管理 | [assets](api/assets.md) | 6 |
-| 📊 市场数据 | [data](api/data.md) | 41 |
-| 🩺 数据源 | [data-sources](api/data-sources.md) | 2 |
-| 📰 新闻 | [news / reports / tasks](api/news-reports-tasks.md#新闻) | 2 |
-| 🧠 AI 报告 | [news / reports / tasks](api/news-reports-tasks.md#ai-报告) | 4 |
-| ⏰ 任务管理 | [news / reports / tasks](api/news-reports-tasks.md#任务管理) | 3 |
-| 🔑 NeoData Token | [neodata](api/neodata.md) | 2 |
-| 💼 投资组合 | [portfolio](api/portfolio.md) | 12 |
-| ⚙️ 可编辑配置 | [settings](api/settings.md) | 3 |
+| 🏷️ 标的管理 | [assets](api/v1/assets.md) | 6 |
+| 📊 市场数据 | [data](api/v1/data.md) | 41 |
+| 🩺 数据源 | [data-sources](api/v1/data-sources.md) | 2 |
+| 📰 新闻 | [news / reports / tasks](api/v1/news-reports-tasks.md#新闻) | 2 |
+| 🧠 AI 报告 | [news / reports / tasks](api/v1/news-reports-tasks.md#ai-报告) | 4 |
+| ⏰ 任务管理 | [news / reports / tasks](api/v1/news-reports-tasks.md#任务管理) | 3 |
+| 🔑 NeoData Token | [neodata](api/v1/neodata.md) | 2 |
+| 💼 投资组合 | [portfolio](api/v1/portfolio.md) | 12 |
+| ⚙️ 可编辑配置 | [settings](api/v1/settings.md) | 3 |
 | 🩺 系统 | `GET /api/v1/health` · `GET /` | 2 |
 
 > 业务接口合计 75 个 + 系统 2 个 = 77 个路由。
@@ -126,7 +126,7 @@
 
 | 资源组 | 端点 |
 |---|---|
-| 标的管理 | 当前实现不要求 API Key（本地单用户工具；见 [assets.md](api/assets.md)） |
+| 标的管理 | 当前实现不要求 API Key（本地单用户工具；见 [assets.md](api/v1/assets.md)） |
 | 投资组合 | `POST /accounts`、`PATCH /accounts/{account_id}`、`DELETE /accounts/{account_id}`、`POST /transactions`、`PATCH /transactions/{transaction_id}`、`DELETE /transactions/{transaction_id}` |
 | AI 报告 | `POST /reports/generate` |
 | 任务管理 | `POST /tasks/trigger/{name}` |
@@ -197,7 +197,7 @@ curl -X POST http://localhost:8000/api/v1/accounts \
 }
 ```
 
-> 部分接口（如 `/positions` 持仓总览、`/positions/realized-pnl` 已实现盈亏）直接返回数据，不使用页码分页；`/positions/realized-pnl` 实际返回 `{items, total, page, page_size}` 分页结构，详见 [portfolio.md](api/portfolio.md)。
+> 部分接口（如 `/positions` 持仓总览、`/positions/realized-pnl` 已实现盈亏）直接返回数据，不使用页码分页；`/positions/realized-pnl` 实际返回 `{items, total, page, page_size}` 分页结构，详见 [portfolio.md](api/v1/portfolio.md)。
 
 ### 错误响应
 

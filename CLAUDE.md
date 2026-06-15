@@ -170,7 +170,7 @@ AI output MUST include `data_used` listing every referenced data source and coll
 
 SQLite only (no other DB). WAL mode + foreign keys ON. Both sync (`sqlite3`) and async (`aiosqlite`) connection helpers in `storage/database.py` via context managers (`get_db` / `aget_db`). Tests use `init_db_sync()` for fixture setup.
 
-All DDL lives in `storage/schema.py` — never run `CREATE TABLE` or `ALTER TABLE` in business code. New tables must be added to both `TABLE_DDLS` and the core table list in `docs/architecture.md`.
+All DDL lives in `storage/schema.py` — never run `CREATE TABLE` or `ALTER TABLE` in business code. New tables must be added to both `TABLE_DDLS` and the core table list in `docs/v1/architecture.md`.
 
 ### Scheduler
 
@@ -282,7 +282,7 @@ See `ISSUES.md` for the comprehensive audit covering correctness, performance, a
 
 When APIs are added, modified, or removed:
 - Update the corresponding docs in `docs/api/`
-- Check if `docs/prd.md`, `docs/features.md`, `docs/architecture.md` need cascading updates
+- Check if `docs/v1/prd.md`, `docs/v1/features.md`, `docs/v1/architecture.md` need cascading updates
 
 ### 2. Git Commit
 
@@ -297,19 +297,24 @@ git commit -m "fix: resolve ..."
 
 ## Project state
 
-> 本章节为新会话接手时的"项目当前快照"，避免重复探索已知的项目结构、规模、修复历史。事实型数据已对照代码与 `ISSUES.md` 校准（2026-06-08）。
+> **版本状态**：v2 设计阶段（`docs/v2/`），v1 代码 + `docs/v1/` 已归档保留。
+> v1 完整可运行（已发布 v1.x）；v2 设计文档已定型，代码未启动。
 
-### 当前规模
+### v2 架构（6 层 + Electron 壳层）
 
-- **29 张表**（SQLite，DDL 全在 `backend/storage/schema.py::TABLE_DDLS`）
-- **74 端点**（68 在 `backend/api/*.py` + 2 在 `backend/main.py` 健康/根 + 4 `data_sources` 子路径，全部 `/api/v1/` 前缀）
-- **8 个 Provider**（`backend/collectors/*.py`：NeoData / RSS / SearchEngineNews / Sina / SinaNews / TencentNews / TencentNewsHTTP / WeStock）
+- **UI / Interaction** — React 18 + Vite + AntD 5 + **Electron 轻量壳层**（Phase 1）
+- **Agent Orchestration** — Orchestrator + 4 Agent（Planner / Research / Portfolio / Monitoring）
+- **Tool / Capability** — Market / News / Portfolio / Backtest / Report / Alert tools
+- **Evidence & Memory** — EvidenceBuilder + Vector Memory + Strategy Memory + Agent Memory（3 层）
+- **Data Ingestion** — **v1 完整保留**：8 Provider + Scheduler + SQLite 29 表
+
+### v1 基座（v1 完整可用，作为 v2 事实来源）
+
+- **29 张表**（`backend/storage/schema.py::TABLE_DDLS`）
+- **74 端点**（`/api/v1/` 前缀，**运行期 URL 不变**）
+- **8 个 Provider**（`backend/collectors/*.py`）
 - **458 测试**（`tests/`，`pytest asyncio_mode = "auto"`）
-- **React + Vite 前端**（`frontend/`，7 页面全部迁移完成：Settings / NewsList / TaskStatus / AiReports / TrackedAssets / Portfolio / AssetDetail）
-
-### 资金主线 CRITICAL 状态
-
-**8 / 8 已修**（资金 5 + 写锁 3），逐条复验见 `ISSUES.md` 第 8 轮复验记录（2026-06-07）。项目当前已无资金/写锁类 P0 阻断性 bug。
+- **资金主线 CRITICAL** — 8 / 8 已修（资金 5 + 写锁 3），无 P0 阻断
 
 ### 基础设施
 
@@ -324,7 +329,19 @@ git commit -m "fix: resolve ..."
 
 ### 配套文档（按需扫读）
 
-- **[`docs/dev/lessons_learned.md`](docs/dev/lessons_learned.md)** — 11 项实操经验(写锁/分层/文档同步/evidence/Provider MRO/锁测试/loguru/sync→async/多 Agent/截断探测/依赖声明)。**新会话第 1 件必读。**
-- **`ISSUES.md`** — 当前活跃问题登记(修完即删)。
-- **`docs/dev/issues_*.md`** — 历史归档(只读,记录 4-12 轮 70+ 条审查+修复决策)。第 11 轮 `git mv` `CODE_REVIEW.md` → `ISSUES.md` 保留 history。
+#### v2 设计文档（新会话接手必读）
+
+- **[`docs/v2/architecture-v2.md`](docs/v2/architecture-v2.md)** — v2 架构规格（6 层 + Electron 壳层 + 部署形态）
+- **[`docs/v2/agents-v2.md`](docs/v2/agents-v2.md)** — 4 Agent + Orchestrator + Event Bus + Task Graph DSL 详细规格
+- **[`docs/architecture-v2.drawio`](docs/architecture-v2.drawio)** — v2 架构图（draw.io 编辑器可打开）
+
+#### v1 文档（已归档，只读）
+
+- **[`docs/v1/dev/lessons_learned.md`](docs/v1/dev/lessons_learned.md)** — 23 项实操经验（写锁/分层/文档同步/evidence/Provider MRO/锁测试/loguru/sync→async/多 Agent/截断探测/依赖声明等）。**新会话第 1 件必读。**
+- **[`docs/v1/architecture.md`](docs/v1/architecture.md)** — v1 架构文档（详细异步化/懒加载/数据流/Schema）
+- **[`docs/v1/api.md`](docs/v1/api.md)** — v1 API 概述（77 端点）
+- **`ISSUES.md`** — 当前活跃问题登记（修完即删）
+- **`docs/v1/dev/issues_*.md`** — v1 历史归档（5 份,记录 4-15 轮 70+ 条审查+修复决策）
+
+> 注意：路径中 `docs/v1/` 指产品版本（已归档），运行期 API URL 仍是 `/api/v1/`（不变）。
 

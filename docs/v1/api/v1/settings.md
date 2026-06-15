@@ -1,6 +1,6 @@
 # 可编辑配置 API
 
-> 基准路径: `/api/v1/settings` | 接口数: 3 | 返回上级: [API 概述](/docs/api.md)
+> 基准路径: `/api/v1/settings` | 接口数: 3 | 返回上级: [API 概述](/docs/v1/api.md)
 
 ---
 
