@@ -556,7 +556,7 @@ class XxxProvider(BaseProvider):
   ```
 
 - 默认值 `marketlens-local` 仅供本地工具使用，启动时若未覆盖会记录 warning
-- 写端点覆盖范围：`POST/PATCH/DELETE /assets/*` / `/accounts/*` / `/transactions/*` / `/reports/generate` / `/neodata/token` / `/tasks/trigger/*`
+- 写端点覆盖范围：`/accounts/*` / `/transactions/*` / `/reports/generate` / `/neodata/token` / `/tasks/trigger/*` / `settings` 与市场数据刷新端点；当前 `/assets/*` 按本地单用户工具契约不校验 API Key
 
 ### 9.3 Security Headers
 
@@ -588,10 +588,10 @@ HTTP 状态码：200 / 201 / 202 / 204 / 400 / 401 / 404 / 409 / 422 / 500 / 502
 |---|---|---|---|
 | `GET` | `/api/v1/health` | 否 | 健康检查（db / scheduler 状态） |
 | `GET` | `/api/v1/assets` | 否 | 列表（`?enabled=&market=&asset_type=&tag=&page=&page_size=`） |
-| `POST` | `/api/v1/assets` | 是 | 添加追踪标的 |
+| `POST` | `/api/v1/assets` | 否 | 添加追踪标的 |
 | `GET` | `/api/v1/assets/{id}` | 否 | 标的详情 |
-| `PATCH` | `/api/v1/assets/{id}` | 是 | 部分更新（启用/标签/备注） |
-| `DELETE` | `/api/v1/assets/{id}` | 是 | 删除追踪标的（`?soft=true`） |
+| `PATCH` | `/api/v1/assets/{id}` | 否 | 部分更新（启用/标签/备注） |
+| `DELETE` | `/api/v1/assets/{id}` | 否 | 删除追踪标的（`?soft=true`） |
 | `GET` | `/api/v1/assets/search` | 否 | 搜索标的（`?keyword=&market=`） |
 | `GET` | `/api/v1/data/quotes/{symbol}` | 否 | 最新行情 |
 | `POST` | `/api/v1/data/quotes/{symbol}/refresh` | 否 | 实时刷新单个标的行情 |

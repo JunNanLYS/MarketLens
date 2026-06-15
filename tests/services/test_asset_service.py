@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from backend.collectors.base import BaseProvider
+from backend.services import collection_service
 from backend.services.asset_service import AssetExistsError, AssetService
 from backend.storage.database import aget_db, set_db_path
 from backend.storage.schema import init_db_sync as init_db
@@ -55,6 +56,13 @@ def fake_providers() -> dict[str, list[BaseProvider]]:
 @pytest.fixture
 def service(fake_providers: dict[str, list[BaseProvider]]) -> AssetService:
     return AssetService(providers=fake_providers)
+
+
+def test_asset_service_uses_collection_write_lock() -> None:
+    """AssetService 写路径应复用 collection_service 暴露的同一把锁。"""
+    import backend.services.asset_service as asset_service_module
+
+    assert asset_service_module._WRITE_LOCK is collection_service._WRITE_LOCK
 
 
 async def test_add_asset_success(service: AssetService) -> None:

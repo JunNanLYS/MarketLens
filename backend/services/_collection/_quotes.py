@@ -5,9 +5,9 @@ import threading
 
 from loguru import logger
 
-from backend.services._collection._core import _WRITE_LOCK
+from backend.services._write_lock import _WRITE_LOCK
 from backend.services._collection._helpers import _save_raw_data
-from backend.storage.database import get_db, get_connection_sync
+from backend.storage.database import get_connection_sync
 
 
 class _CollectionQuotesMixin:
@@ -108,10 +108,9 @@ class _CollectionQuotesMixin:
         finished_at = self._now_iso()
         status = "success" if failed == 0 else "failure"
         error_message = "; ".join(errors) if errors else None
-        with get_db() as conn:
-            self._write_run_log(
-                conn, "quote", status, started_at, finished_at, error_message, total
-            )
+        self._write_run_log_locked(
+            "quote", status, started_at, finished_at, error_message, total
+        )
 
         return {"success": success, "failed": failed, "total": total}
 

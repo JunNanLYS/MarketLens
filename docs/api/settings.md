@@ -71,9 +71,9 @@ GET /api/v1/settings HTTP/1.1
     ],
     "scheduler": {
       "tasks": {
-        "quote":        { "interval": "15m" },
+        "quote":        { "interval": 15 },
         "daily_close":  { "cron": "0 16 * * 1-5" },
-        "news":         { "interval": "60m" },
+        "news":         { "interval": 60 },
         "ai_report":    { "cron": "0 20 * * *" },
         "cleanup":      { "cron": "30 3 * * *" }
       }
@@ -96,7 +96,7 @@ GET /api/v1/settings HTTP/1.1
 
 **`scheduler.tasks.<name>.{interval,cron}` 字段**：
 
-- `interval`：相对时间字符串（`"15m"` / `"60m"`），由 APScheduler `IntervalTrigger` 解析
+- `interval`：整数分钟（如 `15` / `60`），由 APScheduler `IntervalTrigger(minutes=...)` 解析
 - `cron`：5 字段 cron 表达式，由 APScheduler `CronTrigger` 解析
 - 二者互斥 —— `interval` 任务改 `cron` 字段会被忽略（反之亦然）
 
@@ -115,7 +115,7 @@ X-API-Key: marketlens-local
   "updates": {
     "data_sources.structured.sina":     { "enabled": false, "timeout": 45 },
     "data_sources.news.bbc_world":      { "enabled": true, "timeout": 30 },
-    "scheduler.tasks.quote.interval":   "10m"
+    "scheduler.tasks.quote.interval":   10
   }
 }
 ```
@@ -125,7 +125,8 @@ X-API-Key: marketlens-local
 | key 形式 | 语义 | value 类型 |
 |---|---|---|
 | `data_sources.<group>.<name>` | 整条 source dict 替换（保留 `name` / `provider` / `optional`） | `dict {enabled, timeout}` |
-| `scheduler.tasks.<task>.<field>` | 标量值（`interval` 或 `cron`） | `string` |
+| `scheduler.tasks.<task>.interval` | 任务间隔 | `int`（分钟，1~1440） |
+| `scheduler.tasks.<task>.cron` | CRON 表达式 | `string` |
 
 **生效行为**：
 
@@ -184,7 +185,7 @@ X-API-Key: marketlens-local
 - **白名单**：`data_sources.*` 和 `scheduler.tasks.*` 之外的所有 key 都会被 400 拒绝（如 `security.api_key`、`cleanup.retention_days`）
 - **保留字段**：`name` / `provider` / `optional` 在 PATCH 时被服务端强制保留，不允许修改
 - **`timeout` 范围**：`1 ≤ timeout ≤ 600` 秒
-- **`interval` 格式**：`<N>s` / `<N>m` / `<N>h` / `<N>d`（APScheduler IntervalTrigger 规范）
+- **`interval` 范围**：`1 ≤ interval ≤ 1440` 分钟（整数）
 - **原子性**：写回采用 `tempfile + os.replace`，写盘中途崩溃不会留下半截 `config.yaml`
 - **并发**：单例内 `threading.Lock` 保护，并发 PATCH 串行执行
 

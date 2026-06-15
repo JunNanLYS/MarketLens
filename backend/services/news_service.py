@@ -51,6 +51,16 @@ class NewsService:
         else:
             self._sentiment = create_sentiment_analyzer()
 
+    @staticmethod
+    def _url_less_dedupe_key(
+        source: str | None,
+        title: str | None,
+        published_at: str | None,
+    ) -> tuple[str, str, str]:
+        """为空 URL 新闻构造稳定去重键。"""
+        normalized_title = " ".join((title or "").split())
+        return (source or "", normalized_title, published_at or "")
+
     async def close_providers(self) -> None:
         """关闭当前服务持有的新闻 Provider 和情感分析器资源。"""
         for provider in self._providers:
@@ -166,6 +176,18 @@ class NewsService:
                         "ORDER BY id DESC LIMIT 20000"
                     ).fetchall()
                     existing_urls = {r["url"] for r in url_rows}
+                    url_less_rows = conn.execute(
+                        """SELECT source, title, published_at FROM news_items
+                           WHERE url IS NULL OR url = ''"""
+                    ).fetchall()
+                    existing_url_less_keys: set[tuple[str, str, str]] = {
+                        self._url_less_dedupe_key(
+                            r["source"],
+                            r["title"],
+                            r["published_at"],
+                        )
+                        for r in url_less_rows
+                    }
 
                     for idx, item in enumerate(all_items):
                         url = (item.get("url", "") or "").strip() or None
@@ -220,6 +242,16 @@ class NewsService:
                             "sentiment_reason": reason_value,
                             "collected_at": item.get("collected_at", now),
                         }
+                        url_less_key: tuple[str, str, str] | None = None
+                        if not url:
+                            url_less_key = self._url_less_dedupe_key(
+                                news_data["source"],
+                                news_data["title"],
+                                news_data["published_at"],
+                            )
+                            if url_less_key in existing_url_less_keys:
+                                skipped += 1
+                                continue
 
                         try:
                             # INSERT OR IGNORE: 依赖 idx_news_items_url_unique 部分唯一索引
@@ -253,16 +285,17 @@ class NewsService:
                             collected += 1
                             if url:
                                 existing_urls.add(url)
+                            elif url_less_key is not None:
+                                existing_url_less_keys.add(url_less_key)
 
-                            if url:
-                                raw_json = json.dumps(
-                                    item, ensure_ascii=False, default=str
-                                )
-                                conn.execute(
-                                    """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
-                                       VALUES (?, ?, ?, ?, ?)""",
-                                    (None, news_data["source"], "news", raw_json, now),
-                                )
+                            raw_json = json.dumps(
+                                item, ensure_ascii=False, default=str
+                            )
+                            conn.execute(
+                                """INSERT INTO raw_data (symbol, source, data_type, raw_json, collected_at)
+                                   VALUES (?, ?, ?, ?, ?)""",
+                                (None, news_data["source"], "news", raw_json, now),
+                            )
                         except Exception:
                             logger.exception(
                                 "新闻入库失败: title={}", news_data["title"]

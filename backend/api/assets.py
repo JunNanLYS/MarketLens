@@ -30,14 +30,15 @@ async def create_asset(body: AssetCreateRequest) -> dict:
         return await _service.add_asset(data)
     except AssetExistsError as e:
         existing = e.existing_asset
-        status_label: str = "已启用" if existing.get("enabled") else "已停用"
+        # 注：AssetService.add_asset 对 enabled=0（软删除）的现存记录会重新启用并直接返回，
+        # 不抛 AssetExistsError；所以到这里 existing 必然是 enabled=1 的活跃记录。
         raise HTTPException(
             status_code=409,
             detail={
                 "error": "ASSET_EXISTS",
                 "message": (
                     f"标的 '{existing.get('symbol')}' 已在追踪列表中"
-                    f"（ID: {existing.get('id')}，{status_label}）"
+                    f"（ID: {existing.get('id')}）"
                 ),
                 "existing_asset": existing,
             },

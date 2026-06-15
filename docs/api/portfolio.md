@@ -248,13 +248,16 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
       "realized_pnl": 9985.0
     }
   ],
-  "total": 1,
-  "page": 1,
-  "page_size": 50
+  "page_info": {
+    "page": 1,
+    "page_size": 50,
+    "total": 1,
+    "total_pages": 1
+  }
 }
 ```
 
 **计算规则：**
 - 已实现盈亏 = 卖出金额(数量×价格) - 卖出数量 × 均价 - 手续费
 
-**分页支持：** 端点已接受 `page` / `page_size`（默认 50，上限 200），由 `PortfolioService.get_realized_pnl()` 在 DB 层按 `(account_id, symbol)` 强制聚合分页后返回，并同时返回 `total`（满足过滤条件的所有 `(account_id, symbol)` 组合总数）以便前端计算总页数。
+**分页支持：** 端点已接受 `page` / `page_size`（默认 50，上限 200），由 `PortfolioService.get_realized_pnl()` 在 DB 层按 `(account_id, symbol)` 强制聚合分页后返回，并同时返回 `page_info`（含 `total` / `total_pages` 供前端计算总页数）。响应 shape 与 `/news`、`/assets`、`/transactions` 保持一致。

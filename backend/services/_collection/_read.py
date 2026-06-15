@@ -231,13 +231,24 @@ class _CollectionReadMixin:
         symbol: str,
         limit: int = 60,
         source: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> list[dict]:
-        """查询 ETF 历史净值。"""
+        """查询 ETF 历史净值。
+
+        date 范围过滤下推到 SQL，避免"先 LIMIT N 再过滤"造成区间外的数据被静默丢弃。
+        """
         conditions: list[str] = ["code = ?"]
         params: list[Any] = [symbol]
         if source is not None:
             conditions.append("source = ?")
             params.append(source)
+        if from_date is not None:
+            conditions.append("date >= ?")
+            params.append(from_date)
+        if to_date is not None:
+            conditions.append("date <= ?")
+            params.append(to_date)
         where = " AND ".join(conditions)
         params.append(limit)
         sql = f"SELECT * FROM etf_nav_history WHERE {where} ORDER BY date DESC LIMIT ?"

@@ -235,7 +235,7 @@ POST /api/v1/tasks/trigger/quote HTTP/1.1
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `task_name` | string | — | 筛选任务 |
-| `status` | string | — | `success` / `failed` / `running`（与 `run_logs.status` 字段对齐） |
+| `status` | string | — | `success` / `failure`（与 `run_logs.status` 字段对齐） |
 | `page` | int | 1 | 页码（≥ 1） |
 | `page_size` | int | 20 | 每页条数（1-100） |
 
@@ -243,4 +243,4 @@ POST /api/v1/tasks/trigger/quote HTTP/1.1
 GET /api/v1/tasks/logs?task_name=quote&status=success HTTP/1.1
 ```
 
-> 注：`run_logs.status` 字段当前 schema 允许 `success` / `failed` / `running` 三种值（见 `docs/api.md` 枚举值表），但写入端在 `collection_service.py` / `news_service.py` / `report_service.py` 中只持久化 `success` / `failed` 终态；UI 的「running」选项在当前实现下不会命中任何记录（与 `docs/api.md` 中 `status` 枚举保持一致）。
+> 注：`run_logs.status` 字段当前写入端使用 `success` / `failure` 终态；当前实现不会持久化 `running` 中间态。

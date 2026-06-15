@@ -1,20 +1,18 @@
 import re
 import sqlite3
-import threading
 from typing import Any
 
 from loguru import logger
 
 from backend.collectors import BaseProvider, create_providers
 from backend.config import get_config
+from backend.services._write_lock import _WRITE_LOCK
 from backend.storage.database import get_db
 from backend.utils import build_fund_flow_summary, escape_like
 
 # 内置回退：config.yaml 的 markets section 缺失/为空时使用。
 # 与 CLAUDE.md 硬约束一致——所有 SQLite 写路径必须持写锁串行化
 _FALLBACK_MARKET_PREFIXES: tuple[str, ...] = ("sh", "sz", "hk", "us", "fut", "hf", "nf")
-
-_WRITE_LOCK: threading.Lock = threading.Lock()
 
 
 def _load_market_prefixes() -> tuple[str, ...]:

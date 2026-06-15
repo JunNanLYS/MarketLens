@@ -9,11 +9,11 @@
 | 方法 | 是否需要 API Key |
 |---|---|
 | `GET` | 否 |
-| `POST` | 是（需 `X-API-Key` 头） |
-| `PATCH` | 是（需 `X-API-Key` 头） |
-| `DELETE` | 是（需 `X-API-Key` 头） |
+| `POST` | 否（当前本地单用户实现不校验 `X-API-Key`） |
+| `PATCH` | 否（当前本地单用户实现不校验 `X-API-Key`） |
+| `DELETE` | 否（当前本地单用户实现不校验 `X-API-Key`） |
 
-API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`，本地默认 `marketlens-local`。缺失或错误时返回 `401 UNAUTHORIZED`。详见 `docs/api.md` 鉴权章节。
+当前 `assets` 写端点未挂 `verify_api_key` 依赖；如未来决定把标的管理也纳入写端点鉴权，需要同步修改 `backend/api/assets.py` 与本文档。
 
 ---
 
@@ -22,11 +22,11 @@ API Key 来源：环境变量 `MARKETLENS_API_KEY` > `config.security.api_key`�
 | 方法 | 路径 | 用途 | 状态码 |
 |---|---|---|---|
 | `GET` | `/assets` | 追踪列表（分页/筛选） | 200 |
-| `POST` | `/assets` | 添加标的 | 201, 400, 401, 409 |
+| `POST` | `/assets` | 添加标的 | 201, 400, 409 |
 | `GET` | `/assets/search` | 搜索外部标的 | 200, 400, 422 |
 | `GET` | `/assets/{id}` | 标的详情（聚合行情等） | 200, 404 |
-| `PATCH` | `/assets/{id}` | 部分更新（启用/标签/备注） | 200, 401, 404, 422 |
-| `DELETE` | `/assets/{id}` | 删除标的 | 204, 401, 404 |
+| `PATCH` | `/assets/{id}` | 部分更新（启用/标签/备注） | 200, 404, 422 |
+| `DELETE` | `/assets/{id}` | 删除标的 | 204, 404 |
 
 ---
 

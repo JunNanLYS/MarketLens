@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.api.neodata import verify_api_key
+from backend.api.dependencies import verify_api_key
 from backend.scheduler.jobs import SchedulerManager, VALID_TASK_NAMES
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
@@ -47,8 +47,8 @@ def trigger_task(
             status_code=404,
             detail={"error": "TASK_NOT_FOUND", "detail": f"任务 '{task_name}' 不存在"},
         )
-    success: bool = manager.trigger_task(task_name)
-    if not success:
+    result = manager.trigger_task(task_name)
+    if result is None:
         raise HTTPException(
             status_code=500,
             detail={
@@ -56,7 +56,12 @@ def trigger_task(
                 "detail": f"任务 '{task_name}' 触发失败",
             },
         )
-    return {"status": "triggered", "task_name": task_name}
+    return {
+        "status": "triggered",
+        "task_name": task_name,
+        "run_log_id": result.get("run_log_id"),
+        "started_at": result.get("started_at"),
+    }
 
 
 @router.get("/logs")

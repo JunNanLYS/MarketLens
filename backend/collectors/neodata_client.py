@@ -1,5 +1,6 @@
 """NeoData 金融数据 HTTP 客户端 —— Token 管理与查询请求。"""
 
+import asyncio
 import base64
 import json
 import os
@@ -207,7 +208,7 @@ class NeoDataClient:
             self._client = None
 
     async def query(self, query_text: str, data_type: str = "all") -> dict | None:
-        token, source = self._token_manager.get_token()
+        token, source = await asyncio.to_thread(self._token_manager.get_token)
         if token is None:
             logger.warning(
                 "NeoData \u65e0\u53ef\u7528\u51ed\u8bc1\uff0c\u8df3\u8fc7\u67e5\u8be2"
@@ -259,8 +260,8 @@ class NeoDataClient:
     async def _retry_on_auth_error(
         self, used_token: str, source: str, query_text: str, data_type: str
     ) -> dict | None:
-        self._token_manager.clear_cache()
-        new_token, new_source = self._token_manager.get_token()
+        await asyncio.to_thread(self._token_manager.clear_cache)
+        new_token, new_source = await asyncio.to_thread(self._token_manager.get_token)
         if new_token is None or new_token == used_token:
             logger.warning(
                 "NeoData \u9274\u6743\u5931\u8d25\u4e14\u65e0\u5907\u9009\u51ed\u8bc1"

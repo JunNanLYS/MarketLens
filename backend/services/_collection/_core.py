@@ -1,6 +1,5 @@
 """Core mixin for CollectionService: init, provider lifecycle, write lock."""
 
-import threading
 from datetime import datetime, timezone
 
 from loguru import logger
@@ -9,8 +8,6 @@ from backend.collectors import BaseProvider, create_providers
 from backend.collectors.westock import WeStockProvider
 from backend.config import get_config
 from backend.services.asset_service import AssetService
-
-_WRITE_LOCK: threading.Lock = threading.Lock()
 
 
 class _CollectionCoreMixin:

@@ -1,4 +1,4 @@
-import { Card, Empty, Input, Select, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
+import { Card, Empty, Input, Select, Skeleton, Space, Tag, Tooltip, Typography, message } from "antd";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -90,6 +90,22 @@ export default function NewsListPage() {
   );
 
   const total = news.data?.pages?.[0]?.page_info?.total ?? 0;
+
+  const navigateToAssetSymbol = async (symbol: string) => {
+    try {
+      const { data } = await apiClient.get<PageResult<{ id: number; symbol: string }>>("/assets", {
+        params: { search: symbol, page: 1, page_size: 10 },
+      });
+      const asset = (data.items ?? []).find((item) => item.symbol === symbol);
+      if (!asset) {
+        message.warning(`标的 ${symbol} 不在追踪列表中`);
+        return;
+      }
+      navigate(`/asset-detail?assetId=${asset.id}`);
+    } catch {
+      message.error("打开标的详情失败");
+    }
+  };
 
   // 触底加载：sentinel 进入滚动容器视口时 fetchNextPage
   // 把 useInfiniteQuery 暴露的方法 ref 化，规避"deps 含整个对象"的 lint 误报
@@ -228,13 +244,13 @@ export default function NewsListPage() {
                               key={s}
                               className="status-tag status-tag-info"
                               style={{ cursor: "pointer" }}
-                              onClick={() => navigate(`/asset-detail/${s}`)}
+                              onClick={() => void navigateToAssetSymbol(s)}
                               role="button"
                               tabIndex={0}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
-                                  navigate(`/asset-detail/${s}`);
+                                  void navigateToAssetSymbol(s);
                                 }
                               }}
                             >

@@ -131,6 +131,44 @@ async def test_collect_news_dedup_by_url() -> None:
     assert result2["skipped"] == 1
 
 
+async def test_collect_news_dedup_empty_url_and_saves_raw_data() -> None:
+    """空 URL 新闻应按稳定键去重，且成功入库后仍写 raw_data。"""
+    published_at = datetime.now(timezone.utc).isoformat()
+    news_items = [
+        _make_news_item(
+            title="无链接新闻",
+            url="",
+            source="fake_rss",
+            published_at=published_at,
+        ),
+        _make_news_item(
+            title="  无链接新闻  ",
+            url="",
+            source="fake_rss",
+            published_at=published_at,
+        ),
+    ]
+    provider = FakeRSSProvider(name="fake_rss", news_items=news_items)
+    service = NewsService(news_providers=[provider])
+
+    result1 = await service.collect_news()
+    result2 = await service.collect_news()
+
+    assert result1 == {"collected": 1, "skipped": 1}
+    assert result2 == {"collected": 0, "skipped": 2}
+    with get_db() as conn:
+        news_count = conn.execute(
+            "SELECT COUNT(*) FROM news_items WHERE title = ? AND url IS NULL",
+            ("无链接新闻",),
+        ).fetchone()[0]
+        raw_count = conn.execute(
+            "SELECT COUNT(*) FROM raw_data WHERE data_type = 'news' AND source = ?",
+            ("fake_rss",),
+        ).fetchone()[0]
+    assert news_count == 1
+    assert raw_count == 1
+
+
 async def test_collect_news_match_symbol_by_name() -> None:
     _insert_asset("hk00700", "腾讯控股")
     news_items = [

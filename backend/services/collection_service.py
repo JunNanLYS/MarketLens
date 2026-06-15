@@ -5,10 +5,7 @@
 """
 
 from backend.services._collection._collect_public import _CollectionPublicMixin
-from backend.services._collection._core import (
-    _WRITE_LOCK,
-    _CollectionCoreMixin,
-)
+from backend.services._collection._core import _CollectionCoreMixin
 from backend.services._collection._daily_close import _CollectionDailyCloseMixin
 from backend.services._collection._fetch_extended import _CollectionFetchExtendedMixin
 from backend.services._collection._fetch_legacy import _CollectionFetchLegacyMixin
@@ -21,6 +18,7 @@ from backend.services._collection._insert import _CollectionInsertMixin
 from backend.services._collection._quotes import _CollectionQuotesMixin
 from backend.services._collection._read import _CollectionReadMixin
 from backend.services._collection._template import _CollectionTemplateMixin
+from backend.services._write_lock import _WRITE_LOCK
 
 __all__ = [
     "CollectionService",
