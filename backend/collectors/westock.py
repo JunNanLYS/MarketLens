@@ -318,19 +318,62 @@ class WeStockProvider(BaseProvider):
         # 理论上不可达（循环内已 return），但保留防御
         return [], last_err
 
+    @staticmethod
+    def _guess_market_from_code(code: str) -> str:
+        """从 westock CLI 返回的 code 字段推断市场前缀（sh/sz/bj/hk/us）。
+
+        复刻 SinaProvider._guess_market_from_symbol 的语义，覆盖 westock 实际
+        出现的 5 个市场前缀；未知前缀返回 "us"（与 SinaProvider 兜底一致）。
+        """
+        if code.startswith(("sh", "sz", "bj", "hk", "us")):
+            return code[:2]
+        return "us"
+
+    @staticmethod
+    def _westock_type_to_asset_type(wtype: str) -> str:
+        """westock search 返回的 type 字段 → 前端约定的 asset_type。
+
+        westock 实际值（实测）:
+        - GP / GP-A-CYB / GP-A / GP-HK / GP-US → stock
+        - BK / BK-HY-2 → sector
+        - 其余/空 → stock（兜底，搜索结果主要是股票）
+        """
+        if not wtype:
+            return "stock"
+        if wtype.startswith("GP"):
+            return "stock"
+        if wtype.startswith("BK"):
+            return "sector"
+        return "stock"
+
     async def search(self, keyword: str) -> list[dict]:
+        """westock 模糊搜索（股票/板块/基金/指数等）。
+
+        CLI 返回表格列: code / name / type（如 GP / GP-A-CYB / BK）。
+        本方法映射为 AssetService.search_assets 约定的字段
+        (symbol / name / market / asset_type)，避免上游因字段名不匹配
+        静默丢弃所有结果（r17 修复）。
+        """
         tables, err = await self._run_cli(f"search {keyword}")
         if err or not tables:
             return []
         rows = tables[0]
-        return [
-            {
-                "code": r.get("code", ""),
-                "name": r.get("name", ""),
-                "type": r.get("type", ""),
-            }
-            for r in rows
-        ]
+        results: list[dict] = []
+        for r in rows:
+            code = r.get("code", "")
+            if not code:
+                continue
+            results.append(
+                {
+                    "symbol": code,
+                    "name": r.get("name", ""),
+                    "market": self._guess_market_from_code(code),
+                    "asset_type": self._westock_type_to_asset_type(
+                        r.get("type", "")
+                    ),
+                }
+            )
+        return results
 
     async def quote(self, symbols: list[str]) -> list[dict]:
         if not symbols:

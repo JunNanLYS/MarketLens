@@ -171,6 +171,11 @@ async def test_init_default_command() -> None:
 
 
 async def test_search_success(provider: WeStockProvider) -> None:
+    """search() 把 westock 的 code/name/type 映射成 symbol/market/asset_type。
+
+    回归 r17 修复：原先只返回 code/name/type，AssetService.search_assets
+    按 symbol 取不到值会静默丢弃全部结果（前端看到"未找到"）。
+    """
     stdout = (
         "| code | name | type |\n| --- | --- | --- |\n| sh600519 | 贵州茅台 | GP-A |\n"
     )
@@ -178,9 +183,69 @@ async def test_search_success(provider: WeStockProvider) -> None:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
         result = await provider.search("茅台")
         assert len(result) == 1
-        assert result[0]["code"] == "sh600519"
+        assert result[0]["symbol"] == "sh600519"
         assert result[0]["name"] == "贵州茅台"
-        assert result[0]["type"] == "GP-A"
+        assert result[0]["market"] == "sh"
+        assert result[0]["asset_type"] == "stock"
+
+
+async def test_search_returns_service_contract_fields(provider: WeStockProvider) -> None:
+    """回归 r17：返回字段必须能被 AssetService.search_assets 消费。
+
+    关键不变量：每条结果必须含 non-empty `symbol`（否则 asset_service 的
+    `if sym and sym not in seen_symbols` 会静默丢弃整条结果）。
+    """
+    stdout = (
+        "| code | name | type |\n| --- | --- | --- |\n"
+        "| sz300750 | 宁德时代 | GP-A-CYB |\n"
+        "| hk00700 | 腾讯控股 | GP |\n"
+        "| usAAPL | 苹果 | GP-US |\n"
+    )
+    with patch("backend.collectors.westock.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
+        result = await provider.search("test")
+    assert len(result) == 3
+    symbols = {r["symbol"] for r in result}
+    assert symbols == {"sz300750", "hk00700", "usAAPL"}
+    # market 从 code 前缀正确推断（不依赖 westock 自身返回）
+    by_symbol = {r["symbol"]: r for r in result}
+    assert by_symbol["sz300750"]["market"] == "sz"
+    assert by_symbol["hk00700"]["market"] == "hk"
+    assert by_symbol["usAAPL"]["market"] == "us"
+    # asset_type: GP* 全部 → stock
+    for r in result:
+        assert r["asset_type"] == "stock"
+
+
+async def test_search_sector_type_maps_to_sector(provider: WeStockProvider) -> None:
+    """westock 的 BK* type（板块/概念）→ asset_type='sector'，与 GP* 区分。"""
+    stdout = (
+        "| code | name | type |\n| --- | --- | --- |\n"
+        "| pt01801081 | 华为概念 | BK |\n"
+        "| sh600519 | 贵州茅台 | GP-A |\n"
+    )
+    with patch("backend.collectors.westock.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
+        result = await provider.search("test")
+    by_symbol = {r["symbol"]: r for r in result}
+    assert by_symbol["pt01801081"]["asset_type"] == "sector"
+    assert by_symbol["sh600519"]["asset_type"] == "stock"
+    # 板块条目无市场前缀时 market 兜底为 "us"（与 SinaProvider 行为一致）
+    assert by_symbol["pt01801081"]["market"] == "us"
+
+
+async def test_search_skips_empty_code(provider: WeStockProvider) -> None:
+    """westock 偶发返回 code 为空的行（表格解析兜底）→ 跳过。"""
+    stdout = (
+        "| code | name | type |\n| --- | --- | --- |\n"
+        "|  |  |  |\n"
+        "| sh600519 | 贵州茅台 | GP-A |\n"
+    )
+    with patch("backend.collectors.westock.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
+        result = await provider.search("test")
+    assert len(result) == 1
+    assert result[0]["symbol"] == "sh600519"
 
 
 async def test_search_empty(provider: WeStockProvider) -> None:
@@ -442,8 +507,10 @@ async def test_search_multiple_results(provider: WeStockProvider) -> None:
         mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
         result = await provider.search("酒")
         assert len(result) == 2
-        assert result[0]["code"] == "sz000858"
-        assert result[1]["code"] == "sh600809"
+        assert result[0]["symbol"] == "sz000858"
+        assert result[0]["market"] == "sz"
+        assert result[0]["asset_type"] == "stock"
+        assert result[1]["symbol"] == "sh600809"
 
 
 # fetch_news tests
