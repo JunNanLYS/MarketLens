@@ -288,7 +288,7 @@ MarketLens MVP
 | 数据本地化 | 所有数据存储于本地 SQLite，不上传任何云端 |
 | 无外部账号依赖 | 数据源为公开接口，不强制注册；NeoData 凭证本地缓存可选 |
 | 配置文件安全 | config.yaml 中的敏感字段支持环境变量替代 |
-| 写端点鉴权 | 9 个写端点需要 `X-API-Key` 头：POST/PATCH/DELETE on `/assets`、`/accounts`、`/transactions`；POST on `/reports/generate`；POST on `/neodata/token`；POST on `/tasks/trigger/{name}` |
+| 写端点鉴权 | 投资组合、AI 报告、NeoData 凭证、任务触发、可编辑配置和市场数据刷新等写端点需要 `X-API-Key` 头；当前 `/assets` 标的管理端点按本地单用户工具契约不校验 API Key |
 | 默认 API Key | 本地默认 `marketlens-local`；生产环境必须通过环境变量 `MARKETLENS_API_KEY` 或 `config.security.api_key` 覆盖，否则启动日志会发出 warning |
 | Security Headers | 5 个安全响应头由 `SecurityHeadersMiddleware` 统一注入：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Strict-Transport-Security`、`Content-Security-Policy`（宽松以兼容 Swagger UI） |
 

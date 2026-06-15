@@ -379,10 +379,16 @@ def test_run_cleanup_acquires_write_lock() -> None:
     assert observed_held, "_run_cleanup 未进入 _WRITE_LOCK 上下文"
     assert observed_held[0] is True
 
-    # 验证已清理
+    # 验证已清理并留下任务审计
     with get_db() as conn:
         count: int = conn.execute("SELECT COUNT(*) FROM raw_data").fetchone()[0]
+        row = conn.execute(
+            "SELECT * FROM run_logs WHERE task_name = 'cleanup' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
     assert count == 0
+    assert row is not None
+    assert row["status"] == "success"
+    assert row["affected_assets"] == 1
 
 
 def test_cleanup_naive_run_logs_removes_unmarked_rows() -> None:

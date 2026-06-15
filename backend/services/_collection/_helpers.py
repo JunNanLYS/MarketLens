@@ -4,6 +4,7 @@ import sqlite3
 
 from loguru import logger
 
+from backend.services._write_lock import _WRITE_LOCK
 from backend.storage.database import get_db
 
 
@@ -35,16 +36,14 @@ def _with_run_log(task_name: str):
             finally:
                 finished_at = self._now_iso()
                 try:
-                    with get_db() as conn:
-                        self._write_run_log(
-                            conn,
-                            task_name,
-                            status,
-                            started_at,
-                            finished_at,
-                            error_message,
-                            1,
-                        )
+                    self._write_run_log_locked(
+                        task_name,
+                        status,
+                        started_at,
+                        finished_at,
+                        error_message,
+                        1,
+                    )
                 except Exception as log_err:
                     logger.warning(
                         "写入 run_logs 失败: task={} err={}", task_name, log_err
@@ -77,6 +76,28 @@ def _save_raw_data(
 
 class _CollectionHelpersMixin:
     """工具方法：run_logs 写入。"""
+
+    def _write_run_log_locked(
+        self,
+        task_name: str,
+        status: str,
+        started_at: str,
+        finished_at: str,
+        error_message: str | None,
+        affected_assets: int,
+    ) -> None:
+        """持共享写锁写入一条 run_logs 记录。"""
+        with _WRITE_LOCK:
+            with get_db() as conn:
+                self._write_run_log(
+                    conn,
+                    task_name,
+                    status,
+                    started_at,
+                    finished_at,
+                    error_message,
+                    affected_assets,
+                )
 
     @staticmethod
     def _write_run_log(

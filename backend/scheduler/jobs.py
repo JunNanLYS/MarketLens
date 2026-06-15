@@ -295,10 +295,15 @@ def _run_cleanup() -> None:
       - 单表失败不影响其他表（每个 DELETE 独立 try/except）
       - 时间列名/保留天数均通过参数化绑定传入，避免 SQL 注入
       - 表名来自 config key（运维控制），列名 / 天数走参数化绑定
+      - 无论是否删除数据，都写一条 run_logs 供 UI 展示最近执行结果
     """
+    started_at = datetime.now(timezone.utc).isoformat()
+    finished_at = started_at
+    total_deleted = 0
+    errors: list[str] = []
+    status = "success"
     try:
         logger.info("定时任务触发: cleanup")
-        total_deleted: int = 0
         cleanup_rules = _load_cleanup_rules()
         with _WRITE_LOCK:
             conn = get_connection_sync()
@@ -310,7 +315,7 @@ def _run_cleanup() -> None:
                             f"WHERE {time_col} < datetime('now', ?)",  # time_col 也来自 YAML（运维可控），走 ? 绑定 days
                             (f"-{days} days",),
                         )
-                        deleted: int = cursor.rowcount
+                        deleted = cursor.rowcount
                         total_deleted += deleted
                         if deleted > 0:
                             logger.info(
@@ -320,16 +325,48 @@ def _run_cleanup() -> None:
                                 time_col,
                                 days,
                             )
-                    except Exception:
+                    except Exception as exc:
                         # 单表失败不影响其他表：cleanup 是幂等可重入的
                         logger.exception("清理表 {} 失败", table)
+                        errors.append(f"{table}: {exc}")
+                finished_at = datetime.now(timezone.utc).isoformat()
+                status = "failure" if errors else "success"
+                error_message = "; ".join(errors)[:500] if errors else None
+                conn.execute(
+                    """INSERT INTO run_logs
+                       (task_name, status, started_at, finished_at, error_message, affected_assets)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        "cleanup",
+                        status,
+                        started_at,
+                        finished_at,
+                        error_message,
+                        total_deleted,
+                    ),
+                )
                 conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
         if total_deleted > 0:
             logger.info("cleanup 本次共清理 {} 条过期数据", total_deleted)
-    except Exception:
+    except Exception as exc:
         logger.exception("定时任务执行异常: cleanup")
+        try:
+            finished_at = datetime.now(timezone.utc).isoformat()
+            _write_neo_health_log_sync(
+                "cleanup",
+                "failure",
+                started_at,
+                finished_at,
+                f"cleanup 执行异常: {exc}"[:500],
+                total_deleted,
+            )
+        except Exception:
+            logger.exception("cleanup 兜底写入 run_logs 失败")
 
 
 _TASK_FUNCTIONS: dict[str, Callable[[], None]] = {

@@ -4,7 +4,7 @@ import asyncio
 
 from loguru import logger
 
-from backend.services._collection._core import _WRITE_LOCK
+from backend.services._write_lock import _WRITE_LOCK
 from backend.storage.database import get_connection_sync
 
 

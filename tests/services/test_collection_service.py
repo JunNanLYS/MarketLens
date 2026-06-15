@@ -393,6 +393,31 @@ async def test_collect_quotes_writes_run_log(service: CollectionService) -> None
     assert log["finished_at"] is not None
 
 
+async def test_collect_quotes_run_log_uses_write_lock(
+    service: CollectionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """collect_quotes 写 run_logs 时应持共享写锁。"""
+    import backend.services._collection._helpers as helpers_module
+
+    _insert_assets("sh600519")
+    entered: list[bool] = []
+
+    class _ObservableLock:
+        def __enter__(self) -> "_ObservableLock":
+            entered.append(True)
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+    monkeypatch.setattr(helpers_module, "_WRITE_LOCK", _ObservableLock())
+
+    await service.collect_quotes()
+
+    assert entered, "collect_quotes 写 run_logs 未进入 _WRITE_LOCK"
+
+
 async def test_collect_daily_close_writes_run_log(service: CollectionService) -> None:
     _insert_assets("sh600519")
     await service.collect_daily_close()

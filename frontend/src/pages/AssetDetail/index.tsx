@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import dayjs from "dayjs";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
+import { useSearchParams } from "react-router-dom";
 import { apiClient, extractErrorMessage } from "@/api/client";
 import type { AssetDetail as AssetDetailType, PageResult, TrackedAsset } from "@/api/types";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -48,7 +49,17 @@ function useIsNarrow() {
 // 标的详情：三栏可拖拽布局（桌面）或 Tabs（窄屏）
 export default function AssetDetailPage() {
   const queryClient = useQueryClient();
-  const [assetId, setAssetId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const assetIdParam = searchParams.get("assetId");
+  const parsedAssetId = assetIdParam ? Number(assetIdParam) : null;
+  const [assetId, setAssetId] = useState<number | null>(
+    parsedAssetId !== null && Number.isFinite(parsedAssetId) ? parsedAssetId : null,
+  );
+
+  useEffect(() => {
+    const nextAssetId = parsedAssetId !== null && Number.isFinite(parsedAssetId) ? parsedAssetId : null;
+    setAssetId((current) => (current === nextAssetId ? current : nextAssetId));
+  }, [parsedAssetId]);
 
   const assets = useQuery<PageResult<TrackedAsset>>({
     queryKey: ["assets", "all"],
@@ -62,6 +73,11 @@ export default function AssetDetailPage() {
     enabled: assetId !== null,
     staleTime: 30_000,
   });
+
+  const handleAssetChange = (nextAssetId: number) => {
+    setAssetId(nextAssetId);
+    setSearchParams({ assetId: String(nextAssetId) });
+  };
 
   const refresh = async () => {
     try {
@@ -101,7 +117,7 @@ export default function AssetDetailPage() {
             placeholder="选择标的"
             style={{ width: 280 }}
             value={assetId ?? undefined}
-            onChange={setAssetId}
+            onChange={handleAssetChange}
             optionFilterProp="label"
             loading={assets.isLoading}
             options={(assets.data?.items ?? []).map((a) => ({ value: a.id, label: `${a.symbol} ${a.name ?? ""}` }))}

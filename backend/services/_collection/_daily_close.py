@@ -6,9 +6,9 @@ import threading
 
 from loguru import logger
 
-from backend.services._collection._core import _WRITE_LOCK
+from backend.services._write_lock import _WRITE_LOCK
 from backend.services._collection._helpers import _save_raw_data
-from backend.storage.database import get_db, get_connection_sync
+from backend.storage.database import get_connection_sync
 
 
 # 日终 7 类数据 INSERT OR IGNORE 模板（含表名 + 列名 + 占位符）。
@@ -114,16 +114,14 @@ class _CollectionDailyCloseMixin:
         status = "success" if not all_errors else "failure"
         error_message = "; ".join(all_errors) if all_errors else None
         affected = len(assets)
-        with get_db() as conn:
-            self._write_run_log(
-                conn,
-                "daily_close",
-                status,
-                started_at,
-                finished_at,
-                error_message,
-                affected,
-            )
+        self._write_run_log_locked(
+            "daily_close",
+            status,
+            started_at,
+            finished_at,
+            error_message,
+            affected,
+        )
 
         return summary
 

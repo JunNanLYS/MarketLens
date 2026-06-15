@@ -126,7 +126,7 @@
 
 | 资源组 | 端点 |
 |---|---|
-| 标的管理 | `POST /assets`、`PATCH /assets/{id}`、`DELETE /assets/{id}` |
+| 标的管理 | 当前实现不要求 API Key（本地单用户工具；见 [assets.md](api/assets.md)） |
 | 投资组合 | `POST /accounts`、`PATCH /accounts/{account_id}`、`DELETE /accounts/{account_id}`、`POST /transactions`、`PATCH /transactions/{transaction_id}`、`DELETE /transactions/{transaction_id}` |
 | AI 报告 | `POST /reports/generate` |
 | 任务管理 | `POST /tasks/trigger/{name}` |
@@ -265,7 +265,7 @@ ISO 8601 带时区：`"2026-05-31T15:30:00+08:00"`。日期（无时间）使用
 | `source`（数据源） | `westock` / `sina` / `sina_rss` / `neodata` |
 | `task_name` | `quote` / `daily_close` / `news` / `ai_report` / `cleanup` |
 | `transaction_type` | `buy` / `sell` / `dividend` / `split` |
-| `run_log.status` | `success` / `failed` / `running` |
+| `run_log.status` | `success` / `failure` |
 
 ---
 
@@ -275,7 +275,7 @@ ISO 8601 带时区：`"2026-05-31T15:30:00+08:00"`。日期（无时间）使用
 |---|---|---|
 | 1 | 名词复数资源 | `/assets` 而非 `/getAssets` |
 | 2 | 方法语义正确 | `GET` 只读，`POST` 创建，`PATCH` 部分更新，`DELETE` 删除 |
-| 3 | 避免路径动词 | `POST /assets/search` 作为搜索资源操作 |
+| 3 | 避免路径动词 | `GET /assets/search` 作为搜索资源查询 |
 | 4 | 动作名词化 | `POST /reports/generate`、`POST /data/intraday/{symbol}` 建模为生成 / 采集资源 |
 | 5 | 层级 ≤ 2 层 | `/assets/{id}`、`/reports/{symbol}/history` |
 | 6 | 版本化 | `/api/v1/` 路径前缀，开放演进 |
