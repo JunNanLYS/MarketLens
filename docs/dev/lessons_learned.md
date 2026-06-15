@@ -31,6 +31,9 @@
 | 17 | API 成本防御 | **第三方付费 API 路径必须有 autouse 拦截**（不依赖每个测试自觉） | 🔴 P0 |
 | 18 | UI 重构流程 | **五阶段顺序**：DESIGN.md → token → shared → pages → 验证 | 🟡 P1 |
 | 19 | Squash-merge 后合并 | **优先 cherry-pick 而非 rebase**（保留独立 commit identity） | 🟢 P2 |
+| 20 | 写锁源单一化 | 共享 `_WRITE_LOCK` 必须有中立模块,新 mixin/新 Service 只能从那里导入 | 🔴 P0 |
+| 21 | 审计完整性 | **任何**调度任务结尾都要在锁内写 `run_logs`;无 URL 数据也要有去重键 + raw_data | 🟡 P1 |
+| 22 | 路由入口契约 | URL 携带状态(`?key=...`)时,React 页面要 `useSearchParams` 同步,别只信本地 state | 🟡 P1 |
 
 ---
 
@@ -49,8 +52,21 @@ CLAUDE.md 209-213 行原文：
 - **锁类型**：`threading.Lock`（不是 `asyncio.Lock`）—— 原因：scheduler tick 用
   `asyncio.run()` 每次创建新 event loop，`asyncio.Lock()` 首次 acquire 绑定循环会失效；
   `threading.Lock` 跨循环安全。
-- **定义位置**：`backend/services/collection_service.py:21`
-- **导入路径**：`from backend.services.collection_service import _WRITE_LOCK`
+- **锁源（2026-06-15 收口）**：唯一权威定义在
+  [`backend/services/_write_lock.py`](../../backend/services/_write_lock.py)：
+  ```python
+  """SQLite 同步写入共享锁。"""
+  import threading
+  _WRITE_LOCK: threading.Lock = threading.Lock()
+  ```
+  `backend/services/collection_service.py` 在 `__all__` 里 re-export 一份 `_WRITE_LOCK`，
+  以兼容 `from backend.services.collection_service import _WRITE_LOCK` 旧路径。
+- **导入路径（任选其一）**：
+  - `from backend.services._write_lock import _WRITE_LOCK`（推荐，中立）
+  - `from backend.services.collection_service import _WRITE_LOCK`（兼容）
+- **禁止**：在 `asset_service.py` / `_collection/_core.py` / 任何其它模块私有化
+  `threading.Lock()`。混用会变成"两把锁都加锁 → 实际互不感知"，是 r15 资金写端点
+  漏锁根因。
 
 ### 标准范式（参考 `create_transaction`）
 
@@ -944,6 +960,194 @@ $ git log --oneline --graph --all -10  # 看分支图
 - [ ] 优先 cherry-pick 而非 rebase
 - [ ] 合并后 `git push origin main` 推送到远程
 
+## 20. 写锁源单一化（中立模块兜底）
+
+### 教训来源
+
+第 15 轮（2026-06-15）—— `AssetService` 在 `__init__` 之外有自己一把私有
+`threading.Lock()` 实例。看起来"也加了锁"，但与 `collection_service._WRITE_LOCK`
+是**两个对象**：
+
+```python
+# asset_service.py（旧代码，r15 已修）
+_WRITE_LOCK = threading.Lock()  # ← 独立实例
+
+# collection_service.py
+_WRITE_LOCK = threading.Lock()  # ← 另一个独立实例
+```
+
+后果：
+- 资金写端点（add/update/delete_asset）与采集清理（collect_quotes /
+  collect_daily_close）"每条路径都加锁"，但**两边互不感知**
+- 高并发下两个线程可同时进 `with _WRITE_LOCK:` 块写 SQLite → 资金主表 + 行情表
+  并发写
+
+### 经验
+
+1. **共享锁必须有"中立模块"作为唯一定义点**。不能"谁用谁 import 后再赋一个本地变量"，
+   那会变成独立实例
+2. **保留兼容 re-export**：`collection_service.py` 在 `__all__` 里再 export 一份，
+   让 `from backend.services.collection_service import _WRITE_LOCK` 仍可用，
+   避免一次性改完所有调用点
+3. **新 Service / 新 mixin 只能从 `_write_lock.py` 导入**。下次 review 看到
+   `import threading; _WRITE_LOCK = threading.Lock()` 出现在 `asset_service.py` /
+   `_collection/_core.py` 等非授权位置直接挡
+
+### 范式（已采用）
+
+```python
+# backend/services/_write_lock.py
+"""SQLite 同步写入共享锁。"""
+import threading
+_WRITE_LOCK: threading.Lock = threading.Lock()
+```
+
+```python
+# 任何写路径（新 Service、新 mixin、scheduler 任务）
+from backend.services._write_lock import _WRITE_LOCK
+with _WRITE_LOCK:
+    with get_db() as conn:
+        ...
+```
+
+### 自我检查清单
+
+- [ ] grep `threading.Lock()` 出现的非授权模块
+- [ ] 写端点用 `is` 断言锁对象身份（如 `test_asset_service_uses_collection_write_lock`）
+- [ ] 新 mixin / 新 Service 改用 `from backend.services._write_lock import _WRITE_LOCK`
+
+---
+
+## 21. 调度任务审计完整性（run_logs + 数据去重）
+
+### 教训来源
+
+第 15 轮（2026-06-15）—— 两个相邻但独立的缺口：
+
+1. `backend/scheduler/jobs.py::_run_cleanup` **根本不写 `run_logs`**
+2. `backend/services/news_service.py::collect_news` 的 `if url: existing_urls.add(url)`
+   之前直接 `continue` → 无 URL 新闻**无限重复入库**，且 `raw_data` 只在 url 非空时落库
+
+后者更隐蔽：人工 review 一眼看到 `existing_urls.add(url)` 觉得"已经有去重了"，
+但分母是"有 url 的子集"，分子是"所有要插入的项"——一比就漏。
+
+### 经验
+
+1. **任何 APScheduler 任务结束都要写一条 `run_logs`**，与采集任务同模板：
+   `task_name / status / started_at / finished_at / error_message / affected_assets`
+2. **"成功插入后才落 raw_data" + "用业务键去重"，与 url 字段正交**。`raw_data` 是审计
+   trail，不能因为 schema 缺唯一键就不写；要么构造稳定去重键，要么在 DB 层加
+   `UNIQUE` 兜底
+3. **去重键要稳定**——`source + normalized_title + published_at` 比 `url` 鲁棒：
+   - 标题前后空格、`　` 全角空格要 normalize
+   - 跨批/跨库都要命中（避免同新闻被不同 provider 采集时插入两次）
+
+### 范式
+
+```python
+# 1. 调度任务 — 锁内写审计行
+with _WRITE_LOCK:
+    conn = get_connection_sync()
+    try:
+        # ... 业务写入 ...
+        conn.execute(
+            """INSERT INTO run_logs
+               (task_name, status, started_at, finished_at, error_message, affected_assets)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("cleanup", status, started_at, finished_at, error_message, total_deleted),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+# 2. 业务去重 + 审计双写
+existing_url_less_keys: set[tuple[str, str, str]] = {
+    (r["source"], _norm_title(r["title"]), r["published_at"] or "")
+    for r in conn.execute(
+        "SELECT source, title, published_at FROM news_items WHERE url IS NULL OR url = ''"
+    ).fetchall()
+}
+for item in news_items:
+    key = (item["source"], _norm_title(item["title"]), item.get("published_at") or "")
+    if key in existing_url_less_keys:
+        skipped += 1
+        continue
+    conn.execute("INSERT INTO news_items (...) VALUES (...)", (...))
+    existing_url_less_keys.add(key)  # 批内也防重
+    conn.execute(
+        "INSERT INTO raw_data (..., data_type, raw_json, collected_at) VALUES (..., 'news', ?, ?)",
+        (json.dumps(item, ensure_ascii=False, default=str), now),
+    )
+```
+
+### 自我检查清单
+
+- [ ] 任何 scheduler 任务结尾都有 `run_logs` 行（grep `_run_` 函数体内有 `INSERT INTO run_logs`）
+- [ ] 数据采集同时维护 `raw_data`（不依赖 url / 唯一键等条件）
+- [ ] 去重键经过 normalize（空白、全角半角、case）
+- [ ] 批内 + 跨批都防重（去重 set 在循环里 add 自身）
+
+---
+
+## 22. 路由入口契约（URL ↔ React state 同步）
+
+### 教训来源
+
+第 15 轮（2026-06-15）—— Command Palette 已经按 `?assetId=<id>` 生成跳转链接，
+但 `AssetDetail` 用本地 `useState<number | null>(null)` 起步，**根本不看 URL**。
+表现：用户从命令面板点开 → 路由进入详情页 → 详情页渲染"暂无数据"。
+
+新闻页 `NewsList` 还有一个对称的反面：把 `/asset-detail/${symbol}` 当成合法路由 push，
+但 React Router 只注册了 `/asset-detail`，跳转直接 404。
+
+### 经验
+
+1. **URL 携带的状态（`?key=...`） = 路由协议的对外契约**。所有"从其它地方跳进来"的
+   入口必须把它读出来
+2. **双向同步**：用户从 URL 进来 → state 派生；用户改了 state → 反向写回 URL
+   （`setSearchParams`），刷新页面不会丢
+3. **跳转前先 resolve 出 id**。如果其它地方只有 symbol，先调
+   `GET /assets?search=<symbol>` 解析 id 再 push，避免 `/:symbol` 风格的参数化路由
+   给自己埋坑
+4. **`navigate()` 后要 `void` 显式吞 promise**。`void navigateToAssetSymbol(s)`
+   比 `navigateToAssetSymbol(s)` 更清晰
+
+### 范式
+
+```tsx
+// 1. URL → state（同步）
+const [searchParams] = useSearchParams();
+const assetIdParam = searchParams.get("assetId");
+const parsedAssetId = assetIdParam ? Number(assetIdParam) : null;
+const [assetId, setAssetId] = useState<number | null>(
+  Number.isFinite(parsedAssetId) ? parsedAssetId : null,
+);
+
+// 2. state → URL（反向写回）
+const handleAssetChange = (nextAssetId: number) => {
+  setAssetId(nextAssetId);
+  setSearchParams({ assetId: String(nextAssetId) });
+};
+
+// 3. 跳转前 resolve
+const navigateToAssetSymbol = async (symbol: string) => {
+  const { data } = await apiClient.get("/assets", { params: { search: symbol } });
+  const asset = data.items.find((it) => it.symbol === symbol);
+  if (!asset) {
+    message.warning(`标的 ${symbol} 不在追踪列表中`);
+    return;
+  }
+  navigate(`/asset-detail?assetId=${asset.id}`);
+};
+```
+
+### 自我检查清单
+
+- [ ] 任何"被命令面板 / 列表 / 卡片跳转打开"的页面，读 `useSearchParams`
+- [ ] `setSearchParams` 与 `setState` 配对（任意方向都同步）
+- [ ] 跳转链接里只有 id，不直接拼 symbol
+- [ ] `navigate()` 用 `void` 显式吞 promise（或 async + 显式 await）
+
 ---
 
 ## 附录 A：经验索引（按发现轮次）
@@ -973,6 +1177,9 @@ $ git log --oneline --graph --all -10  # 看分支图
 | 第 16 轮 | 用户对第三方 API 成本敏感 → conftest.py 防御性拦截 DeepSeek | 本文件 §17 |
 | 第 17-18 轮 | UI 重构五阶段流程（DESIGN.md → token → shared → pages → 验证） | 本文件 §18 |
 | 第 18 轮 | Squash-merge 后的 cherry-pick / rebase / ff-only 选择决策树 | 本文件 §19 |
+| 第 15 轮 | `AssetService` 私有锁 → 中立 `_write_lock.py` 收口 | 本文件 §20 |
+| 第 15 轮 | `news_service` 无 URL 去重 / `raw_data` 漏写 / cleanup 无审计 | 本文件 §21 |
+| 第 15 轮 | `AssetDetail` 不读 `?assetId=` + 跳转路由不存在的 `:symbol` 参数 | 本文件 §22 |
 
 ---
 
