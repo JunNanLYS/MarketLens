@@ -121,11 +121,39 @@ AGENT_REGISTRY: dict[str, type[BaseAgent]] = {
 - **Tool 不知道 Agent**: Tool 只接收 `trace_id` 关联, 不持有 Agent 引用, 避免循环依赖
 - **状态机由 Orchestrator 推进**: Agent 自身只暴露 `on_state_enter` 钩子, 不自己跳状态
 
-### 2.3 任务分发算法
+### 2.3 任务分发算法(修订 3: Semaphore 资源控制)
+
+> **架构修订说明(致命问题)**: 早期设计 `asyncio.create_task` 瞬间启动 1000+ 协程(500 个 stock × 2 task),导致 API 限流 + SQLite 锁竞争 + 内存暴涨。修订后:
+> 1. **3 个 Semaphore** 包裹 dispatch 循环,按资源类型分层限流
+> 2. 配合 §2.6 `validate_graph()` 严格校验,避免无效 plan 进入调度
+> 3. 配合 §6 Policy Engine 的 `degrade_to: "reduce_concurrency"`,Runtime 动态调整 Semaphore
 
 ```python
+# backend/agents/orchestrator.py
+MAX_CONCURRENT_TASKS = 10     # 全局 Task 并发上限
+MAX_CONCURRENT_LLM = 3        # LLM 调用并发上限 (防账单爆)
+MAX_CONCURRENT_IO = 20        # Tool I/O 并发上限 (防 Provider 限流)
+
+TASK_SEM = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+LLM_SEM = asyncio.Semaphore(MAX_CONCURRENT_LLM)
+IO_SEM = asyncio.Semaphore(MAX_CONCURRENT_IO)
+
+
+def _is_llm_action(action: str) -> bool:
+    """判断 action 是否调用 LLM (Planner / LLM-judge 走 LLM_SEM, 其他走 IO_SEM)。"""
+    return action.startswith("llm_") or action.endswith("_llm") or action in {
+        "generate_research_report", "explain_market_move", "clarify_intent",
+        "explain_pnl_attribution", "route_to_planner",
+    }
+
+
 async def dispatch(plan: TaskGraph) -> list[AgentResult]:
-    """按依赖顺序 + 并行组并行执行 Task Graph。"""
+    """按依赖顺序 + 并行组并行执行 Task Graph, 配合 3 个 Semaphore。"""
+    # 修订 2: dispatch 前先 validate
+    validation = validate_graph(plan)
+    if not validation.ok:
+        raise InvalidPlan(validation.errors)
+
     completed: dict[str, AgentResult] = {}
     pending = {t.id: t for t in plan.tasks}
     in_flight: set[asyncio.Task] = set()
@@ -136,11 +164,21 @@ async def dispatch(plan: TaskGraph) -> list[AgentResult]:
             t for t in pending.values()
             if all(dep in completed for dep in t.depends_on)
         ]
-        # 并行启动所有 ready 任务
+        # 并行启动所有 ready 任务, 按 action 类型分 Semaphore
         for task in ready:
             ctx = build_context(task, completed, plan)
             agent = AGENT_REGISTRY[task.agent]()
-            in_flight.add(asyncio.create_task(agent.execute(task, ctx)))
+            sem = LLM_SEM if _is_llm_action(task.action) else IO_SEM
+
+            async def _run_with_sem(task=task, ctx=ctx, agent=agent, sem=sem):
+                # 双层 Semaphore: 任务级 (TASK_SEM) + 资源级 (sem)
+                async with TASK_SEM, sem:
+                    agent.on_state_enter(AgentState.EXECUTING)
+                    result = await agent.execute(ctx, plan=await agent.plan(ctx))
+                    agent.on_state_enter(AgentState.DONE)
+                    return result
+
+            in_flight.add(asyncio.create_task(_run_with_sem()))
             pending.pop(task.id)
 
         # 等待任意一个完成
@@ -150,10 +188,141 @@ async def dispatch(plan: TaskGraph) -> list[AgentResult]:
         for t in done:
             result = t.result()
             completed[result.task_id] = result
-            emit_event("task.completed", result)
+            await event_bus.emit(Event(
+                event_type="task.completed",
+                payload=result.model_dump(),
+            ))
 
     return list(completed.values())
 ```
+
+**关键约束**:
+- **TASK_SEM (10)**: 全局 Task 并发上限,保护内存
+- **LLM_SEM (3)**: LLM 调用并发上限,防 DeepSeek 账单爆
+- **IO_SEM (20)**: Tool I/O 并发上限,防 Provider 限流
+- **双层 Semaphore**: 每个 Task 同时获取 TASK_SEM + (LLM_SEM 或 IO_SEM),严格串行化
+- **§6 Policy Engine 可调低**: `degrade_to: "reduce_concurrency"` 改写 Semaphore 上限
+- **§3.2 Task 加 `max_concurrency` 字段**: 特定 Task 可单独降低并发(默认用全局)
+
+### 2.6 DAG 校验(修订 2: dispatch 前置)
+
+> **架构修订说明(致命问题)**: 早期设计 `while pending or in_flight` 没校验环 / 孤儿节点 / 不存在依赖,会导致死循环 + 静默 bug。修订后:Orchestrator dispatch 前**必须**先 `validate_graph()`,校验失败直接 `InvalidPlan` 异常,不进入 dispatch。
+
+```python
+# backend/agents/orchestrator.py
+class ValidationResult(BaseModel):
+    ok: bool
+    errors: list[str] = []            # 人类可读的错误列表
+    warnings: list[str] = []          # 不致命, 仅提示
+
+
+def validate_graph(plan: TaskGraph) -> ValidationResult:
+    """3 类校验: 环 / 孤儿 / 不存在依赖。"""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # 1. 检查重复 task_id
+    task_ids = [t.id for t in plan.tasks]
+    if len(task_ids) != len(set(task_ids)):
+        dup = [tid for tid in task_ids if task_ids.count(tid) > 1]
+        errors.append(f"duplicate task ids: {set(dup)}")
+
+    # 2. 检查依赖存在性 (修订 2: 不存在依赖 → 错误)
+    for task in plan.tasks:
+        for dep in task.depends_on:
+            if dep not in task_ids:
+                errors.append(f"task '{task.id}' depends on non-existent task '{dep}'")
+
+    # 3. 检查环 (修订 2: 环 → 错误, 防死循环)
+    if _has_cycle(plan.tasks):
+        cycle = _find_cycle(plan.tasks)
+        errors.append(f"cycle detected: {' -> '.join(cycle)}")
+
+    # 4. 检查孤儿节点 (修订 2: 警告, 不致命)
+    #    孤儿 = 无依赖也没被任何 task 依赖
+    depended_by = {t.id: set() for t in plan.tasks}
+    for t in plan.tasks:
+        for dep in t.depends_on:
+            depended_by[dep].add(t.id)
+    orphans = [
+        t.id for t in plan.tasks
+        if not t.depends_on and not depended_by[t.id]
+    ]
+    if orphans:
+        warnings.append(f"orphan tasks (no deps and no dependents): {orphans}")
+
+    # 5. 检查 capability 与 agent 匹配 (修订 1 强化)
+    for task in plan.tasks:
+        agent_cls = AGENT_REGISTRY.get(task.agent)
+        if agent_cls is None:
+            errors.append(f"task '{task.id}' references unknown agent '{task.agent}'")
+            continue
+        # capability 必须在 agent.capabilities 里
+        if task.action not in agent_cls.capabilities:
+            errors.append(
+                f"task '{task.id}' action '{task.action}' not in "
+                f"agent '{task.agent}' capabilities: {agent_cls.capabilities}"
+            )
+
+    return ValidationResult(ok=len(errors) == 0, errors=errors, warnings=warnings)
+
+
+def _has_cycle(tasks: list[Task]) -> bool:
+    """DFS 检测环。"""
+    graph: dict[str, list[str]] = {t.id: list(t.depends_on) for t in tasks}
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {tid: WHITE for tid in graph}
+
+    def dfs(u: str) -> bool:
+        color[u] = GRAY
+        for v in graph[u]:
+            if color[v] == GRAY:
+                return True  # 环
+            if color[v] == WHITE and dfs(v):
+                return True
+        color[u] = BLACK
+        return False
+
+    return any(color[tid] == WHITE and dfs(tid) for tid in graph)
+
+
+def _find_cycle(tasks: list[Task]) -> list[str]:
+    """返回环路径(用于错误信息展示)。"""
+    graph = {t.id: list(t.depends_on) for t in tasks}
+    visited: set[str] = set()
+    path: list[str] = []
+    path_set: set[str] = set()
+
+    def dfs(u: str) -> list[str] | None:
+        path.append(u)
+        path_set.add(u)
+        for v in graph.get(u, []):
+            if v in path_set:
+                idx = path.index(v)
+                return path[idx:] + [v]  # 环路径
+            if v not in visited:
+                r = dfs(v)
+                if r:
+                    return r
+        path.pop()
+        path_set.discard(u)
+        visited.add(u)
+        return None
+
+    for tid in graph:
+        if tid not in visited:
+            r = dfs(tid)
+            if r:
+                return r
+    return []
+```
+
+**关键约束**:
+- **校验必须前置**: `dispatch(plan)` 第一行就是 `validate_graph(plan)`,失败立即抛 `InvalidPlan` 异常
+- **校验 5 项**: 重复 task_id / 不存在依赖 / 环 / 孤儿(警告)/ capability 匹配(修订 1 强化)
+- **不静默**: 校验失败必须明确报错,**不能默认 fallback**(会掩盖 bug)
+- **§6 Policy Engine 不替代 validate_graph**: PolicyEngine 处理"运行时风险"(如市场状态),validate_graph 处理"plan 结构性错误",两者职责分离
+- **测试覆盖**: 至少 5 个测试用例(无环/有环/孤儿/不存依赖/重复 ID),Phase 1 启动时落地
 
 ### 2.4 上下文传递(修订 1 后: 移除直接 service 引用)
 
@@ -308,12 +477,15 @@ class TaskGraph(BaseModel):
 class Task(BaseModel):
     id: str                                      # 任务 ID,plan 内唯一
     agent: Literal["research", "portfolio", "monitoring", "planner"]
-    action: str                                  # 该 Agent 能处理的 action 之一
-    params: dict[str, Any] = {}                  # action 的输入参数
+    action: str                                  # 该 Agent 能处理的 action 之一(在 agent.capabilities 中)
+    params: dict[str, Any] = {}                  # 静态参数(不含依赖引用)
+    inputs_mapping: dict[str, str] = {}          # 修订: 显式依赖引用, 替代 <from t1> 占位符
+                                                     #   例 {"fund_flow": "t1.result.flows"}
     depends_on: list[str] = []                   # 依赖的 Task ID 列表
     priority: int = 5                            # 1(高) - 10(低),默认 5
     timeout_s: int = 30                          # 超时(秒)
     retry_on_failure: bool = False               # 失败是否自动重试(最多 1 次)
+    max_concurrency: int | None = None           # 修订 3: 特定 Task 可单独降低并发(默认用全局 Semaphore)
 
 
 class TaskResult(BaseModel):
