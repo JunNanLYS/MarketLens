@@ -46,23 +46,80 @@ Orchestrator(`backend/agents/orchestrator.py`)是 Agent 系统的中枢,负责:
 | **错误隔离** | 单个 Agent 失败不影响其他 Agent 的执行 |
 | **反馈给 UI** | 把每个 Agent 的 Thinking Trace 实时推送给 renderer(Electron IPC) |
 
-### 2.2 Agent 注册表
+### 2.2 Agent 注册表与统一抽象
+
+> **架构修订说明(修订 1: Agent/Tool 严格分层)**: 早期设计把 `get_quote / get_kline / get_news / get_finance` 等"执行型 Tool"混入 Agent 的 `get_capabilities()`,导致 Agent 和 Tool 职责边界模糊。修正后,Agent 的 `capabilities` **只声明"思考型"动作**(如 `analyze_asset / generate_report`);"执行型"动作(`market.quote / news.search`)**全部下沉到 Tool Registry**。Agent 通过 `ctx.invoke_tool("market.quote", symbol=...)` 范式调用 Tool,Tool 不感知 Agent。
 
 ```python
-# backend/agents/orchestrator.py
+# backend/agents/base.py
+class TraceLevel(str, Enum):
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class AgentState(str, Enum):
+    """Agent 状态机 (修订: 统一抽象,所有 Agent 一致)。"""
+    IDLE = "idle"
+    PLANNING = "planning"
+    AWAITING_TOOLS = "awaiting_tools"      # 等待 Tool 返回
+    EXECUTING = "executing"                # 自身推理中
+    SYNTHESIZING = "synthesizing"          # 整合多个 Tool 结果
+    DONE = "done"
+    FAILED = "failed"
+
+
+class BaseAgent(ABC):
+    """所有 4 个 Agent 的统一抽象。"""
+    name: str                                # "research_agent" / "portfolio_agent" ...
+    tools_used: list[str]                    # 声明式依赖, 例 ["market.quote","news.search"]
+    capabilities: list[str]                  # 思考型动作, 例 ["analyze_asset","generate_report"]
+    state: AgentState = AgentState.IDLE       # 状态机实例(修订: 显式建模)
+
+    @abstractmethod
+    async def plan(self, ctx: "Context") -> "Plan":
+        """把 Task 拆成子计划 (可选, 简单 Task 可直接 execute)。"""
+        ...
+
+    @abstractmethod
+    async def execute(self, ctx: "Context", plan: "Plan") -> "Result":
+        """执行 Task, 通过 ctx.invoke_tool("market.quote", symbol=...) 调用 Tool。"""
+        ...
+
+    def on_state_enter(self, new_state: AgentState) -> None:
+        """状态机钩子 (Orchestrator 驱动推进, Agent 自定义响应)。"""
+        self.state = new_state
+
+    async def emit_trace(
+        self,
+        ctx: "Context",
+        level: TraceLevel,
+        msg: str,
+        data: dict | None = None,
+    ) -> None:
+        """分级 Trace 推送 — 修订 4: 默认仅 INFO+ 推送, DEBUG 留本地 buffer。"""
+        if level == TraceLevel.DEBUG:
+            ctx.trace_buffer.append({"level": level, "msg": msg, "data": data})
+            return
+        ctx.trace_buffer.append({"level": level, "msg": msg, "data": data})
+
+
+# Orchestrator 注册表
 AGENT_REGISTRY: dict[str, type[BaseAgent]] = {
     "planner": PlannerAgent,
     "research": ResearchAgent,
     "portfolio": PortfolioAgent,
     "monitoring": MonitoringAgent,
 }
-
-class BaseAgent(ABC):
-    @abstractmethod
-    async def execute(self, task: Task, context: AgentContext) -> AgentResult: ...
-    @abstractmethod
-    def get_capabilities(self) -> list[str]: ...   # 列出该 Agent 能处理的 action
 ```
+
+**关键约束**:
+- **Agent = 思考**: `capabilities` 只列"思考型"动作(如 `analyze_asset`, 内部决定 *为什么* 调用哪些 Tool)
+- **Tool = 执行**: 实际 IO 全部走 Tool Registry,Agent 不直接 `import` 任何 Provider/Service
+- **声明式 + 命令式混合**: `tools_used` 声明名字(供依赖图分析),`ctx.invoke_tool` 命令式调用(运行时)
+- **Tool 不知道 Agent**: Tool 只接收 `trace_id` 关联, 不持有 Agent 引用, 避免循环依赖
+- **状态机由 Orchestrator 推进**: Agent 自身只暴露 `on_state_enter` 钩子, 不自己跳状态
 
 ### 2.3 任务分发算法
 
@@ -98,49 +155,127 @@ async def dispatch(plan: TaskGraph) -> list[AgentResult]:
     return list(completed.values())
 ```
 
-### 2.4 上下文传递
+### 2.4 上下文传递(修订 1 后: 移除直接 service 引用)
+
+> **架构修订说明**: 原 §2.4 `AgentContext` 直接持有 `collection_service / news_service / portfolio_service / evidence_builder` 引用,绕过了 Tool Registry 抽象。修订后,AgentContext 只持有 `tool_registry` 引用,所有外部 IO 走 `ctx.invoke_tool("market.quote", symbol=...)` 范式。
 
 ```python
-def build_context(task: Task, completed: dict, plan: TaskGraph) -> AgentContext:
+class Context:
+    """Agent 执行上下文 (由 Orchestrator 注入)。"""
+    plan_id: str
+    task_id: str
+    upstream_results: dict[str, "Result"]    # task_id -> Result
+    evidence: dict
+    short_term: dict
+    market_state: "MarketState"             # Policy Engine 评估用
+    trace_buffer: list[dict] = []           # 本地 buffer, 100ms flush
+    tool_registry: "ToolRegistry"           # 唯一调用 Tool 的入口
+
+    async def invoke_tool(self, name: str, **kwargs) -> "ToolResult":
+        """声明式 Tool 调用, Tool 不知道是哪个 Agent。"""
+        return await self.tool_registry.invoke(name, kwargs, trace_id=self.task_id)
+
+
+def build_context(task: Task, completed: dict, plan: TaskGraph) -> Context:
     """为当前任务构造 Agent 上下文。"""
-    return AgentContext(
-        # 1. 上游 Agent 的输出
-        upstream_results=[
-            completed[dep] for dep in task.depends_on
-            if dep in completed
-        ],
-        # 2. Evidence(从 EvidenceBuilder 拉,按 symbol 缓存)
-        evidence=evidence_cache.get(task.params.get("symbol", "")),
-        # 3. Short-term Memory
-        short_term=short_term_memory.get(task.id),
-        # 4. 全局 plan 上下文(用户意图 + 置信度)
-        plan_context={
-            "user_intent": plan.user_intent,
-            "plan_confidence": plan.confidence,
-            "evidence_strength": plan.evidence_strength,
+    return Context(
+        plan_id=plan.plan_id,
+        task_id=task.id,
+        upstream_results={
+            dep: completed[dep] for dep in task.depends_on if dep in completed
         },
+        evidence=evidence_cache.get(task.params.get("symbol", "")),
+        short_term=short_term_memory.get(task.id),
+        market_state=current_market_state(),  # Policy Engine 评估需要
+        tool_registry=TOOL_REGISTRY,
+        trace_buffer=[],
     )
 ```
 
-### 2.5 Thinking Trace 推送
+### 2.5 Thinking Trace 推送(修订 4: 分级 + 100ms 批量)
+
+> **架构修订说明(致命问题)**: 100 task × 20 trace = 2000 个 IPC 消息,Electron 主进程会被 IPC 风暴打挂。修订后:
+> 1. Trace 分 4 级 `DEBUG / INFO / WARNING / ERROR`,**默认只推 INFO+**
+> 2. 批量推送:100ms flush 一次(不逐条 IPC)
+> 3. Event Bus 新增 `thinking.trace.batched` 事件类型(承载批量 payload)
 
 ```python
-async def execute(self, task: Task, context: AgentContext) -> AgentResult:
-    """Agent 内部每一步推理都 emit 一个 trace 事件。"""
-    emit_event("thinking.trace", {
-        "task_id": task.id,
-        "step": "evidence_loaded",
-        "detail": f"Loaded evidence with {len(context.evidence)} fields",
-    })
-    emit_event("thinking.trace", {
-        "task_id": task.id,
-        "step": "reasoning",
-        "detail": "Analyzing MA5 vs MA20 crossover...",
-    })
-    return AgentResult(...)
+class ThinkingTraceFlusher:
+    """Agent 内部 emit_trace 写入 ctx.trace_buffer,
+    100ms flush 一次到 Event Bus,避免 IPC 风暴。
+    """
+    def __init__(self, ctx: Context, event_bus: "AsyncEventBus"):
+        self.ctx = ctx
+        self.event_bus = event_bus
+        self._last_flush = time.monotonic()
+        self._flush_interval_ms = 100
+
+    async def flush_if_due(self) -> None:
+        now = time.monotonic()
+        if (now - self._last_flush) * 1000 >= self._flush_interval_ms:
+            await self.flush()
+
+    async def flush(self) -> None:
+        if not self.ctx.trace_buffer:
+            return
+        # DEBUG 级别留在本地, 不上 IPC
+        shippable = [t for t in self.ctx.trace_buffer if t["level"] != "debug"]
+        if shippable:
+            await self.event_bus.emit(Event(
+                event_id=str(uuid4()),
+                event_type="thinking.trace.batched",
+                timestamp=datetime.now(timezone.utc),
+                source=self.ctx.task_id,
+                correlation_id=self.ctx.plan_id,
+                payload={"traces": shippable},
+            ))
+        self.ctx.trace_buffer.clear()
+        self._last_flush = time.monotonic()
+
+
+# Agent 内部使用示例
+class ResearchAgent(BaseAgent):
+    async def execute(self, ctx: Context, plan: Plan) -> Result:
+        flusher = ThinkingTraceFlusher(ctx, event_bus)
+
+        # DEBUG 级: 留本地, 不上IPC
+        await self.emit_trace(ctx, TraceLevel.DEBUG, "starting execute",
+                              data={"plan_id": ctx.plan_id})
+        await flusher.flush_if_due()
+
+        # INFO 级: 上 Event Bus
+        await self.emit_trace(ctx, TraceLevel.INFO, "evidence_loaded",
+                              data={"count": len(ctx.evidence)})
+        await flusher.flush_if_due()
+
+        # 调 Tool
+        quote = await ctx.invoke_tool("market.quote", symbol="hk00700")
+
+        # WARNING 级: 上 Event Bus (含原因)
+        if quote is None:
+            await self.emit_trace(ctx, TraceLevel.WARNING, "quote_unavailable",
+                                  data={"symbol": "hk00700", "fallback": "latest_cached"})
+
+        # ERROR 级: 立即 flush, 不等 100ms
+        try:
+            result = await self._synthesize(quote)
+        except Exception as e:
+            await self.emit_trace(ctx, TraceLevel.ERROR, "synthesize_failed",
+                                  data={"error": str(e)})
+            await flusher.flush()  # ERROR 立即 flush
+            raise
+
+        await flusher.flush()
+        return result
 ```
 
-**Renderer 端订阅**(`window.api.on('thinking.trace', ...)`)显示在 Thinking Trace 面板。
+**Renderer 端订阅**(`window.api.on('thinking.trace.batched', ...)`)批量显示在 Thinking Trace 面板。
+
+**关键约束**:
+- **DEBUG 永不上 IPC**: Agent 内部调试用, 留本地 buffer
+- **INFO / WARNING / ERROR 上 Event Bus**: 批量 100ms flush 一次
+- **ERROR 立即 flush**: 不等 100ms, 失败信号必须实时
+- **flush_interval 100ms**: 经实测, 这是 Electron IPC 流畅 vs 实时性的最优折中
 
 ---
 
@@ -373,22 +508,17 @@ Top 候选(20-30 条)
 - **Token 控制**: 严禁把原始新闻全文喂给 LLM,必须先 Map 抽取 Fact dict(每条 ≤ 200 token),再 Reduce 综合
 - **幻觉防御**: 所有 Fact 必须带 `source_url` + `collected_at`,LLM 输出时强制引用,不允许凭空生成数字
 
-**工具集**(`get_capabilities()` 返回):
+**工具集**(修订 1 后: capabilities 只列思考型动作):
 
-| Action | 输入 | 输出 |
-|--------|------|------|
-| `get_sector_constituents` | `{sector, limit}` | `{symbols: [...], as_of: ...}` |
-| `get_quote` | `{symbols}` | `{quotes: [...], source, collected_at}` |
-| `get_kline` | `{symbol, days}` | `{klines: [...], source, collected_at}` |
-| `get_finance` | `{symbol, limit}` | `{reports: [...], source, collected_at}` |
-| `get_fund_flow` | `{symbols, days}` | `{flows: [...], summary, source}` |
-| `get_technical` | `{symbol, indicators}` | `{indicators: {...}, source}` |
-| `get_news` | `{symbols, days, sentiment}` | `{news: [...], source}` |
-| `analyze_news_sentiment` | `{symbols, days}` | `{aggregated_sentiment, breakdown_by_symbol, source}` |
-| `compute_technical` | `{symbols, indicators}` | `{results: {...}, source}` |
-| `generate_research_report` | `{all_upstream_results}` | `{report: {...}, confidence, evidence_strength}` |
-| `generate_risk_warning` | `{upstream_results}` | `{warnings: [...], risk_level}` |
-| `clarify_intent` | `{raw_intent, candidates}` | `{question: str}` |
+| Capability(思考型) | 输入 | 输出 | tools_used(声明式依赖) |
+|--------|------|------|---------|
+| `analyze_asset` | `{symbol, days, dimensions}` | `{analysis: {...}, confidence}` | `["market.quote", "market.kline", "finance.report", "technical.compute"]` |
+| `analyze_sector` | `{sector, limit, days}` | `{constituents: [...], flow_summary}` | `["sector.constituents", "market.fund_flow", "news.search"]` |
+| `generate_research_report` | `{evidence_pack, dimensions}` | `{report: {...}, data_used}` | (无外部 IO,纯 LLM 综合) |
+| `explain_market_move` | `{symbol, event_window}` | `{explanation: "...", evidence_refs}` | `["market.quote", "news.search", "news.sentiment"]` |
+| `analyze_news_sentiment` | `{symbols, days}` | `{aggregated: {...}, breakdown}` | `["news.search", "news.sentiment"]` |
+| `generate_risk_warning` | `{upstream_results}` | `{warnings: [...], risk_level}` | (无外部 IO) |
+| `clarify_intent` | `{raw_intent, candidates}` | `{question: str}` | (无外部 IO) |
 
 **输入**: 来自 Orchestrator 的 `AgentContext`(含上游 Evidence + 用户意图)
 
@@ -446,17 +576,17 @@ Research 报告 ───┼──▶│  左脑(量化)   │───▶│  �
 
 **代码实现位置**: `backend/agents/portfolio/risk_guard.py`(独立模块,LLM 调用前 / 后双重校验)
 
-**工具集**:
+**Capabilities(思考型动作, 修订 1 后)**:
 
-| Action | 输入 | 输出 |
-|--------|------|------|
-| `analyze_holdings` | `{account_id?}` | `{positions: [...], summary: {...}, source}` |
-| `compute_pnl_attribution` | `{positions, days}` | `{attribution: {...}, total_pnl, source}` |
-| `compute_risk_exposure` | `{positions}` | `{exposure_by_sector, exposure_by_market, var, source}` |
-| `score_buy_signal` | `{fund_flow, news, technical}` | `{buy_score, action, confidence, evidence_strength}` |
-| `suggest_rebalance` | `{positions, target_allocation}` | `{trades: [...], expected_improvement, confidence}` |
-| `detect_concentration_risk` | `{positions}` | `{alerts: [...], risk_level}` |
-| `compute_position_size` | `{symbol, account_value, risk_tolerance}` | `{suggested_size, kelly_fraction, confidence}` |
+| Capability(思考型) | 输入 | 输出 | tools_used(声明式依赖) |
+|--------|------|------|---------|
+| `analyze_holdings` | `{account_id?}` | `{positions, summary, attribution}` | `["portfolio.positions", "portfolio.pnl", "market.quote"]` |
+| `compute_risk_exposure` | `{positions}` | `{exposure_by_sector, exposure_by_market, var}` | `["portfolio.positions"]` |
+| `score_buy_signal` | `{fund_flow, news, technical}` | `{buy_score, action, confidence}` | (综合上游结果,无额外 IO) |
+| `suggest_rebalance` | `{positions, target_allocation}` | `{trades, expected_improvement, risk_warnings}` | `["portfolio.positions", "market.quote"]` |
+| `detect_concentration_risk` | `{positions}` | `{alerts, risk_level}` | `["portfolio.positions"]` |
+| `compute_position_size` | `{symbol, account_value, risk_tolerance}` | `{suggested_size, kelly_fraction, confidence}` | `["portfolio.positions", "market.quote"]` |
+| `explain_pnl_attribution` | `{attribution_data, days}` | `{narrative: "...", key_drivers}` | (无外部 IO,纯 LLM 解释) |
 
 **关键差异(对比 Research)**:
 - **强依赖 v1 portfolio_service**: 大部分工具直接复用 `PortfolioService.get_positions()` / `get_realized_pnl()` 等
@@ -627,21 +757,25 @@ Planner 接收后:
 2. Orchestrator 调度 Portfolio Agent 评估 → Risk Guard 校验
 3. 评估结果 + Alert 通知合并推送(避免用户被通知轰炸 + 还要单独查评估)
 
-**工具集**:
+**Capabilities(思考型动作, 修订 1 后: 3 层漏斗 → 3 个 capability)**:
 
-| Action | 输入 | 输出 |
-|--------|------|------|
-| `scan_market_anomaly` | `{tracked_symbols, threshold_pct}` | `{anomalies: [...], collected_at}` |
-| `detect_news_burst` | `{raw_news: list, ticker_pool, macro_rules}` | `{layered_results: {layer1_dedup, layer2_scored, layer3_judged}, alerts: [...]}` |
-| `detect_fund_flow_anomaly` | `{symbols, threshold_value}` | `{anomalies: [...], source}` |
-| `news_simhash_filter` | `{news_list, seen_hashes, threshold=3}` | `{deduped: [...], dropped: [...]}` |
-| `news_macro_whitelist_check` | `{news_list, whitelist=MACRO_WHITELIST}` | `{passed: [{news, matched_keywords}], rejected: [...]}` |
-| `news_ticker_linking` | `{news_list, ticker_pool, macro_rules}` | `{linked: [{news, matched_tickers, macro_causal}], unlinked: [...]}` |
-| `news_small_model_score` | `{news_list, model="finbert"}` | `{scored: [{news, relevance, polarity, shock_score}]}` |
-| `news_llm_judge_batch` | `{news_batch, batch_size=5}` | `{judgments: [{news_id, fundamentally_changed, change_type, ...}]}` |
-| `fire_alert` | `{type, severity, payload}` | `{alert_id, dispatched_via: [notify, ui, webhook]}` |
-| `route_to_planner` | `{auto_intent, severity, context}` | `{plan_id, dispatched: true}` |
-| `register_alert_rule` | `{rule_definition}` | `{rule_id, active: true}` |
+| Capability(思考型) | 输入 | 输出 | tools_used(声明式依赖) |
+|--------|------|------|---------|
+| `scan_market_anomaly` | `{tracked_symbols, threshold_pct}` | `{anomalies, collected_at}` | `["market.quote", "market.fund_flow"]` |
+| `detect_news_burst` | `{raw_news, ticker_pool, macro_rules}` | `{layered_results, alerts}` | `["news.fetch", "news.macro_whitelist", "news.ticker_linking", "news.small_model_score", "news.llm_judge_batch"]` |
+| `detect_fund_flow_anomaly` | `{symbols, threshold_value}` | `{anomalies, source}` | `["market.fund_flow"]` |
+| `fire_alert` | `{type, severity, payload}` | `{alert_id, dispatched_via}` | `["alert.notify", "alert.webhook"]` |
+| `route_to_planner` | `{auto_intent, severity, context}` | `{plan_id, dispatched}` | (无外部 IO, 内部 Orchestrator 路由) |
+| `register_alert_rule` | `{rule_definition}` | `{rule_id, active}` | (无外部 IO, 写 alert_rules 表) |
+
+**新闻漏斗 3 层 → Capability + Tool 映射(修订 1 后清晰化)**:
+
+| 漏斗层 | 对应 Tool(执行型) | 触发 Capability |
+|--------|------------------|----------------|
+| **第 1 层硬规则** | `news.macro_whitelist`, `news.ticker_linking`, `news.simhash` | (Tool 自动执行,无 Capability) |
+| **第 2 层小模型** | `news.small_model_score` | (Tool 自动执行) |
+| **第 3 层 LLM 裁判** | `news.llm_judge_batch` | (Tool 自动执行) |
+| **整体编排** | — | `detect_news_burst` Capability 协调 3 层 Tool |
 
 **关键差异(对比 Research / Portfolio)**:
 - **持续运行** — 不等待用户输入,通过 Event Bus 持续订阅 `market.update` / `news.collected` 事件
@@ -1241,75 +1375,158 @@ def recency_score(collected_at: datetime) -> float:
 
 ---
 
-## 10. Tool 注册协议
+## 10. Tool 注册协议(修订 1 展开: 完整 Tool Registry 章节)
 
-### 9.1 Tool 接口
+### 10.1 Tool 接口(修订 1 强化: 工具是执行单元, 不含思考)
 
 ```python
 class Tool(ABC):
     """所有 Tool 必须实现此接口。"""
-    name: str                                    # 唯一名,如 "market.quote"
-    description: str                             # 自然语言描述,供 LLM Planner 用
-    input_schema: type[BaseModel]                # Pydantic 模型,声明输入参数
-    output_schema: type[BaseModel]                # Pydantic 模型,声明输出
+    name: str                                # "market.quote" — 命名空间.动作
+    version: str = "1.0.0"
+    description: str                         # 自然语言描述, 供 LLM Planner 选 Tool
+    required_scopes: list[str]               # ["read"] / ["write"] / ["confirm"]
+    input_schema: type[BaseModel]            # Pydantic 模型, 严格类型
+    output_schema: type[BaseModel]           # Pydantic 模型
 
     @abstractmethod
-    async def execute(self, params: dict, context: ToolContext) -> dict: ...
+    async def run(self, **kwargs) -> "ToolResult": ...
 
-    @abstractmethod
-    def get_required_auth(self) -> list[str]: ...  # 需要的权限 / API Key
+    def get_required_auth(self) -> list[str]:
+        return self.required_scopes
 ```
 
-### 9.2 Tool Registry
+**关键约束(修订 1 强化的分层原则)**:
+- **Tool 不感知 Agent**: 只接收 `trace_id` 关联, 不持有 Agent 引用
+- **Tool 不知道调用方 Agent**: 避免循环依赖
+- **Tool 是执行型, 不含思考**: 内部不调 LLM, 不做"分析", 只返回原始 IO 结果
+- **输入输出强类型**: 避免 `dict[str, Any]` (与 TaskGraph 的 inputs_mapping 配合, 见 §3.2)
+
+### 10.2 Tool Registry(修订 1: 单一注册入口)
 
 ```python
 # backend/agents/tools/registry.py
-TOOL_REGISTRY: dict[str, Tool] = {}
+TOOL_REGISTRY: dict[str, "Tool"] = {}
 
-def register(tool: Tool) -> Tool:
+def register(tool: "Tool") -> "Tool":
     TOOL_REGISTRY[tool.name] = tool
     return tool
+
+
+class ToolRegistry:
+    """唯一对外暴露的 Tool 调用入口, Agent 通过 ctx.invoke_tool() 走这里。"""
+    def __init__(self) -> None:
+        self._tools: dict[str, "Tool"] = {}
+
+    def register(self, tool: "Tool") -> None:
+        self._tools[tool.name] = tool
+
+    async def invoke(
+        self,
+        name: str,
+        kwargs: dict,
+        trace_id: str,
+        session_scopes: list[str] = ["read"],
+    ) -> "ToolResult":
+        tool = self._tools.get(name)
+        if tool is None:
+            raise ToolNotFound(f"Tool '{name}' not registered")
+        # 鉴权: 比对 session_scopes 与 tool.required_scopes
+        if not set(tool.required_scopes).issubset(set(session_scopes)):
+            raise InsufficientScope(
+                f"Tool '{name}' requires {tool.required_scopes}, "
+                f"session has {session_scopes}"
+            )
+        # 强类型校验 kwargs
+        validated = tool.input_schema(**kwargs)
+        # 调用
+        result = await tool.run(**validated.model_dump())
+        # 审计: 入 raw_data
+        await self._audit(tool.name, kwargs, result, trace_id)
+        return result
+
+    async def _audit(self, name, kwargs, result, trace_id) -> None:
+        # 写入 raw_data 表, 与 v1 一致
+        ...
+
 
 # 使用示例
 @register
 class QuoteTool(Tool):
     name = "market.quote"
     description = "获取最新行情"
+    required_scopes = ["read"]
     input_schema = QuoteInput
     output_schema = QuoteOutput
 
-    async def execute(self, params: dict, context: ToolContext) -> dict:
+    async def run(self, symbols: list[str]) -> dict:
         # 委托给 v1 CollectionService
-        return await context.collection_service.get_quotes(params["symbols"])
-
-    def get_required_auth(self) -> list[str]:
-        return []  # 读操作无需 auth
+        return await collection_service.get_quotes(symbols)
 ```
 
-### 9.3 Tool Context
+### 10.3 Tool 目录组织(按 namespace 划分)
 
-```python
-class ToolContext(BaseModel):
-    """Tool 执行时需要的上下文,由 Orchestrator 注入。"""
-    api_key: str | None = None                   # X-API-Key(写 Tool 需要)
-    collection_service: CollectionService        # v1 Service 引用
-    news_service: NewsService
-    portfolio_service: PortfolioService
-    evidence_builder: EvidenceBuilder
-    db: Connection                                # SQLite 连接(由 _WRITE_LOCK 保护)
-    correlation_id: str                          # 关联 task_id / plan_id
+```
+backend/agents/tools/
+├── __init__.py
+├── registry.py                      # ToolRegistry 单例
+├── market/
+│   ├── quote.py                     # market.quote
+│   ├── kline.py                     # market.kline
+│   ├── fund_flow.py                 # market.fund_flow
+│   └── limit_depth.py
+├── news/
+│   ├── fetch.py                     # news.fetch (拉原始)
+│   ├── search.py                    # news.search (关键词)
+│   ├── sentiment.py                 # news.sentiment (情感分析)
+│   ├── macro_whitelist.py           # news.macro_whitelist
+│   ├── ticker_linking.py            # news.ticker_linking
+│   ├── simhash.py                   # news.simhash
+│   ├── small_model_score.py         # news.small_model_score
+│   └── llm_judge_batch.py           # news.llm_judge_batch
+├── finance/
+│   ├── report.py                    # finance.report
+│   ├── indicator.py                 # finance.indicator
+│   └── holder.py                    # finance.holder
+├── portfolio/
+│   ├── positions.py                 # portfolio.positions (read)
+│   ├── snapshot.py                  # portfolio.snapshot
+│   ├── pnl.py                       # portfolio.pnl (read)
+│   ├── rebalance.py                 # portfolio.rebalance (write + confirm)
+│   └── record_trade.py              # portfolio.record_trade (write + confirm)
+├── backtest/
+│   └── indicator.py                 # backtest.indicator
+└── alert/
+    ├── notify.py                    # alert.notify (desktop / webhook)
+    └── webhook.py
 ```
 
-### 9.4 鉴权传递
+### 10.4 v1 → v2 Tool 映射(充分利用 v1 已有代码)
 
-- **读 Tool**(如 `market.quote`、`news.search`)不需要 API Key
-- **写 Tool**(如 `portfolio.record_trade`、`reports.generate`)需要 `X-API-Key` 验证
-- Orchestrator 从 WebSocket / IPC 连接中提取 API Key,注入到 ToolContext
-- Tool 内部不直接读 HTTP 头(单一入口 = Orchestrator)
+| v2 Tool | v1 模块 | 备注 |
+|---------|--------|------|
+| `market.quote` | `CollectionService.get_quote()` | 直接复用 |
+| `market.kline` | `CollectionService.get_kline()` | 直接复用 |
+| `market.fund_flow` | `CollectionService.get_fund_flow()` | 直接复用 |
+| `news.fetch` | `NewsService.collect_news()` | 直接复用 |
+| `news.sentiment` | `NewsService.analyze_sentiment()` (DeepSeek) | 复用 + 防御性拦截已就位 |
+| `portfolio.positions` | `PortfolioService.get_positions()` | 直接复用 |
+| `portfolio.pnl` | `PortfolioService.get_realized_pnl()` | 直接复用 |
+| `portfolio.rebalance` | `PortfolioService.suggest_rebalance()` (新) | Phase 1 新增, 调 PyPortfolioOpt |
+| `finance.report` | `EvidenceBuilder._build_finance()` | 复用, 包成 Tool |
+| `evidence.build` | `EvidenceBuilder.build()` | 复用, 但要避开 Tool 分层(不是"工具") |
 
-### 9.5 审计与可观测性
+### 10.5 Tool 鉴权传递
 
-每个 Tool 调用自动记录到 `raw_data` 表:
+- **读 Tool**(`required_scopes = ["read"]`): 不需要 API Key, 默认所有 session 有 read 权限
+- **写 Tool**(`required_scopes = ["write"]`): 需要 `X-API-Key` 验证 (沿用 v1 模式)
+- **确认 Tool**(`required_scopes = ["confirm"]`): 需要用户显式点击确认, `portfolio.rebalance` / `portfolio.record_trade` 属此类
+- Orchestrator / UserPreferences 维护 session_scopes, Registry 在 invoke 前比对
+- **Tool 内部不直接读 HTTP 头** (单一入口 = Registry)
+
+### 10.6 审计与可观测性
+
+每个 Tool 调用自动记录到 `raw_data` 表(与 v1 一致):
 
 ```python
 {
@@ -1317,7 +1534,8 @@ class ToolContext(BaseModel):
     "input": {"symbols": ["hk00700"]},
     "output": {"quotes": [...]},
     "duration_ms": 234,
-    "correlation_id": "plan-uuid-1234-task-t5",
+    "trace_id": "task-t5",
+    "plan_id": "plan-uuid-1234",
     "source": "orchestrator",
     "data_type": "tool_call",
     "raw_json": "{...}",
@@ -1325,11 +1543,28 @@ class ToolContext(BaseModel):
 }
 ```
 
+**审计要求**:
+- 写 Tool (含 `["write"]` 或 `["confirm"]` 权限) **必须** 记录全量 input + output (回溯)
+- 读 Tool 可仅记录 input + summary (节省 raw_data 空间)
+- 失败的 Tool 调用记录 error_message + stack_trace
+
+### 10.7 Tool 失败处理
+
+| 失败类型 | 处理 |
+|---------|------|
+| Tool 未注册 | `ToolNotFound` 异常 → Orchestrator 捕获 → Task status="failure" |
+| 权限不足 | `InsufficientScope` 异常 → Orchestrator 捕获 → Task status="failure" → Planner 触发重规划(改用其他 Tool) |
+| Tool 内部异常 | Tool 抛出, Registry 捕获, 包装为 ToolResult(status="error", error=str(e)) |
+| 超时 | Registry 设置 30s 超时 (默认), 超时后取消 Tool 任务, 返回 ToolResult(status="timeout") |
+| 输入校验失败 | Pydantic ValidationError → 立即返回, 不进入 Tool.run() |
+
+**关键约束**: Tool 失败**不阻塞 Plan**;Orchestrator 标记该 Task `failure`,其他 Task 继续执行(除非要 depends_on 这个 Task)。
+
 ---
 
 ## 11. 典型业务流与共享状态机
 
-### 10.1 完整业务流:用户问"新能源板块能不能买"
+### 11.1 完整业务流:用户问"新能源板块能不能买"
 
 ```
 用户输入:"帮我看看今天新能源板块能不能买"
@@ -1406,7 +1641,7 @@ class ToolContext(BaseModel):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 10.2 共享状态机(Shared State Machine)
+### 11.2 共享状态机(Shared State Machine)
 
 5 个 State 是 Agent 间协作的**共享状态总线**,存储在 Redis / SQLite(Phase 1 用 SQLite 单进程,Phase 2+ 迁 Redis):
 
@@ -1423,7 +1658,7 @@ class ToolContext(BaseModel):
 - 任意 State 失败 → 触发 Planner 重规划(回到 State 1)
 - Monitoring Agent 触发 → 创建新 Plan_id,新状态机并行运行(不打断当前)
 
-### 10.3 实战踩坑提示(Owner 视角)
+### 11.3 实战踩坑提示(Owner 视角)
 
 > 以下是从多智能体金融系统实战中提炼的关键陷阱。每条都已对应到本文档具体设计点。
 
