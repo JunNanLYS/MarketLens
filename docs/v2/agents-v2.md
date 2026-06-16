@@ -1434,20 +1434,20 @@ class SingleJudgment(BaseModel):
 
 ---
 
-## 7. Event Bus
+## 6. Event Bus
 
-### 7.1 实现选型 + 边界划分(ChatGPT 第 2 轮反馈)
+### 6.1 实现选型 + 边界划分(ChatGPT 第 2 轮反馈)
 
 | 阶段 | 选型 | 理由 |
 |------|------|------|
 | **v2 Phase 1** | **Observer Pattern**(订阅者 set + `asyncio.gather` 广播) | 真正的 Pub-Sub,支持多订阅者并发接收;零依赖 |
 | **v2 Phase 2+** | Redis pub-sub | 支持多进程 / 跨机器(Monitoring Agent 可独立部署) |
 
-> **架构修订说明**: 原设计 §6.1 选用 `asyncio.Queue`,但 `asyncio.Queue` 是点对点(单消费者)而非 Pub-Sub(多消费者广播),会导致 Monitoring Agent 和 Confidence Engine 同时订阅 `task.completed` 时事件被随机分发给其中一个。修正为 Observer Pattern,见 [§7.2](#72-event-bus-实现细节)。
+> **架构修订说明**: 原设计 §6.1 选用 `asyncio.Queue`,但 `asyncio.Queue` 是点对点(单消费者)而非 Pub-Sub(多消费者广播),会导致 Monitoring Agent 和 Confidence Engine 同时订阅 `task.completed` 时事件被随机分发给其中一个。修正为 Observer Pattern,见 [§6.2](#62-domain-event-vs-internal-call-边界)。
 >
 > **第二轮修订(ChatGPT 反馈)**: "Event-Driven ≠ Everything Is Event"。本节区分 **Domain Event**(走 Event Bus)与 **Internal Call**(直接函数调用),避免事件系统膨胀到不可维护的程度。
 
-### 7.2 Domain Event vs Internal Call 边界
+### 6.2 Domain Event vs Internal Call 边界
 
 **核心原则**:Event Bus 只承载**跨模块通知**,不承载**模块内部状态变更**。
 
@@ -1464,7 +1464,7 @@ class SingleJudgment(BaseModel):
 
 > **反例**(已删除): `agent.memory.updated`、`tool.executed`、`task.context.changed`、`confidence.updated`、`strategy.updated` —— 全部改为 Internal Call。原因是:这些事件的"订阅者"通常就是触发者本身,绕一圈反而把"谁改了 Memory"变成不可追溯的问题。
 
-### 7.3 10 类核心 Domain Event
+### 6.3 10 类核心 Domain Event
 
 | # | 事件 | Payload | 触发方 | 订阅方 |
 |---|------|---------|--------|--------|
@@ -1488,19 +1488,19 @@ class SingleJudgment(BaseModel):
 
 **事件总线作为"模块间的神经系统"**,而不是"所有代码的血液循环系统"——避免后期订阅爆炸 / 循环依赖。
 
-### 7.4 统一 Envelope
+### 6.4 统一 Envelope
 
 ```python
 class Event(BaseModel):
     event_id: str                                # UUID
-    event_type: str                              # 见 §7.3 表
+    event_type: str                              # 见 §6.3 表
     timestamp: datetime                          # 事件时间
     source: str                                  # 事件来源 Agent / 模块
     correlation_id: str | None = None            # 关联的 plan_id / alert_id(若有)
     payload: dict[str, Any]                      # 业务负载
 ```
 
-### 7.5 订阅模式
+### 6.5 订阅模式
 
 ```python
 # 示例:Alert Panel 订阅 alert.fired
@@ -1521,7 +1521,7 @@ event_bus.subscribe("timer.ai_report", lambda event: orchestrator.handle_schedul
 
 ---
 
-## 8. Agent Memory 三层
+## 7. Agent Memory 三层
 
 ### 8.1 三层划分
 
@@ -1596,13 +1596,13 @@ class MarketSnapshot(BaseModel):
 
 ---
 
-## 9. Confidence Engine
+## 8. Confidence Engine
 
 > **架构修订(ChatGPT 第 2 轮反馈)**: 旧设计 `confidence=0.8134` 等浮点数属于 **Pseudo Precision(伪精确)**——金融领域对 `0.82` 的解读会过度,而实际并无真实统计意义。改为 **LOW / MEDIUM / HIGH 三档 + Evidence 强 / 中 / 弱** 二维评估,既符合用户认知习惯,又避免 Pseudo Precision。
 
-### 9.1 二维评估框架
+### 8.1 二维评估框架
 
-#### 9.1.1 Confidence(模型对输出的把握)
+#### 8.1.1 Confidence(模型对输出的把握)
 
 | 档位 | 含义 | 触发条件 |
 |------|------|---------|
@@ -1622,7 +1622,7 @@ class Confidence(str, Enum):
 ```python
 def compute_confidence(
     consistency: float,        # 0-1, 多次推理一致性
-    evidence_strength: float,  # 0-1, 见 §9.1.2
+    evidence_strength: float,  # 0-1, 见 §8.1.2
 ) -> Confidence:
     score = 0.5 * consistency + 0.5 * evidence_strength
     if score >= 0.75:
@@ -1635,7 +1635,7 @@ def compute_confidence(
 
 > **关键约束**: `Confidence` 是**枚举,不是浮点数**。UI 显示徽章颜色(绿/黄/红),不用数字。
 
-#### 9.1.2 Evidence Strength(支撑证据强度)
+#### 8.1.2 Evidence Strength(支撑证据强度)
 
 | 档位 | 含义 | 触发条件 |
 |------|------|---------|
@@ -1668,7 +1668,7 @@ def compute_evidence_strength(
         return EvidenceStrength.WEAK
 ```
 
-### 9.2 应用规则
+### 8.2 应用规则
 
 | Confidence | Evidence | UI 显示 | Orchestrator 行为 |
 |------------|----------|---------|------------------|
@@ -1680,11 +1680,11 @@ def compute_evidence_strength(
 
 **contradiction_score 保留(浮点 0-1)** —— 用于内部判定矛盾度,不暴露给用户。
 
-### 9.3 反馈回路:离线 Strategy Evaluator(严禁在线学习)
+### 8.3 反馈回路:离线 Strategy Evaluator(严禁在线学习)
 
 > **架构修订(ChatGPT 第 2 轮反馈)**: 旧设计 "AI 建议 → 市场验证 → 自动 `confidence += 0.05`" 是 **在线学习系统**——金融市场是**非平稳系统**,今天有效明天失效,会导致 **策略漂移 / 越学越差**。改为**离线 + 用户确认**,记录评估结果但**不自动调整参数**。
 
-#### 9.3.1 离线任务
+#### 8.3.1 离线任务
 
 **触发**:`backend/agents/strategy_evaluator.py` 在每个交易日 **20:30** 运行,异步任务不阻塞主流程。
 
@@ -1695,7 +1695,7 @@ def compute_evidence_strength(
 - 各 Confidence 档位的实际命中率(用于**人工 review**,不写回 confidence 算法)
 - 异常样本(连续 3 次"买"建议后 7 天内跌 > 10%)
 
-#### 9.3.2 胜 / 负判定规则(显式,非 LLM 主观)
+#### 8.3.2 胜 / 负判定规则(显式,非 LLM 主观)
 
 | AI action | 胜 | 负 | 平 |
 |-----------|----|----|----|
@@ -1704,7 +1704,7 @@ def compute_evidence_strength(
 | `watch` | N 日内无剧烈变化(±3%) | 涨/跌 > 5% | 3-5% 区间 |
 | `avoid` | N 日内确实下跌 | 上涨 | 幅度不够 |
 
-#### 9.3.3 严禁的"在线自动调权"
+#### 8.3.3 严禁的"在线自动调权"
 
 | ❌ 禁止 | ✅ 替代 |
 |--------|--------|
@@ -1714,7 +1714,7 @@ def compute_evidence_strength(
 
 **Why**: 金融市场非平稳 → 在线学习会策略漂移 → 越学越差。所有权重调整必须**人工 review**。
 
-#### 9.3.4 反馈回路图
+#### 8.3.4 反馈回路图
 
 ```
 AI 输出 (含 Confidence / Evidence)
@@ -1736,9 +1736,9 @@ Strategy Evaluator (离线 20:30 跑)
 
 ---
 
-## 10. Tool 注册协议(修订 1 展开: 完整 Tool Registry 章节)
+## 9. Tool 注册协议(修订 1 展开: 完整 Tool Registry 章节)
 
-### 10.1 Tool 接口(修订 1 强化: 工具是执行单元, 不含思考)
+### 9.1 Tool 接口(修订 1 强化: 工具是执行单元, 不含思考)
 
 ```python
 class Tool(ABC):
@@ -1763,7 +1763,7 @@ class Tool(ABC):
 - **Tool 是执行型, 不含思考**: 内部不调 LLM, 不做"分析", 只返回原始 IO 结果
 - **输入输出强类型**: 避免 `dict[str, Any]` (与 TaskGraph 的 inputs_mapping 配合, 见 §3.2)
 
-### 10.2 Tool Registry(修订 1: 单一注册入口)
+### 9.2 Tool Registry(修订 1: 单一注册入口)
 
 ```python
 # backend/agents/tools/registry.py
@@ -1825,7 +1825,7 @@ class QuoteTool(Tool):
         return await collection_service.get_quotes(symbols)
 ```
 
-### 10.3 Tool 目录组织(按 namespace 划分)
+### 9.3 Tool 目录组织(按 namespace 划分)
 
 ```
 backend/agents/tools/
@@ -1862,7 +1862,7 @@ backend/agents/tools/
     └── webhook.py
 ```
 
-### 10.4 v1 → v2 Tool 映射(充分利用 v1 已有代码)
+### 9.4 v1 → v2 Tool 映射(充分利用 v1 已有代码)
 
 | v2 Tool | v1 模块 | 备注 |
 |---------|--------|------|
@@ -1877,7 +1877,7 @@ backend/agents/tools/
 | `finance.report` | `EvidenceBuilder._build_finance()` | 复用, 包成 Tool |
 | `evidence.build` | `EvidenceBuilder.build()` | 复用, 但要避开 Tool 分层(不是"工具") |
 
-### 10.5 Tool 鉴权传递
+### 9.5 Tool 鉴权传递
 
 - **读 Tool**(`required_scopes = ["read"]`): 不需要 API Key, 默认所有 session 有 read 权限
 - **写 Tool**(`required_scopes = ["write"]`): 需要 `X-API-Key` 验证 (沿用 v1 模式)
@@ -1885,7 +1885,7 @@ backend/agents/tools/
 - Orchestrator / UserPreferences 维护 session_scopes, Registry 在 invoke 前比对
 - **Tool 内部不直接读 HTTP 头** (单一入口 = Registry)
 
-### 10.6 审计与可观测性
+### 9.6 审计与可观测性
 
 每个 Tool 调用自动记录到 `raw_data` 表(与 v1 一致):
 
@@ -1909,7 +1909,7 @@ backend/agents/tools/
 - 读 Tool 可仅记录 input + summary (节省 raw_data 空间)
 - 失败的 Tool 调用记录 error_message + stack_trace
 
-### 10.7 Tool 失败处理
+### 9.7 Tool 失败处理
 
 | 失败类型 | 处理 |
 |---------|------|
@@ -1923,9 +1923,9 @@ backend/agents/tools/
 
 ---
 
-## 11. 典型业务流与共享状态机
+## 10. 典型业务流与共享状态机
 
-### 11.1 完整业务流:用户问"新能源板块能不能买"
+### 10.1 完整业务流:用户问"新能源板块能不能买"
 
 ```
 用户输入:"帮我看看今天新能源板块能不能买"
@@ -2002,7 +2002,7 @@ backend/agents/tools/
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 11.2 共享状态机(Shared State Machine)
+### 10.2 共享状态机(Shared State Machine)
 
 5 个 State 是 Agent 间协作的**共享状态总线**,存储在 Redis / SQLite(Phase 1 用 SQLite 单进程,Phase 2+ 迁 Redis):
 
@@ -2019,7 +2019,7 @@ backend/agents/tools/
 - 任意 State 失败 → 触发 Planner 重规划(回到 State 1)
 - Monitoring Agent 触发 → 创建新 Plan_id,新状态机并行运行(不打断当前)
 
-### 11.3 实战踩坑提示(Owner 视角)
+### 10.3 实战踩坑提示(Owner 视角)
 
 > 以下是从多智能体金融系统实战中提炼的关键陷阱。每条都已对应到本文档具体设计点。
 
@@ -2057,7 +2057,7 @@ backend/agents/tools/
 
 **现象**: Monitoring → Portfolio → Monitoring → Portfolio ... 几秒内死循环。
 
-**修复**(已在 [§7](agents-v2.md#7-event-bus) 设计):
+**修复**(已在 [§6](agents-v2.md#6-event-bus) 设计):
 - **强制 Event Bus 解耦**: Agent 间不直接调用,通过 emit_event / subscribe
 - **事件总线是单向 fire-and-forget**: 订阅者失败不影响发布者
 - **每个 Agent 有自己的状态**: 不假设其他 Agent 的状态,只通过 Event 触发

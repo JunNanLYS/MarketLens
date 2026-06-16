@@ -121,7 +121,7 @@
 - **Research Agent**: 聚合行情/财报/新闻/资金流 → 结构化研究报告(只做事实,不做决策)
 - **Portfolio Agent**: 持仓分析 + 风险暴露 + 盈亏归因 + 仓位优化建议(系统中最赚钱的 Agent)
 - **Monitoring Agent**: 每分钟扫描行情 + 新闻突发 + 异常资金流 → 触发 Alert(从被动工具 → 主动系统的关键)
-- **Event Bus**: asyncio Queue(轻量) / Redis pub-sub(进阶);**11 类 Domain Event**(详见 [`agents-v2.md`](agents-v2.md) §7.3),只承载跨模块通知;**模块内部状态走直接函数调用**
+- **Event Bus**: asyncio Queue(轻量) / Redis pub-sub(进阶);**11 类 Domain Event**(详见 [`agents-v2.md`](agents-v2.md) §6.3),只承载跨模块通知;**模块内部状态走直接函数调用**
 
 **承载**: Python ≥ 3.13 + asyncio;FastAPI 主进程内嵌
 
@@ -169,10 +169,10 @@
   - **Short-term context**: 当前任务上下文(任务级 TTL)
   - **Strategy memory**: 用户偏好 + 历史决策
   - **Market memory**: 市场状态快照(每日收盘后冻结)
-- **📐 Confidence Engine**: 三指标系统
-  - `confidence`: AI 对输出的把握(0-1)
-  - `evidence_strength`: 支撑证据的强度(0-1)
-  - `contradiction_score`: 与历史结论的矛盾度(0-1,越高越警示)
+- **📐 Confidence Engine**: 二维评估系统
+  - `Confidence`: HIGH / MEDIUM / LOW(枚举,不用浮点数,避免 Pseudo Precision)
+  - `Evidence Strength`: STRONG / MEDIUM / WEAK
+  - **严禁在线学习** —— 离线 Strategy Evaluator 生成评估报告,**人工 review** 后调整参数
 
 **关键原则**:
 - 所有 AI 输出必须含 `data_used` 字段,列出引用的数据源 + 采集时间(继承 v1 evidence-driven 约束)
@@ -594,10 +594,10 @@ PolicyEngine.evaluate(plan, market_state)
 | **Research Agent** | 聚合行情/财报/新闻/资金流 → 结构化研究报告(只做事实,不做决策) | [§5](agents-v2.md#5-research-agent) |
 | **Portfolio Agent** | 持仓分析 + 风险暴露 + 盈亏归因 + 仓位优化建议 | [§5](agents-v2.md#5-portfolio-agent) |
 | **Monitoring Agent** | 每分钟扫描行情 + 新闻突发 + 异常资金流 → 触发 Alert | [§5](agents-v2.md#5-monitoring-agent) |
-| **Event Bus** | Observer Pattern(订阅者 set + `asyncio.gather` 广播),**11 类 Domain Event**(详见 §7.3 / Domain/Internal 边界 §7.2) | [§7](agents-v2.md#7-event-bus) |
-| **Agent Memory** | Short-term / Strategy / Market 三层 | [§8](agents-v2.md#8-agent-memory-三层) |
-| **Confidence Engine** | confidence / evidence_strength / contradiction_score 三指标 | [§9](agents-v2.md#9-confidence-engine) |
-| **Tool 协议** | Tool interface + Registry + 鉴权传递 | [§10](agents-v2.md#10-tool-注册协议) |
+| **Event Bus** | Observer Pattern(订阅者 set + `asyncio.gather` 广播),**11 类 Domain Event**(详见 §6.3 / Domain/Internal 边界 §6.2) | [§6](agents-v2.md#6-event-bus) |
+| **Agent Memory** | Short-term / Strategy / MarketSnapshot 三层(只存事实,不打状态标签) | [§7](agents-v2.md#7-agent-memory-三层) |
+| **Confidence Engine** | Confidence(HIGH/MEDIUM/LOW)+ Evidence(STRONG/MEDIUM/WEAK)二维;离线 Strategy Evaluator(**严禁在线学习**) | [§8](agents-v2.md#8-confidence-engine) |
+| **Tool 协议** | Tool interface + Registry + 鉴权传递 | [§9](agents-v2.md#9-tool-注册协议) |
 
 ---
 
