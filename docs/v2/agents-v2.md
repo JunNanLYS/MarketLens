@@ -1040,16 +1040,18 @@ class SingleJudgment(BaseModel):
 
 ---
 
-## 6. Event Bus
+## 7. Event Bus
 
-### 6.1 实现选型
+### 7.1 实现选型
 
 | 阶段 | 选型 | 理由 |
 |------|------|------|
-| **v2 Phase 1** | **asyncio.Queue** | 单进程内足够,零依赖 |
+| **v2 Phase 1** | **Observer Pattern**(订阅者 set + `asyncio.gather` 广播) | 真正的 Pub-Sub,支持多订阅者并发接收;零依赖 |
 | **v2 Phase 2+** | Redis pub-sub | 支持多进程 / 跨机器(Monitoring Agent 可独立部署) |
 
-### 6.2 12 类事件
+> **架构修订说明**: 原设计 §6.1 选用 `asyncio.Queue`,但 `asyncio.Queue` 是点对点(单消费者)而非 Pub-Sub(多消费者广播),会导致 Monitoring Agent 和 Confidence Engine 同时订阅 `task.completed` 时事件被随机分发给其中一个。修正为 Observer Pattern,见 [§6.2](#62-event-bus-实现细节)。
+
+### 7.2 12 类事件
 
 | 事件 | Payload | 触发方 |
 |------|---------|--------|
@@ -1067,7 +1069,7 @@ class SingleJudgment(BaseModel):
 | `agent.memory.updated` | `{layer: short_term/strategy/market, scope, key}` | Memory 更新 |
 | `user.command` | `{intent, params, source: chat/shortcut}` | UI 输入 |
 
-### 6.3 统一 Envelope
+### 7.3 统一 Envelope
 
 ```python
 class Event(BaseModel):
@@ -1079,7 +1081,7 @@ class Event(BaseModel):
     payload: dict[str, Any]                      # 业务负载
 ```
 
-### 6.4 订阅模式
+### 7.4 订阅模式
 
 ```python
 # 示例:Alert Panel 订阅 alert.fired
@@ -1099,9 +1101,9 @@ event_bus.subscribe("task.completed", lambda event: confidence_engine.update(eve
 
 ---
 
-## 7. Agent Memory 三层
+## 8. Agent Memory 三层
 
-### 7.1 三层划分
+### 8.1 三层划分
 
 | 层 | 范围 | 存储后端 | TTL |
 |----|------|---------|-----|
@@ -1109,7 +1111,7 @@ event_bus.subscribe("task.completed", lambda event: confidence_engine.update(eve
 | **Strategy memory** | 用户偏好 + 历史决策(规则演化) | SQLite `agent_strategy_memory` 表(待 v2 Phase 2 新建) | 永久 |
 | **Market memory** | 市场状态快照(每日收盘后冻结) | SQLite `agent_market_memory` 表(待 v2 Phase 2 新建) | 永久 |
 
-### 7.2 Short-term Context
+### 8.2 Short-term Context
 
 ```python
 class ShortTermMemory(BaseModel):
@@ -1125,7 +1127,7 @@ class ShortTermMemory(BaseModel):
 - 同 Plan 内多个 Task 共享中间结果(如 t2 算完 fund_flow,t5 直接拿 `<from t2>` 占位符解析)
 - Plan 崩溃后可恢复(从 SQLite 加载)
 
-### 7.3 Strategy Memory
+### 8.3 Strategy Memory
 
 ```python
 class StrategyMemoryEntry(BaseModel):
@@ -1150,7 +1152,7 @@ class FeedbackEvent(BaseModel):
 - `{"scope": "user_preference", "key": "max_position_size_pct", "value": 20, "confidence": 0.9}`
 - `{"scope": "rule", "key": "ma_cross_weight", "value": 0.15, "confidence": 0.72}`(从初始 0.5 随反馈调整)
 
-### 7.4 Market Memory
+### 8.4 Market Memory
 
 ```python
 class MarketMemorySnapshot(BaseModel):
@@ -1170,7 +1172,7 @@ class MarketMemorySnapshot(BaseModel):
 
 ---
 
-## 8. Confidence Engine
+## 9. Confidence Engine
 
 ### 8.1 三指标定义
 
@@ -1239,7 +1241,7 @@ def recency_score(collected_at: datetime) -> float:
 
 ---
 
-## 9. Tool 注册协议
+## 10. Tool 注册协议
 
 ### 9.1 Tool 接口
 
@@ -1325,7 +1327,7 @@ class ToolContext(BaseModel):
 
 ---
 
-## 10. 典型业务流与共享状态机
+## 11. 典型业务流与共享状态机
 
 ### 10.1 完整业务流:用户问"新能源板块能不能买"
 
@@ -1459,7 +1461,7 @@ class ToolContext(BaseModel):
 
 **现象**: Monitoring → Portfolio → Monitoring → Portfolio ... 几秒内死循环。
 
-**修复**(已在 [§6](../architecture-v2.md#6-event-bus) 设计):
+**修复**(已在 [§7](agents-v2.md#7-event-bus) 设计):
 - **强制 Event Bus 解耦**: Agent 间不直接调用,通过 emit_event / subscribe
 - **事件总线是单向 fire-and-forget**: 订阅者失败不影响发布者
 - **每个 Agent 有自己的状态**: 不假设其他 Agent 的状态,只通过 Event 触发
@@ -1476,14 +1478,14 @@ class ToolContext(BaseModel):
 ---
 
 
-## 附录 A:本设计文档引用的其他文档
+## 附录 B:本设计文档引用的其他文档
 
 - [`docs/v2/architecture-v2.md`](architecture-v2.md) — 6 层架构 + Electron 壳层
 - [`docs/architecture-v2.drawio`](../architecture-v2.drawio) — 架构图
 - [`docs/v1/architecture.md`](../v1/architecture.md) — v1 架构
 - [`docs/v1/dev/lessons_learned.md`](../v1/dev/lessons_learned.md) — 23 条实操经验(继承 v1 写锁 / Evidence / Schema 约束)
 
-## 附录 B:v2 Phase 1 实现优先级
+## 附录 C:v2 Phase 1 实现优先级
 
 | 组件 | Phase 1 范围 | 工作量 |
 |------|--------------|--------|
@@ -1496,7 +1498,7 @@ class ToolContext(BaseModel):
 | **Confidence Engine** | 三指标计算 + 反馈回路 v1(简版) | 1 周 |
 | **总工作量** | v2 Phase 1 MVP | 8-10 周 |
 
-## 附录 C:待 Phase 2+ 实现
+## 附录 D:待 Phase 2+ 实现
 
 - Portfolio Agent(依赖更多 v1 投资组合工具)
 - Monitoring Agent(持续运行模式)

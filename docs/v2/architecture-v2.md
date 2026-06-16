@@ -129,6 +129,13 @@
 - 所有 Agent 状态变更通过 Event Bus 广播,而不是直接互相调用
 - Orchestrator 保证任务执行顺序(依赖边 / 并行组 / 优先级)
 - Agent 输出必须带 `confidence / evidence_strength / contradiction_score` 三指标
+- **Orchestrator dispatch 前必须先调 `PolicyEngine.evaluate(plan, market_state)`**(详见 [§6](#6-policy-engine大脑保险丝))
+
+#### 🛡 Layer 2.5 — Policy Engine(大脑保险丝)
+
+> 详见 [§6](#6-policy-engine大脑保险丝),此处仅占位。
+
+位于 Layer 2 (Agent Orchestration) 与 Layer 3 (Tools) 之间,任何 Agent 调用 Tool 之前必须先过 Policy Engine。6 类策略:Risk / Permission / MarketState / TokenBudget / RateLimit / AutoExecute。
 
 #### Layer 3 — Tool / Capability Layer
 
@@ -340,7 +347,157 @@ app.whenReady()
 
 ---
 
-## 6. Orchestrator + 4 Agent + Event Bus(占位)
+## 6. Policy Engine(大脑保险丝) 🔴
+
+> **位置**: 放 Layer 2 (Agent Orchestration) 与 Layer 3 (Tools / Capability) 之间,**任何 Agent 调用 Tool 之前必须先过 Policy Engine**。
+>
+> **为什么必须有**: 没有 Policy Engine,Agent 系统会失控——自动交易、Token 爆表、休市下单、风控失效。Policy Engine 是"决策前门",统一处理 6 类策略。
+
+### 6.1 职责(6 类策略)
+
+| 策略类 | 职责 | 默认规则 |
+|--------|------|---------|
+| **Risk** | 资金安全:单笔交易上限 / 现金最低保留 / 杠杆上限 / 单行业 ≤ 30% / 单标的 ≤ 20% | 硬约束,违反直接拒 |
+| **Permission** | 写操作鉴权:哪些 Agent 可写 / 哪些 Tool 需要 confirm scope | 默认所有写 Tool 需 confirm |
+| **MarketState** | 市场状态感知:closed / volatile / holiday 时降级 | closed 时只允许只读,volatile 时降低并发 |
+| **TokenBudget** | LLM 调用日预算,超阈值自动降级到规则引擎 | 阈值 = `config.policy.token_budget_daily` |
+| **RateLimit** | 全局 API 调用频率(防外部数据源限流) | 默认 10 req/s,单 Provider 配额可配 |
+| **AutoExecute** | 自动执行开关(自动写数据库 / 自动下单) | **默认 OFF**,用户显式开启才允许 |
+
+### 6.2 核心接口
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class PolicyVerdict:
+    allow: bool                              # 是否放行
+    degrade_to: str | None                   # 降级方案,例 "use_rule_engine" / "reduce_concurrency"
+    reason: str                              # 拒绝/降级原因(给 UI 展示)
+    applied_rules: list[str]                 # 命中的规则名(用于审计)
+
+
+class PolicyEngine:
+    def __init__(
+        self,
+        rules: list[PolicyRule],
+        user_prefs: "UserPreferences",        # 第 3 轮实现,接口预留
+    ) -> None: ...
+
+    def evaluate(
+        self,
+        plan: TaskGraph,
+        market_state: MarketState,
+    ) -> PolicyVerdict: ...
+
+    def register_rule(self, rule: PolicyRule) -> None: ...
+
+
+class PolicyRule(ABC):
+    name: str                                # "risk.single_industry_limit"
+    @abstractmethod
+    def apply(
+        self,
+        plan: TaskGraph,
+        market_state: MarketState,
+        ctx: PolicyContext,
+    ) -> RuleDecision: ...
+
+
+class RuleDecision(BaseModel):
+    allow: bool
+    degrade_to: str | None = None
+    reason: str | None = None
+```
+
+### 6.3 6 类 Rule 实现要点
+
+| Rule | 触发条件 | 行为 | v1 复用 |
+|------|---------|------|---------|
+| `RiskRule` | Plan 含写操作且超出硬约束 | 拒 + 拒绝原因;若"硬回滚"模式,改写 plan 至合规 | v1 risk 相关代码(Portfolio 已有同类校验) |
+| `PermissionRule` | Plan 含写 Tool | 检查 user scope;若缺 `write` 标 `confirm` | 无(新增) |
+| `MarketStateRule` | `market_state.is_closed == True` | 拒所有写 + LLM 调,只允许只读 Tool | 无(新增) |
+| `TokenBudgetRule` | 今日 LLM 调用 token 累计 > 阈值 | `degrade_to = "use_rule_engine"`(Planner 改用规则模板) | 无(新增) |
+| `RateLimitRule` | Provider 过去 1s 内调用次数 > 配额 | `degrade_to = "queue"`(排队延迟 1s) | v1 rate_limiter 模块可参考 |
+| `AutoExecuteRule` | Plan 含 `auto_execute: true` 但 `user_prefs.auto_execute == False` | 拒,要求用户显式确认 | 无(新增) |
+
+### 6.4 Orchestrator 协作流程
+
+```
+Planner 生成 plan
+   ↓
+PolicyEngine.evaluate(plan, market_state)
+   ↓
+若 verdict.allow == False:
+   → 拒绝 dispatch,返回错误给 Planner(触发重规划)
+   → UI 弹窗显示 verdict.reason
+   ↓
+若 verdict.degrade_to 非空:
+   → Orchestrator 改写 plan:
+     · "use_rule_engine" → Planner 改用规则模板生成新 plan
+     · "reduce_concurrency" → Orchestrator 调低 Semaphore
+     · "queue" → Orchestrator 排队延迟
+   → 改写后重新 evaluate
+   ↓
+若 verdict.allow == True:
+   → Orchestrator.dispatch(plan) 正常执行
+```
+
+### 6.5 关键约束
+
+- **PolicyEngine 不反向依赖调度逻辑**:只做判定 + 返回 verdict,不改 plan
+- **改写 plan 是 Orchestrator 职责**:避免 PolicyEngine 耦合调度细节
+- **user_prefs 不直接耦合 PolicyEngine 核心判定**:作为 Rule 注入的上下文
+- **6 类 Rule 必须独立可插拔**:每条 Rule 可单独 enable/disable
+- **Policy 决策记录全部入 `raw_data` 表**:`data_type = "policy_verdict"`,供事后审计
+
+### 6.6 v2 6 层架构修订后的全景
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ Layer 1: UI / Interaction                                  │
+│  💬 Chat │ ⌘ Command Palette │ 📊 Dashboard │ 🔔 Alert     │
+└────────────────────────┬───────────────────────────────────┘
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│ Layer 2: Agent Orchestration                              │
+│  ┌─ Orchestrator ─┐  ┌─ Planner ─┐ ┌─ Research ─┐          │
+│  │  分发·上下文    │  │  意图 →   │ │  聚合·事实 │          │
+│  │  ·DAG 校验      │  │  任务图   │ │  不做决策  │          │
+│  │  ·Semaphore     │  └───────────┘ └────────────┘          │
+│  │  ·Trace 批量    │  ┌─ Portfolio ─┐ ┌─ Monitoring ┐      │
+│  └────────────────┘  │  量化+LLM  │ │  主动监控   │      │
+│                       │  硬风控壁垒 │ │  3层漏斗   │      │
+│                       └────────────┘ └────────────┘         │
+│  📨 Event Bus (Observer Pattern,asyncio gather)            │
+└────────────────────────┬───────────────────────────────────┘
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│ 🛡 Layer 2.5: Policy Engine (大脑保险丝)            ← 新增  │
+│  Risk · Permission · MarketState · TokenBudget             │
+│  RateLimit · AutoExecute                                    │
+└────────────────────────┬───────────────────────────────────┘
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│ Layer 3: Tool / Capability                                  │
+│  📈 Market │ 📰 News │ 💼 Portfolio │ 🧪 Backtest │ 🚨 Alert│
+└────────────────────────┬───────────────────────────────────┘
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│ Layer 4: Evidence & Memory                                  │
+│  📦 EvidenceBuilder │ 🧠 Vector Memory │ 📊 Portfolio Hist │
+│  🎯 Strategy Memory │ 🧬 Agent Memory │ 📐 Confidence Engine│
+└────────────────────────┬───────────────────────────────────┘
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│ Layer 5: Data Ingestion (v1 完整保留)                      │
+│  🔌 8 Providers │ ⏰ Scheduler │ 💾 SQLite 29 表             │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. Orchestrator + 4 Agent + Event Bus(占位)
 
 > **详细规格**: 见 [`docs/v2/agents-v2.md`](agents-v2.md)。
 >
@@ -353,14 +510,14 @@ app.whenReady()
 | **Research Agent** | 聚合行情/财报/新闻/资金流 → 结构化研究报告(只做事实,不做决策) | [§5](agents-v2.md#5-research-agent) |
 | **Portfolio Agent** | 持仓分析 + 风险暴露 + 盈亏归因 + 仓位优化建议 | [§5](agents-v2.md#5-portfolio-agent) |
 | **Monitoring Agent** | 每分钟扫描行情 + 新闻突发 + 异常资金流 → 触发 Alert | [§5](agents-v2.md#5-monitoring-agent) |
-| **Event Bus** | asyncio Queue(轻量) / Redis pub-sub(进阶),12 类事件枚举 | [§6](agents-v2.md#6-event-bus) |
-| **Agent Memory** | Short-term / Strategy / Market 三层 | [§7](agents-v2.md#7-agent-memory-三层) |
-| **Confidence Engine** | confidence / evidence_strength / contradiction_score 三指标 | [§8](agents-v2.md#8-confidence-engine) |
-| **Tool 协议** | Tool interface + Registry + 鉴权传递 | [§9](agents-v2.md#9-tool-注册协议) |
+| **Event Bus** | Observer Pattern(订阅者 set + `asyncio.gather` 广播),12 类事件枚举 | [§7](agents-v2.md#7-event-bus) |
+| **Agent Memory** | Short-term / Strategy / Market 三层 | [§8](agents-v2.md#8-agent-memory-三层) |
+| **Confidence Engine** | confidence / evidence_strength / contradiction_score 三指标 | [§9](agents-v2.md#9-confidence-engine) |
+| **Tool 协议** | Tool interface + Registry + 鉴权传递 | [§10](agents-v2.md#10-tool-注册协议) |
 
 ---
 
-## 7. 反馈回路:Confidence Engine → Planner
+## 8. 反馈回路:Confidence Engine → Planner
 
 > **v2 核心创新**: v1 的 AI 是"输出即结束",v2 的 AI 持续学习。
 
@@ -400,7 +557,7 @@ app.whenReady()
 
 ---
 
-## 8. 候选技术栈(参考,非强制)
+## 9. 候选技术栈(参考,非强制)
 
 > 本节列出 v2 各层可能用到的候选技术。**v2 设计文档保持 Provider 无关**,实际选型在 Phase 1 启动前确定。
 
@@ -424,9 +581,9 @@ app.whenReady()
 
 ---
 
-## 9. 部署形态
+## 10. 部署形态
 
-### 9.1 开发模式(3 进程)
+### 10.1 开发模式(3 进程)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -452,7 +609,7 @@ app.whenReady()
 
 **优势**: 改 Python 代码 → uvicorn reload,改 React → HMR,独立调试。
 
-### 9.2 生产模式(单进程 + 打包)
+### 10.2 生产模式(单进程 + 打包)
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -481,7 +638,7 @@ app.whenReady()
                       └─ 双击安装 → 桌面图标 → 单进程启动(内嵌 FastAPI)
 ```
 
-### 9.3 部署形态对比
+### 10.3 部署形态对比
 
 | 维度 | 开发模式 | 生产模式(Phase 1) | 打包模式(Phase 3) |
 |------|---------|-------------------|-------------------|
@@ -492,7 +649,7 @@ app.whenReady()
 | React 调试 | HMR | 静态文件 | 静态文件 |
 | 适用 | 开发 | 单机内测 | 用户分发 |
 
-### 9.4 Phase 路线图
+### 10.4 Phase 路线图
 
 | Phase | 目标 | 状态 |
 |-------|------|------|
@@ -504,7 +661,7 @@ app.whenReady()
 
 ---
 
-## 附录 A:架构图节点对照表
+## 附录 B:架构图节点对照表
 
 > 节点 ID 与 [`docs/architecture-v2.drawio`](../architecture-v2.drawio) 一一对应。用 draw.io 打开后,按 ID 查找可定位。
 
@@ -562,7 +719,7 @@ app.whenReady()
 
 ---
 
-## 附录 B:本设计文档引用的其他文档
+## 附录 C:本设计文档引用的其他文档
 
 - [`docs/v2/agents-v2.md`](agents-v2.md) — Orchestrator / 4 Agent / Event Bus / Memory / Confidence / Tool 协议
 - [`docs/architecture-v2.drawio`](../architecture-v2.drawio) — 架构图
@@ -576,7 +733,7 @@ app.whenReady()
 
 ---
 
-## 附录 C:数据契约示例
+## 附录 D:数据契约示例
 
 > 详细 schema 见 [`agents-v2.md`](agents-v2.md) §3 (Task Graph) / §5 (Agent 输出)。本附录给出 3 个最常用结构的最小示例。
 
