@@ -324,6 +324,94 @@ def _find_cycle(tasks: list[Task]) -> list[str]:
 - **§6 Policy Engine 不替代 validate_graph**: PolicyEngine 处理"运行时风险"(如市场状态),validate_graph 处理"plan 结构性错误",两者职责分离
 - **测试覆盖**: 至少 5 个测试用例(无环/有环/孤儿/不存依赖/重复 ID),Phase 1 启动时落地
 
+### 2.7 Async Workflow Engine(ChatGPT 第 2 轮:并发正确的位置)
+
+> **架构修订(ChatGPT 第 2 轮反馈)**: "异步 ≠ Event Bus ≠ 多 Agent ≠ DAG"。并发应该发生在 **Workflow 和 Tool 层**,而不是把整个架构推到事件驱动。本节明确 Orchestrator dispatch 的并发范式 —— 在不丢掉 Task Graph 表达力的前提下,**用 `asyncio.gather` / `TaskGroup` 实现并行步骤**,而不是"步骤 A 完成 → 发 Event → 步骤 B 订阅 Event"。
+
+#### 2.7.1 并发范式(伪代码)
+
+**❌ 错误**:每步发 Event,下一个 Agent 订阅 Event
+
+```python
+# 错误:用 Event 串联步骤
+await agent.step_a(ctx)
+await event_bus.emit(Event(event_type="step.a.done", payload=result))
+# step_b 必须订阅 step.a.done → 强耦合 + 顺序难调试
+```
+
+**✅ 正确**:Workflow 步骤直接 `asyncio.gather`,Task Graph 表达依赖
+
+```python
+async def analyze_user_intent(ctx: Context, plan: TaskGraph) -> PlanResult:
+    """Workflow 步骤:并行获取 4 类数据 + LLM 综合。"""
+    # 数据获取层:4 类 Tool 并发
+    quote, kline, news, finance = await asyncio.gather(
+        ctx.invoke_tool("market.quote", symbols=plan.symbols),
+        ctx.invoke_tool("market.kline", symbols=plan.symbols, days=120),
+        ctx.invoke_tool("news.search", symbols=plan.symbols, days=7),
+        ctx.invoke_tool("finance.report", symbols=plan.symbols),
+    )
+    # LLM 综合层:综合 + 解释 并发(若综合 + 解释互不依赖)
+    summary, risks = await asyncio.gather(
+        llm_summarize(quote, kline, news, finance),
+        llm_explain_risks(quote, kline, news, finance),
+    )
+    return PlanResult(summary=summary, risks=risks)
+```
+
+#### 2.7.2 性能对照(Research Agent 多数据并行)
+
+**错误范式**(串行 IO):
+
+```python
+quote = await get_quote(symbols)       # 1s
+kline = await get_kline(symbols)       # 1s
+news = await get_news(symbols)         # 2s
+finance = await get_finance(symbols)   # 1s
+# 总计 ≈ 5s
+```
+
+**正确范式**(`asyncio.gather`):
+
+```python
+quote, kline, news, finance = await asyncio.gather(
+    get_quote(symbols),
+    get_kline(symbols),
+    get_news(symbols),
+    get_finance(symbols),
+)
+# 总计 ≈ max(1, 1, 2, 1) = 2s(节省 60%)
+```
+
+**多标的分析**(用户场景):
+
+```python
+# 用户输入:"帮我看看今天宁德时代能不能买,顺便看看黄金怎么样"
+# Planner 生成 2 个并行 Task,Orchestrator 并发执行
+await asyncio.gather(
+    research_agent.execute(ctx_niatai, plan=plan_niaotai),
+    research_agent.execute(ctx_gold, plan=plan_gold),
+)
+```
+
+#### 2.7.3 Task Graph DSL 与 Workflow Engine 的关系
+
+| 层 | 职责 | 表达什么 | 不表达什么 |
+|----|------|---------|-----------|
+| **Task Graph DSL** | 表达**依赖关系**(DAG) | 哪些 Task 可以并行 / 哪些必须串行 | 怎么并行(实现细节) |
+| **Workflow Engine** | 表达**并发执行**(实现) | `asyncio.gather` / `TaskGroup` / Semaphore | 业务依赖 |
+
+- Task Graph 描述 `t2 depends_on [t1]` —— **业务依赖**
+- Workflow Engine 用 `await asyncio.gather(...)` —— **并发实现**
+- 两者**解耦**:Task Graph 变了不需要改 Workflow Engine,反之亦然
+
+#### 2.7.4 关键约束
+
+- **Python 3.11+ 用 `asyncio.TaskGroup`**(自动异常传播 + 取消);3.10- 用 `asyncio.gather` + `return_exceptions=True`
+- **步骤间共享 Context** 通过参数传递(不是 Event),保证数据流可追踪
+- **Workflow 步骤不订阅 Event**:Workflow 内部步骤是 deterministic pipeline,Event 只在"外部触发器"(用户/定时器/告警)与 Workflow 入口之间
+- **Performance Budget**:每个 Workflow 必须声明 `expected_duration_ms`,超过 1.5x 自动记录 `run_logs.warn`
+
 ### 2.4 上下文传递(修订 1 后: 移除直接 service 引用)
 
 > **架构修订说明**: 原 §2.4 `AgentContext` 直接持有 `collection_service / news_service / portfolio_service / evidence_builder` 引用,绕过了 Tool Registry 抽象。修订后,AgentContext 只持有 `tool_registry` 引用,所有外部 IO 走 `ctx.invoke_tool("market.quote", symbol=...)` 范式。
@@ -1348,62 +1436,88 @@ class SingleJudgment(BaseModel):
 
 ## 7. Event Bus
 
-### 7.1 实现选型
+### 7.1 实现选型 + 边界划分(ChatGPT 第 2 轮反馈)
 
 | 阶段 | 选型 | 理由 |
 |------|------|------|
 | **v2 Phase 1** | **Observer Pattern**(订阅者 set + `asyncio.gather` 广播) | 真正的 Pub-Sub,支持多订阅者并发接收;零依赖 |
 | **v2 Phase 2+** | Redis pub-sub | 支持多进程 / 跨机器(Monitoring Agent 可独立部署) |
 
-> **架构修订说明**: 原设计 §6.1 选用 `asyncio.Queue`,但 `asyncio.Queue` 是点对点(单消费者)而非 Pub-Sub(多消费者广播),会导致 Monitoring Agent 和 Confidence Engine 同时订阅 `task.completed` 时事件被随机分发给其中一个。修正为 Observer Pattern,见 [§6.2](#62-event-bus-实现细节)。
+> **架构修订说明**: 原设计 §6.1 选用 `asyncio.Queue`,但 `asyncio.Queue` 是点对点(单消费者)而非 Pub-Sub(多消费者广播),会导致 Monitoring Agent 和 Confidence Engine 同时订阅 `task.completed` 时事件被随机分发给其中一个。修正为 Observer Pattern,见 [§7.2](#72-event-bus-实现细节)。
+>
+> **第二轮修订(ChatGPT 反馈)**: "Event-Driven ≠ Everything Is Event"。本节区分 **Domain Event**(走 Event Bus)与 **Internal Call**(直接函数调用),避免事件系统膨胀到不可维护的程度。
 
-### 7.2 12 类事件
+### 7.2 Domain Event vs Internal Call 边界
 
-| 事件 | Payload | 触发方 |
-|------|---------|--------|
-| `task.created` | `{plan_id, task_id, agent, action}` | Orchestrator dispatch 启动 Task |
-| `task.started` | `{plan_id, task_id, started_at}` | Agent.execute 开始 |
-| `task.completed` | `{plan_id, task_id, status, duration_ms, result_summary}` | Agent.execute 完成 |
-| `task.failed` | `{plan_id, task_id, error, retry_count}` | Agent.execute 抛异常 |
-| `task.cancelled` | `{plan_id, task_id, reason}` | 用户中断 / 超时 |
-| `evidence.collected` | `{symbol, evidence_keys, source, collected_at}` | EvidenceBuilder 写入 |
-| `evidence.updated` | `{symbol, changed_fields, source}` | Scheduler 更新数据 |
-| `market.update` | `{symbol, price, change_pct, source}` | Provider 推送新行情 |
-| `news.alert` | `{symbols, headlines, importance}` | News 监测 |
-| `alert.fired` | `{type, severity, title, body, source}` | Monitoring Agent 触发 |
-| `portfolio.change` | `{account_id, symbol, type, qty, price}` | 用户录入交易 |
-| `agent.memory.updated` | `{layer: short_term/strategy/market, scope, key}` | Memory 更新 |
-| `user.command` | `{intent, params, source: chat/shortcut}` | UI 输入 |
+**核心原则**:Event Bus 只承载**跨模块通知**,不承载**模块内部状态变更**。
 
-### 7.3 统一 Envelope
+| 类别 | 处理方式 | 例子 |
+|------|---------|------|
+| **Domain Event**(走 Event Bus) | 跨模块 / 跨层通知;用户/定时器/市场/外部消息产生 | `user.command`, `timer.news_collect`, `market.anomaly`, `alert.fired` |
+| **Internal Call**(直接函数) | 模块内部状态变更;记忆、置信度、缓存、Context 流转 | Memory 更新、Confidence 计算、Tool 执行结果返回、Task 上下文传递 |
+
+**判定规则**: 问 3 个问题——
+
+1. 通知对象在**不同模块 / 不同层**吗? → 是 → Domain Event
+2. 事件消费者**不固定 / 会动态增减**吗? → 是 → Domain Event
+3. 仅是**模块内部状态写入**吗? → 是 → Internal Call(`memory.update(...)`、`confidence.record(...)` 等)
+
+> **反例**(已删除): `agent.memory.updated`、`tool.executed`、`task.context.changed`、`confidence.updated`、`strategy.updated` —— 全部改为 Internal Call。原因是:这些事件的"订阅者"通常就是触发者本身,绕一圈反而把"谁改了 Memory"变成不可追溯的问题。
+
+### 7.3 10 类核心 Domain Event
+
+| # | 事件 | Payload | 触发方 | 订阅方 |
+|---|------|---------|--------|--------|
+| 1 | `user.command` | `{intent, params, source: chat\|shortcut\|tray}` | UI(Chat / Command Palette / Tray 菜单) | Orchestrator |
+| 2 | `timer.news_collect` | `{trigger_at}` | APScheduler(60min) | NewsService → 后续 Monitoring 订阅 |
+| 3 | `timer.market_scan` | `{trigger_at, symbols}` | APScheduler(15min) | Monitoring Agent |
+| 4 | `timer.ai_report` | `{trigger_at, schedule: daily\|weekly}` | APScheduler(每日 20:00) | Orchestrator → Planner |
+| 5 | `timer.cleanup` | `{trigger_at, retention_days}` | APScheduler(每日 03:30) | Storage Cleanup Job |
+| 6 | `market.anomaly` | `{symbol, change_pct, volume_ratio, source}` | Monitoring Agent(硬规则层) | Orchestrator → Planner(隐式目标) |
+| 7 | `news.breaking` | `{news_id, shock_score, macro_causal, macro_whitelist_pass, linked_tickers}` | Monitoring Agent(第 3 层 LLM 裁判) | Orchestrator → Planner(隐式目标) |
+| 8 | `fundflow.anomaly` | `{symbol, net_flow, threshold, source}` | Monitoring Agent | Orchestrator → Planner(隐式目标) |
+| 9 | `portfolio.changed` | `{account_id, symbol, type, qty, price, source: user\|tool}` | 用户录入交易 / Portfolio Tool 写入 | Confidence Engine(可选) / UI Refresh |
+| 10 | `alert.fired` | `{alert_id, type, severity, title, body, source, related_symbols}` | Monitoring / Portfolio Agent | Electron 主进程 → 桌面通知 + UI Alert Panel |
+| 11 | `plan.completed` | `{plan_id, user_intent, status, final_output_ref}` | Orchestrator dispatch 全部结束 | UI(摘要推送) / Memory(可选) |
+
+> **删除清单**(对比第一版 13 类):
+> - `task.created / task.started / task.completed / task.failed / task.cancelled` → 改为 Internal Call(Orchestrator 内部 + UI 通过 IPC 推送)
+> - `evidence.collected / evidence.updated` → 改为 Internal Call(EvidenceBuilder 直接返回)
+> - `agent.memory.updated` → 删除(Memory 内部状态)
+> - `user.command` 保留(用户跨层入口)
+
+**事件总线作为"模块间的神经系统"**,而不是"所有代码的血液循环系统"——避免后期订阅爆炸 / 循环依赖。
+
+### 7.4 统一 Envelope
 
 ```python
 class Event(BaseModel):
     event_id: str                                # UUID
-    event_type: str                              # 见上表
+    event_type: str                              # 见 §7.3 表
     timestamp: datetime                          # 事件时间
     source: str                                  # 事件来源 Agent / 模块
-    correlation_id: str | None = None            # 关联的 plan_id / task_id(若有)
+    correlation_id: str | None = None            # 关联的 plan_id / alert_id(若有)
     payload: dict[str, Any]                      # 业务负载
 ```
 
-### 7.4 订阅模式
+### 7.5 订阅模式
 
 ```python
 # 示例:Alert Panel 订阅 alert.fired
 event_bus.subscribe("alert.fired", lambda event: send_to_electron(event))
 
-# 示例:Monitoring Agent 订阅 market.update
-event_bus.subscribe("market.update", lambda event: monitoring_agent.scan(event.payload))
+# 示例:Monitoring Agent 订阅 market.anomaly
+event_bus.subscribe("market.anomaly", lambda event: monitoring_agent.scan(event.payload))
 
-# 示例:Confidence Engine 订阅 task.completed
-event_bus.subscribe("task.completed", lambda event: confidence_engine.update(event.payload))
+# 示例:Orchestrator 订阅 timer.ai_report
+event_bus.subscribe("timer.ai_report", lambda event: orchestrator.handle_scheduled(event.payload))
 ```
 
 **关键约束**:
 - 订阅者执行失败不应阻塞事件总线 → `try/except` + `loguru.warning` 兜底
 - 同步 vs 异步订阅:Event Bus 统一 async,同步订阅者用 `asyncio.to_thread` 包裹
-- 事件保留:`event_store` 表保留最近 7 天事件(供事后回溯)
+- **事件保留**:`event_store` 表保留最近 7 天事件(供事后回溯)
+- **不准订阅 Internal Event**:Domain/Internal 边界由 lint 规则 + 文档强制,代码评审时检查
 
 ---
 
@@ -1415,7 +1529,7 @@ event_bus.subscribe("task.completed", lambda event: confidence_engine.update(eve
 |----|------|---------|-----|
 | **Short-term context** | 当前 Plan 内的 Task 间共享 | 内存 dict + (可选)SQLite 持久化 | Plan 结束即清除(或 24h 兜底) |
 | **Strategy memory** | 用户偏好 + 历史决策(规则演化) | SQLite `agent_strategy_memory` 表(待 v2 Phase 2 新建) | 永久 |
-| **Market memory** | 市场状态快照(每日收盘后冻结) | SQLite `agent_market_memory` 表(待 v2 Phase 2 新建) | 永久 |
+| **Market memory** | **市场事实快照**(每日收盘后冻结,不含状态标签) | SQLite `agent_market_snapshot` 表(待 v2 Phase 2 新建) | 永久 |
 
 ### 8.2 Short-term Context
 
@@ -1458,21 +1572,25 @@ class FeedbackEvent(BaseModel):
 - `{"scope": "user_preference", "key": "max_position_size_pct", "value": 20, "confidence": 0.9}`
 - `{"scope": "rule", "key": "ma_cross_weight", "value": 0.15, "confidence": 0.72}`(从初始 0.5 随反馈调整)
 
-### 8.4 Market Memory
+### 8.4 Market Memory(只存事实,不存状态标签)
+
+> **架构修订(ChatGPT 第 2 轮反馈)**: 旧设计把市场冻结为 `bull / bear / sideways / volatile` 4 种状态——这种分类**一定会分类错、状态漂移、维护困难**。AI 完全能自己判断市场状态,Memory 不应该承担"打标签"的职责。改为**只存事实数据**(`MarketSnapshot`),不存任何主观标签。
 
 ```python
-class MarketMemorySnapshot(BaseModel):
+class MarketSnapshot(BaseModel):
+    """每日收盘后冻结的市场事实,不含状态标签。"""
     snapshot_date: date                          # 收盘日期
-    market_regime: Literal["bull", "bear", "sideways", "volatile"]
-    sector_rotation: dict[str, float]           # 板块轮动评分(板块 → 强度)
-    volatility_index: float                      # VIX / 沪深300 波动率
-    key_events: list[str]                        # 当日重大事件
+    index_levels: dict[str, float]              # {"HSI": 18500, "SPX": 5400, "CSI300": 3500}
+    volatility_index: float                      # VIX / 沪深300 波动率(数值,非标签)
+    sector_performance: dict[str, float]         # 板块 → 当日涨跌幅(数值)
+    key_events: list[str]                        # 当日重大事件(描述,非分类)
     frozen_at: datetime                          # 冻结时间(每日 16:30 后)
 ```
 
 **用途**:
-- Planner 根据市场状态调整输出(如震荡市 → 推荐 watch 而非 buy)
-- Research Agent 引用历史市场状态做"与昨日对比"
+- Planner 推理时**自己**根据数据判断市场状态(如 `vix > 25` → 警惕),不依赖预置标签
+- Research Agent 引用历史 Snapshot 做"与昨日对比"(`index_levels["HSI"]` 对比)
+- 用户可在 UI 中查看历史 Snapshot,但**绝不显示**"当前是牛市"这种分类标签
 
 **冻结时机**: 每日 16:30(收盘 30 分钟后),Scheduler 触发冻结。
 
@@ -1480,70 +1598,141 @@ class MarketMemorySnapshot(BaseModel):
 
 ## 9. Confidence Engine
 
-### 8.1 三指标定义
+> **架构修订(ChatGPT 第 2 轮反馈)**: 旧设计 `confidence=0.8134` 等浮点数属于 **Pseudo Precision(伪精确)**——金融领域对 `0.82` 的解读会过度,而实际并无真实统计意义。改为 **LOW / MEDIUM / HIGH 三档 + Evidence 强 / 中 / 弱** 二维评估,既符合用户认知习惯,又避免 Pseudo Precision。
 
-| 指标 | 定义 | 计算 | 范围 |
-|------|------|------|------|
-| **confidence** | AI 对自己输出的把握 | `0.5 + 0.3 * consistency + 0.2 * evidence_quality` | 0-1 |
-| **evidence_strength** | 支撑证据的强度 | `min(1.0, evidence_count * 0.2 + source_diversity * 0.3 + recency_score * 0.5)` | 0-1 |
-| **contradiction_score** | 与历史结论的矛盾度 | `weighted_avg(1 - cosine_similarity(this_result, historical_results))` | 0-1,越高越警示 |
+### 9.1 二维评估框架
 
-### 8.2 各分项计算
+#### 9.1.1 Confidence(模型对输出的把握)
+
+| 档位 | 含义 | 触发条件 |
+|------|------|---------|
+| **HIGH** | AI 对输出**有把握**,可直接采纳 | 模型多次推理一致(consistency ≥ 0.8)+ 证据完整(evidence_strength ≥ 0.7) |
+| **MEDIUM** | AI 倾向该输出,但**有保留** | 一致性中(0.5-0.8)或证据中等(0.4-0.7) |
+| **LOW** | AI **不确定**,需用户谨慎采纳 | 一致性低(< 0.5)或证据薄弱(< 0.4),Research Agent 主动建议"证据不足" |
 
 ```python
-# 1. consistency: 该 Task 多次推理的结果一致性(如果有)
-consistency = 1.0 - std_dev([r.action for r in self_replays[:5]])
-
-# 2. evidence_quality: 证据来源权威性 + 数据新鲜度
-evidence_quality = (
-    0.4 * source_authority_score +  # 0-1
-    0.3 * data_completeness_score +  # 0-1
-    0.3 * recency_score                # 0-1
-)
-
-# 3. evidence_count: 引用的 Evidence 数量(归一化到 0-1,5 个以上为 1.0)
-evidence_count = min(1.0, len(data_used) / 5)
-
-# 4. source_diversity: 证据来源多样性(unique source 数 / 总 source 数)
-source_diversity = len({d["source"] for d in data_used}) / max(1, len(data_used))
-
-# 5. recency_score: 数据新鲜度(1h 内=1.0, 1d 内=0.7, 1w 内=0.4, > 1w=0.1)
-def recency_score(collected_at: datetime) -> float:
-    age_hours = (datetime.now() - collected_at).total_seconds() / 3600
-    if age_hours < 1: return 1.0
-    elif age_hours < 24: return 0.7
-    elif age_hours < 168: return 0.4
-    else: return 0.1
+class Confidence(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 ```
 
-### 8.3 应用规则
+**档位计算(伪代码,非公式)**:
 
-| 指标 | 用途 |
-|------|------|
-| **confidence < 0.3** | 输出被标记为"低置信度",UI 显示 ⚠️ 图标,Research Agent 主动建议"证据不足" |
-| **evidence_strength < 0.3** | 输出被标记为"证据薄弱",Planner 下次推理时引入更多上游 Task |
-| **contradiction_score > 0.7** | 触发 Planner 重规划,把矛盾 Task 标记为"需用户确认" |
-| **三指标全部 OK** | 输出正常,直接呈现给用户 |
+```python
+def compute_confidence(
+    consistency: float,        # 0-1, 多次推理一致性
+    evidence_strength: float,  # 0-1, 见 §9.1.2
+) -> Confidence:
+    score = 0.5 * consistency + 0.5 * evidence_strength
+    if score >= 0.75:
+        return Confidence.HIGH
+    elif score >= 0.5:
+        return Confidence.MEDIUM
+    else:
+        return Confidence.LOW
+```
 
-### 8.4 反馈回路(Strategy Evaluator)
+> **关键约束**: `Confidence` 是**枚举,不是浮点数**。UI 显示徽章颜色(绿/黄/红),不用数字。
 
-> 详见 [`architecture-v2.md`](architecture-v2.md) §7。
+#### 9.1.2 Evidence Strength(支撑证据强度)
 
-**离线任务**:`backend/agents/strategy_evaluator.py` 在每个交易日 20:30 运行,异步任务不阻塞主流程。
+| 档位 | 含义 | 触发条件 |
+|------|------|---------|
+| **STRONG** | 证据**充分**,多源 + 新鲜 | ≥ 3 个 unique 来源 + 数据 1 天内 + 数据完整度 ≥ 0.8 |
+| **MEDIUM** | 证据**基本可用**,单源或稍旧 | 2 个 unique 来源 + 数据 1 周内 |
+| **WEAK** | 证据**不充分**,单源或过期 | 1 个来源或数据 > 1 周 |
 
-**胜 / 负判定规则**(显式、非 LLM 主观):
-- **胜**: AI 给出的 action 在 N 天后被实际结果验证正确
-  - `buy` → N 日内涨幅 > 阈值(默认 3%)
-  - `sell` → N 日内跌幅 > 阈值
-  - `watch` → N 日内无剧烈变化(±3% 内)
-  - `avoid` → N 日内确实下跌
-- **负**: 与上相反
-- **平**: 幅度不够判定胜 / 负
+```python
+class EvidenceStrength(str, Enum):
+    STRONG = "strong"
+    MEDIUM = "medium"
+    WEAK = "weak"
+```
 
-**权重调整**:
-- 胜 → `confidence += 0.05`(封顶 1.0)
-- 负 → `confidence -= 0.10`(下限 0.0)
-- 平 → 不调整
+**档位计算(伪代码)**:
+
+```python
+def compute_evidence_strength(
+    data_used: list[dict],     # [{source, type, collected_at}, ...]
+) -> EvidenceStrength:
+    unique_sources = {d["source"] for d in data_used}
+    recency_h = min(age_hours(d["collected_at"]) for d in data_used)
+    completeness = min(1.0, len(data_used) / 5)  # 5 个为满
+
+    if len(unique_sources) >= 3 and recency_h < 24 and completeness >= 0.8:
+        return EvidenceStrength.STRONG
+    elif len(unique_sources) >= 2 and recency_h < 168:
+        return EvidenceStrength.MEDIUM
+    else:
+        return EvidenceStrength.WEAK
+```
+
+### 9.2 应用规则
+
+| Confidence | Evidence | UI 显示 | Orchestrator 行为 |
+|------------|----------|---------|------------------|
+| HIGH | STRONG | ✅ 绿色徽章 | 直接呈现给用户 |
+| HIGH | MEDIUM | ✅ 绿色徽章 + 注释"证据 1 来源" | 直接呈现 |
+| MEDIUM | * | ⚠️ 黄色徽章 | 直接呈现 + 建议"参考即可" |
+| LOW | * | 🔴 红色徽章 + "证据不足" | **强制** 用户确认才呈现 |
+| * | WEAK | (不影响 Confidence,但)Research Agent 主动声明 | 触发 Planner 引入更多上游 Task |
+
+**contradiction_score 保留(浮点 0-1)** —— 用于内部判定矛盾度,不暴露给用户。
+
+### 9.3 反馈回路:离线 Strategy Evaluator(严禁在线学习)
+
+> **架构修订(ChatGPT 第 2 轮反馈)**: 旧设计 "AI 建议 → 市场验证 → 自动 `confidence += 0.05`" 是 **在线学习系统**——金融市场是**非平稳系统**,今天有效明天失效,会导致 **策略漂移 / 越学越差**。改为**离线 + 用户确认**,记录评估结果但**不自动调整参数**。
+
+#### 9.3.1 离线任务
+
+**触发**:`backend/agents/strategy_evaluator.py` 在每个交易日 **20:30** 运行,异步任务不阻塞主流程。
+
+**输入**:`agent_runs` 表(待 v2 Phase 1 新建)+ `ai_reports` 表 + 同期实际行情数据。
+
+**输出**:**离线评估报告**(`strategy_evaluations` 表),包括:
+- 每条历史 AI 建议的胜 / 负 / 平判定
+- 各 Confidence 档位的实际命中率(用于**人工 review**,不写回 confidence 算法)
+- 异常样本(连续 3 次"买"建议后 7 天内跌 > 10%)
+
+#### 9.3.2 胜 / 负判定规则(显式,非 LLM 主观)
+
+| AI action | 胜 | 负 | 平 |
+|-----------|----|----|----|
+| `buy` | N 日内涨幅 > 阈值(默认 3%) | N 日内跌幅 > 阈值 | 幅度不够 |
+| `sell` | N 日内跌幅 > 阈值 | N 日内涨幅 > 阈值 | 幅度不够 |
+| `watch` | N 日内无剧烈变化(±3%) | 涨/跌 > 5% | 3-5% 区间 |
+| `avoid` | N 日内确实下跌 | 上涨 | 幅度不够 |
+
+#### 9.3.3 严禁的"在线自动调权"
+
+| ❌ 禁止 | ✅ 替代 |
+|--------|--------|
+| AI 反馈后自动 `confidence += 0.05` | 写入离线报告,**人工 review 后** 由用户在 Settings 手动调整 |
+| 自动调整规则权重 | 写入反例样本,人工加入规则库 |
+| 自动改写 confidence 计算公式 | 人工 review + 文档更新 + commit |
+
+**Why**: 金融市场非平稳 → 在线学习会策略漂移 → 越学越差。所有权重调整必须**人工 review**。
+
+#### 9.3.4 反馈回路图
+
+```
+AI 输出 (含 Confidence / Evidence)
+   ↓
+写入 ai_reports + agent_runs
+   ↓
+N 天后(默认 7)
+   ↓
+Strategy Evaluator (离线 20:30 跑)
+   ↓
+生成 strategy_evaluations 报告(人工查看,不写回)
+   ↓
+人工 review
+   ├─ 发现系统性问题 → 改规则 / 改 Prompt / 改代码
+   └─ 正常 → 不动参数
+```
+
+**绝无自动回路**。
 
 ---
 
