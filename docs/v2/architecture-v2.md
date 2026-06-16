@@ -70,8 +70,8 @@
 │  │  (注册·分发·   │  │  意图 →   │ │  行情·财报 │ │  持仓·风险   │ │
 │  │   上下文·顺序)│  │  任务图   │ │  新闻·资金 │ │  盈亏归因    │ │
 │  └────────────────┘  └───────────┘ └────────────┘ └──────────────┘ │
-│  ┌─ Monitoring ─┐        📨 Event Bus (asyncio Queue)              │
-│  │  行情·新闻  │        MARKET_UPDATE · NEWS_ALERT · USER_COMMAND │
+│  ┌─ Monitoring ─┐        📨 Event Bus (Observer Pattern, 11 类 Domain Event) │
+│  │  行情·新闻  │        USER_COMMAND · TIMER_* · MARKET_ANOMALY · ALERT_FIRED │
 │  │  异常资金流 │        PORTFOLIO_CHANGE · TASK_COMPLETED …       │
 │  └─────────────┘                                                 │
 └──────────────────────────────┬──────────────────────────────────────┘
@@ -121,7 +121,7 @@
 - **Research Agent**: 聚合行情/财报/新闻/资金流 → 结构化研究报告(只做事实,不做决策)
 - **Portfolio Agent**: 持仓分析 + 风险暴露 + 盈亏归因 + 仓位优化建议(系统中最赚钱的 Agent)
 - **Monitoring Agent**: 每分钟扫描行情 + 新闻突发 + 异常资金流 → 触发 Alert(从被动工具 → 主动系统的关键)
-- **Event Bus**: asyncio Queue(轻量) / Redis pub-sub(进阶);事件类型 `MARKET_UPDATE` / `NEWS_ALERT` / `USER_COMMAND` / `PORTFOLIO_CHANGE` / `TASK_*`
+- **Event Bus**: asyncio Queue(轻量) / Redis pub-sub(进阶);**11 类 Domain Event**(详见 [`agents-v2.md`](agents-v2.md) §7.3),只承载跨模块通知;**模块内部状态走直接函数调用**
 
 **承载**: Python ≥ 3.13 + asyncio;FastAPI 主进程内嵌
 
@@ -263,34 +263,48 @@ MarketLens                            [version]
 
 ### 4.5 全局快捷键表
 
-| Accelerator | 功能 | 实现位置 |
+| Accelerator(默认) | 功能 | 实现位置 |
 |------------|------|---------|
-| `Ctrl+Shift+M`(macOS: `Cmd+Shift+M`) | 打开 Dashboard | `globalShortcut.register` |
-| `Ctrl+Shift+A`(macOS: `Cmd+Shift+A`) | 打开 Alert Panel | `globalShortcut.register` |
-| `Ctrl+Shift+P`(macOS: `Cmd+Shift+P`) | 唤起 Command Palette | `globalShortcut.register` |
+| `Ctrl+Alt+M`(macOS: `Cmd+Alt+M`) | 打开 Dashboard | `globalShortcut.register` |
+| `Ctrl+Alt+A`(macOS: `Cmd+Alt+A`) | 打开 Alert Panel | `globalShortcut.register` |
+| `Ctrl+Alt+P`(macOS: `Cmd+Alt+P`) | 唤起 Command Palette | `globalShortcut.register` |
 
-**注意**:
-- 注册前先 `globalShortcut.unregisterAll()`,避免重复注册冲突
-- 释放快捷键:`app.on('will-quit')` 钩子
-- macOS 首次注册会请求辅助功能权限
+> **架构修订(Gemini 第 2 轮反馈)**: 不再使用 `Ctrl+Shift+M` 等与 VS Code 等主流工具冲突的组合;改用 `Ctrl+Alt+M` 等不冲突的变体。
 
-### 4.6 子进程 spawn 流程
+**关键约束**:
+- **首次启动引导用户自定义**: 默认值避开了 95% 冲突场景,但用户可在 Settings 自由修改(避免与 IDE / 其他常驻工具冲突)
+- **注册前先 `globalShortcut.unregisterAll()`**: 避免重复注册冲突
+- **释放快捷键**:`app.on('will-quit')` 钩子
+- **macOS 首次注册会请求辅助功能权限**
+
+### 4.6 子进程 spawn 流程(含动态端口)
+
+> **架构修订(Gemini 第 2 轮反馈)**: 旧设计固定 8000 / 5173 端口,用户本地其他服务(Docker / IDE 调试 / 其他 Web 工具)占用了 8000 会导致 Electron 静默卡死白屏。改为**Node 主进程动态分配空闲端口 + 环境变量传给 FastAPI**。
 
 ```
 app.whenReady()
   ↓
-1. requestSingleInstanceLock()             # 单实例锁
-2. spawn FastAPI 子进程                   # python -m uvicorn backend.main:app --port 8000
-3. (dev) spawn Vite dev server 子进程     # npm run dev (5173)
-4. await waitForHealth('http://127.0.0.1:8000/api/v1/health', timeout=30s)
-5. create BrowserWindow + loadURL(...)
-   - dev: 'http://127.0.0.1:5173'
-   - prod: 'http://127.0.0.1:8000'(MARKETLENS_PROD=1 单端口挂 dist/)
-6. registerGlobalShortcuts()
-7. createTrayMenu()
-8. app.on('window-all-closed') → 保持托盘,不完全退出(Win/Linux)
-9. app.on('before-quit') → 子进程优雅关闭(SIGTERM → SIGKILL 兜底)
+1. requestSingleInstanceLock()                           # 单实例锁
+2. allocateFreePort()                                    # 新增: 动态分配空闲端口
+   - Node: import getPort from 'get-port'
+   - 例: 返回 38492(取代固定 8000)
+3. spawn FastAPI 子进程                                 # python -m uvicorn backend.main:app --port 38492
+   - 端口通过环境变量 FASTAPI_PORT 注入
+4. (dev) spawn Vite dev server 子进程                   # npm run dev (5173,固定)
+5. await waitForHealth(`http://127.0.0.1:${port}/api/v1/health`, timeout=30s)
+6. create BrowserWindow + loadURL(...)
+   - dev: 'http://127.0.0.1:5173'(通过 Vite 代理转发)
+   - prod: 'http://127.0.0.1:${port}'(MARKETLENS_PROD=1 单端口挂 dist/)
+7. registerGlobalShortcuts()                             # §4.5
+8. createTrayMenu()                                      # §4.3
+9. app.on('window-all-closed') → 保持托盘,不完全退出(Win/Linux)
+10. app.on('before-quit') → 子进程优雅关闭(SIGTERM → SIGKILL 兜底)
 ```
+
+**关键约束**:
+- **Vite 端口仍固定 5173**(dev 用户容易识别),但 Vite 的 proxy target 改成读环境变量 `FASTAPI_PORT`
+- **生产模式端口仍动态分配**,写入 electron-store / 用户配置,下次启动复用最近一次的端口(避免每次换端口导致用户书签失效)
+- **端口冲突日志**:`console.error('[MarketLens] port 8000 occupied, allocated 38492 instead')`,用户能看见
 
 **子进程管理**:
 - FastAPI / Vite 子进程用 `child_process.spawn` + `detached: false`
@@ -324,12 +338,82 @@ app.whenReady()
 | `raw_data` | 所有 Tool 调用的原始数据审计 | Tool 统一调用入口 |
 | `run_logs` | 调度任务审计 + Tool 调用记录 | 所有 scheduler job + Tool 调用 |
 
-### 5.2 不变项
+### 5.2 不变项 + 写锁优化(Gemini 第 2 轮反馈)
 
 - **SQLite 文件路径**: `data/marketlens.db`(沿用 v1)
 - **WAL 模式 + foreign_keys=ON**: 沿用
 - **`_WRITE_LOCK`(来源 `backend/services/_write_lock.py`)**: 沿用,所有写路径必须持有
 - **写锁源单一化**: 严禁在 v2 模块中私有化 `threading.Lock()`(继承 v1 r15 教训)
+
+**raw_data 审计日志的"单写多读"改造(Gemini 第 2 轮反馈)**:
+
+> **隐患**: Agent 主路径大量并发调用 Tool,每个 Tool 调用都要写 `raw_data` 审计表 → 都先抢 `_WRITE_LOCK` → 严重锁竞争 + 拖垮事件循环。
+
+> **修正方案**: `raw_data` **不属于业务阻断型数据**,Agent 主路径**不直接写库**。
+
+```python
+# backend/agents/audit_queue.py (新增)
+class RawDataAuditQueue:
+    """raw_data 异步批量写队列 — 单写多读优化。"""
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[RawDataRow] = asyncio.Queue(maxsize=10000)
+        self._worker_task: asyncio.Task | None = None
+
+    async def enqueue(self, row: RawDataRow) -> None:
+        """Agent 主路径调用,非阻塞(队列满了 drop oldest + loguru.warning)。"""
+        try:
+            self._queue.put_nowait(row)
+        except asyncio.QueueFull:
+            loguru.warning("audit queue full, dropped oldest")
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            self._queue.put_nowait(row)
+
+    async def _worker_loop(self) -> None:
+        """唯一持有 _WRITE_LOCK 的后台 Worker,批量写。"""
+        BATCH_SIZE = 100
+        FLUSH_INTERVAL_S = 1.0
+        while True:
+            batch: list[RawDataRow] = []
+            try:
+                # 攒 BATCH_SIZE 条 或 FLUSH_INTERVAL_S 到点 → flush
+                batch.append(await asyncio.wait_for(
+                    self._queue.get(), timeout=FLUSH_INTERVAL_S,
+                ))
+                while len(batch) < BATCH_SIZE:
+                    batch.append(self._queue.get_nowait())
+            except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                pass
+            if batch:
+                await self._flush_batch(batch)
+
+    async def _flush_batch(self, batch: list[RawDataRow]) -> None:
+        """批量 INSERT,持有 _WRITE_LOCK 极短时间。"""
+        with _WRITE_LOCK:  # 唯一写者
+            await get_db().executemany(
+                "INSERT INTO raw_data (...) VALUES (...)", batch
+            )
+```
+
+**生命周期**:
+```python
+# backend/main.py lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    audit_queue = RawDataAuditQueue()
+    audit_queue._worker_task = asyncio.create_task(audit_queue._worker_loop())
+    app.state.audit_queue = audit_queue
+    yield
+    audit_queue._worker_task.cancel()
+```
+
+**关键约束**:
+- **Agent 主路径零写锁** —— 只 `audit_queue.enqueue(row)`,O(1) 非阻塞
+- **唯一写者** —— 1 个后台 Worker,批量 INSERT,锁持有时间缩短 100x
+- **失败处理** —— Worker 崩溃时 queue 里的数据丢失,Worker 重启后从 `run_logs` 表反查恢复
+- **不适用本优化** —— `transactions` / `tracked_assets` / `agent_runs` 等**业务核心表**仍走 v1 `_WRITE_LOCK` 同步写(强一致 + 防丢失)
 
 ### 5.3 新增(待 v2 代码启动后评估)
 
@@ -510,7 +594,7 @@ PolicyEngine.evaluate(plan, market_state)
 | **Research Agent** | 聚合行情/财报/新闻/资金流 → 结构化研究报告(只做事实,不做决策) | [§5](agents-v2.md#5-research-agent) |
 | **Portfolio Agent** | 持仓分析 + 风险暴露 + 盈亏归因 + 仓位优化建议 | [§5](agents-v2.md#5-portfolio-agent) |
 | **Monitoring Agent** | 每分钟扫描行情 + 新闻突发 + 异常资金流 → 触发 Alert | [§5](agents-v2.md#5-monitoring-agent) |
-| **Event Bus** | Observer Pattern(订阅者 set + `asyncio.gather` 广播),12 类事件枚举 | [§7](agents-v2.md#7-event-bus) |
+| **Event Bus** | Observer Pattern(订阅者 set + `asyncio.gather` 广播),**11 类 Domain Event**(详见 §7.3 / Domain/Internal 边界 §7.2) | [§7](agents-v2.md#7-event-bus) |
 | **Agent Memory** | Short-term / Strategy / Market 三层 | [§8](agents-v2.md#8-agent-memory-三层) |
 | **Confidence Engine** | confidence / evidence_strength / contradiction_score 三指标 | [§9](agents-v2.md#9-confidence-engine) |
 | **Tool 协议** | Tool interface + Registry + 鉴权传递 | [§10](agents-v2.md#10-tool-注册协议) |
@@ -568,7 +652,7 @@ PolicyEngine.evaluate(plan, market_state)
 | **任务队列(可选)** | Celery + RabbitMQ(重型,生态成熟)/ RQ(轻量 Redis)/ 自研 asyncio.Task | Phase 2+ | Phase 1 asyncio.gather 足够 |
 | **LLM(Planner / 解释)** | Claude 4.5 Sonnet / GPT-4o / Claude Sonnet 4.6 / DeepSeek-V3 | Phase 2 引入 | Phase 1 Planner 用规则模板,不依赖 LLM |
 | **LLM(情感分析小模型)** | 开源 1B-3B(Qwen2.5-1.5B / Phi-3.5-mini)/ DeepSeek 小模型 | Phase 1 评估 | Monitoring Agent 第 2 级过滤用,成本敏感 |
-| **向量数据库** | Milvus(开源,生产级)/ Pinecone(SaaS,易用)/ Qdrant(轻量)/ FAISS(本地) | Phase 2+ | Phase 1 用 SQLite + 简单文本相似度 |
+| **向量数据库** | (ChatGPT 第 2 轮反馈: **降级**)SQLite FTS5 / LanceDB / sqlite-vec / 纯 numpy | Phase 3+ | Phase 1 用 **SQLite FTS5**(全文检索);Phase 2 评估 sqlite-vec(集成在 SQLite 内);**永远不引入** Milvus / Pinecone(过度工程化) |
 | **计算库(Portfolio)** | PyPortfolioOpt(均值-方差 / BL)/ riskfolio-lib(高级因子)/ pandas + numpy(基础) | Phase 1 选 PyPortfolioOpt | 大模型不做数学,左脑量化 |
 | **风险因子** | Barra(商业)/ 简化因子库(自研,基于行业 / 市值 / 动量) | Phase 1 自研简化版 | 完整 Barra 需要商业授权 |
 | **NLP(情感分析)** | DeepSeek API(已接入)/ 开源 SnowNLP / jieba + 自训词典 | Phase 1 DeepSeek | 见 CLAUDE.md 已建立防御性拦截 |
@@ -619,24 +703,75 @@ PolicyEngine.evaluate(plan, market_state)
                 │
                 └─→ Electron 主进程
                       ├─ 系统托盘 + 全局快捷键
-                      ├─ spawn FastAPI 子进程 → uvicorn 8000(MARKETLENS_PROD=1)
+                      ├─ spawn FastAPI 子进程 → uvicorn 38492(动态端口,MARKETLENS_PROD=1)
                       │     └─ FastAPI mount frontend/dist(单端口)
-                      └─ create BrowserWindow → loadURL(localhost:8000)
+                      └─ create BrowserWindow → loadURL(localhost:38492)
 ```
 
-**Phase 3 打包**:
+**Phase 3 打包(新增 PyInstaller 冻结)**:
+
+> **架构修订(Gemini 第 2 轮反馈)**: `electron-builder` 默认只打包 Node.js + 前端静态文件,**不会打包 Python 依赖**。用户双击 .exe 后 FastAPI 子进程会立即崩溃(用户没装 Python)。引入 **Python Freezer** 把整个 FastAPI 后端冻结成独立可执行文件。
+
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ Phase 3: electron-builder 打包                                  │
+│ Phase 3: 双层打包(PyInstaller + electron-builder)            │
 │ $ npm run build:electron                                        │
 └────────────────────────────────────────────────────────────────┘
                 │
-                └─→ dist/MarketLens-Setup-x.y.z.exe (Windows)
-                    dist/MarketLens-x.y.z.dmg (macOS)
-                    dist/MarketLens-x.y.z.AppImage (Linux)
-                      │
-                      └─ 双击安装 → 桌面图标 → 单进程启动(内嵌 FastAPI)
+                ├─→ PyInstaller 冻结 FastAPI 后端
+                │     $ pyinstaller backend.spec
+                │     └─ dist/backend-server.exe (Windows, 80-120MB)
+                │         (内嵌 Python 3.13 + 所有 pip 依赖)
+                │
+                └─→ electron-builder 打包前端 + 主进程
+                      └─ dist/MarketLens-Setup-x.y.z.exe (Windows)
+                          dist/MarketLens-x.y.z.dmg (macOS)
+                          dist/MarketLens-x.y.z.AppImage (Linux)
+                            │
+                            └─ 双击安装 → 桌面图标
+                                  ├─ 启动 electron 壳层
+                                  └─ spawn 同目录 backend-server.exe(不再依赖系统 Python)
 ```
+
+**PyInstaller spec 关键配置**(示例):
+
+```python
+# backend.spec
+a = Analysis(
+    ['backend/main.py'],
+    hiddenimports=['uvicorn', 'fastapi', 'aiosqlite', 'pandas', 'numpy',
+                   'jieba', 'mmh3', 'torch', 'transformers'],
+    hookspath=['pyinstaller_hooks'],
+)
+pyz = PYZ(a.pure)
+exe = EXE(pyz, a.scripts, a.binaries, a.datas,
+          name='backend-server',
+          console=False,           # 后台运行,不弹控制台
+          icon='assets/icon.ico')
+```
+
+**Electron 主进程 spawn 逻辑修订**:
+
+```javascript
+// src/main/spawn-backend.ts
+function spawnBackend() {
+  const isDev = !app.isPackaged;
+  if (isDev) {
+    return spawn('uv', ['run', 'python', '-m', 'uvicorn', 'backend.main:app',
+                        '--port', process.env.FASTAPI_PORT]);
+  }
+  // 生产模式:调用同目录的 PyInstaller 冻结产物
+  const backendPath = path.join(process.resourcesPath, 'backend-server.exe');
+  return spawn(backendPath, ['--port', process.env.FASTAPI_PORT], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+```
+
+**关键约束**:
+- **生产用户电脑不需要 Python** —— PyInstaller 自带 Python 解释器
+- **打包体积**: 后端 exe ~80-120MB(包含 numpy / pandas / torch);前端 + 主进程 ~150MB;**合计 ~250-300MB**
+- **跨平台 spec**: Windows / macOS / Linux 各跑一次 PyInstaller,产物随 electron-builder 打包
 
 ### 10.3 部署形态对比
 
